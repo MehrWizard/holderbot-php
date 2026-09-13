@@ -6,6 +6,7 @@
  */
 
 declare(strict_types=1);
+require_once __DIR__ . '/helpers/request_budget.php';
 require_once __DIR__ . '/helpers/tracker.php';
 require_once __DIR__ . '/helpers/language.php';
 
@@ -31,8 +32,8 @@ function tgbot(string $method, array $params = []): ?array {
         CURLOPT_URL => $url,
         CURLOPT_POST => true,
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 20,
-        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_TIMEOUT_MS => RequestBudget::milliseconds(20),
+        CURLOPT_CONNECTTIMEOUT_MS => RequestBudget::milliseconds(10),
         CURLOPT_SSL_VERIFYPEER => true,
     ];
 
@@ -220,14 +221,31 @@ function tg_answer_inline_query(
 /**
  * Download a file from Telegram by file_id.
  */
-function tg_download_file(string $fileId): ?string {
+function tg_download_file(string $fileId, int $maxBytes = 1048576): ?string {
     global $config;
-    $res = tgbot('getFile', ['file_id' => $fileId]);
-    if (empty($res['result']['file_path'])) {
-        return null;
-    }
-    $token = $config['bot_token'] ?? '';
-    $fileUrl = "https://api.telegram.org/file/bot{$token}/" . $res['result']['file_path'];
-    $content = @file_get_contents($fileUrl);
-    return $content !== false ? $content : null;
+    $previousDeadline = RequestBudget::$deadline;
+    RequestBudget::$deadline = min($previousDeadline ?? INF, microtime(true) + 10);
+    try {
+        $res = tgbot('getFile', ['file_id' => $fileId]);
+        if (empty($res['result']['file_path']) || ($res['result']['file_size'] ?? 0) > $maxBytes) return null;
+        $token = $config['bot_token'] ?? '';
+        $fileUrl = "https://api.telegram.org/file/bot{$token}/" . $res['result']['file_path'];
+        $content = '';
+        $ch = curl_init($fileUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_TIMEOUT_MS => RequestBudget::milliseconds(10),
+            CURLOPT_CONNECTTIMEOUT_MS => RequestBudget::milliseconds(5),
+            CURLOPT_WRITEFUNCTION => static function($curl, string $chunk) use (&$content, $maxBytes): int {
+                if (strlen($content) + strlen($chunk) > $maxBytes) return 0;
+                $content .= $chunk;
+                return strlen($chunk);
+            },
+        ]);
+        try {
+            $ok = curl_exec($ch);
+            $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            return $ok !== false && $status >= 200 && $status < 300 ? $content : null;
+        } finally { curl_close($ch); }
+    } catch (Throwable $e) { return null; }
+    finally { RequestBudget::$deadline = $previousDeadline; }
 }

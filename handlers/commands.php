@@ -4,11 +4,11 @@
  */
 
 declare(strict_types=1);
+require_once __DIR__ . '/../helpers/queue.php';
 
 class CommandHandlers {
     /**
-     * Handle incoming text commands. Only /start and /user exist; anything else
-     * is silently ignored, matching the original bot.
+     * Handle original commands and the PHP queue status command.
      */
     public static function handle(array $message): bool {
         $text = trim($message['text'] ?? '');
@@ -38,6 +38,13 @@ class CommandHandlers {
                 Storage::clearState($userId);
                 if (!empty($message['message_id'])) tg_delete_message($chatId, $message['message_id']);
                 return self::cmdStart($chatId);
+
+            case '/jobs':
+                $jobs = BatchQueue::recent($chatId, (int)$userId);
+                $rows = [];
+                foreach ($jobs as $job) $rows[] = [['text'=>$job['kind'] . ' / ' . $job['status'] . ' / ' . substr($job['id'], 0, 8), 'callback_data'=>'job:' . $job['id']]];
+                tg_send_message($chatId, $jobs ? 'Recent batches (up to 10):' : 'No batches found.', ['inline_keyboard'=>$rows]);
+                return true;
 
             case '/user':
                 return self::cmdUser($chatId, $parts);

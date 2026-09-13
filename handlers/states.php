@@ -150,8 +150,8 @@ class StateHandlers {
     private static function handleCreateUserCount(int|string $chatId, int $userId, string $input, array $data): bool {
         $input = Input::decimalDigits($input);
         $serverId = (int)($data['server_id'] ?? 0);
-        if (!ctype_digit($input) || (int)$input < 1) {
-            tg_send_message($chatId, "❌ Invalid, Just use [0-9]", Keyboards::cancel("srv:{$serverId}"));
+        if (!ctype_digit($input) || (int)$input < 1 || (float)$input > 10000) {
+            tg_send_message($chatId, "Enter a count between 1 and 10000.", Keyboards::cancel("srv:{$serverId}"));
             return true;
         }
 
@@ -228,15 +228,28 @@ class StateHandlers {
             return true;
         }
 
+        if (($doc['file_size'] ?? 0) > 1048576) {
+            tg_send_message($chatId, 'Import exceeds 1 MiB. Split the JSON file into smaller batches.', Keyboards::cancel("srv:{$serverId}"));
+            return true;
+        }
         $content = tg_download_file($doc['file_id']);
+        if ($content !== null && strlen($content) > 1048576) {
+            tg_send_message($chatId, 'Import exceeds 1 MiB. Split the JSON file into smaller batches.', Keyboards::cancel("srv:{$serverId}"));
+            return true;
+        }
         if (!$content) {
             tg_send_message($chatId, "❌ Invalid json.", Keyboards::cancel("srv:{$serverId}"));
             return true;
         }
 
         $parsed = json_decode($content, true);
-        if (!is_array($parsed) || empty($parsed)) {
+        if (!is_array($parsed) || empty($parsed) || !array_is_list($parsed)) {
             tg_send_message($chatId, "❌ Invalid json.", Keyboards::cancel("srv:{$serverId}"));
+            return true;
+        }
+
+        if (count($parsed) > 1000) {
+            tg_send_message($chatId, 'Import exceeds 1000 users. Split the JSON file into smaller batches.', Keyboards::cancel("srv:{$serverId}"));
             return true;
         }
 
@@ -248,7 +261,9 @@ class StateHandlers {
                 || empty($item['username']) || !is_string($item['username'])
                 || !isset($item['datalimit']) || !is_numeric($item['datalimit'])
                 || !isset($item['datelimit']) || !is_numeric($item['datelimit'])
-                || empty($item['datetypes']) || !in_array((string)$item['datetypes'], $validDateTypes, true)
+                || !is_finite((float)$item['datalimit']) || (float)$item['datalimit'] < 0 || (float)$item['datalimit'] > PHP_INT_MAX / (1024 ** 3)
+                || !is_finite((float)$item['datelimit']) || (float)$item['datelimit'] < 0 || (float)$item['datelimit'] > (PHP_INT_MAX - time()) / 86400
+                || !isset($item['datetypes']) || !is_string($item['datetypes']) || !in_array($item['datetypes'], $validDateTypes, true)
             ) {
                 tg_send_message($chatId, "❌ Invalid json.", Keyboards::cancel("srv:{$serverId}"));
                 return true;

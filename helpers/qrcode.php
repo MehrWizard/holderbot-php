@@ -634,17 +634,16 @@ class QrGenerator {
      * Falls back to a plain text message (never a fake/unreadable QR) if the
      * data is too large to encode.
      */
-    public static function sendQrPhoto(int|string $chatId, string $data, string $caption): void {
+    public static function sendQrPhoto(int|string $chatId, string $data, string $caption): ?array {
         $png = self::generatePng($data);
         if ($png === null) {
-            tg_send_message($chatId, $caption . "\n\n⚠️ <i>This link is too long to render as a QR code; use the text link above.</i>");
-            return;
+            return tg_send_message($chatId, $caption . "\n\n⚠️ <i>This link is too long to render as a QR code; use the text link above.</i>");
         }
 
         $tmpFile = sys_get_temp_dir() . '/hb_qr_' . bin2hex(random_bytes(8)) . '.png';
         file_put_contents($tmpFile, $png);
-        tg_send_photo($chatId, $tmpFile, $caption);
-        @unlink($tmpFile);
+        try { return tg_send_photo($chatId, $tmpFile, $caption); }
+        finally { @unlink($tmpFile); }
     }
 }
 

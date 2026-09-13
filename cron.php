@@ -9,6 +9,8 @@ require __DIR__ . '/tgbot.php';
 require __DIR__ . '/panels/panel_manager.php';
 require __DIR__ . '/helpers/format.php';
 require __DIR__ . '/helpers/tasks.php';
+require __DIR__ . '/helpers/queue.php';
+require __DIR__ . '/helpers/qrcode.php';
 Storage::init();
 $lockPath = ($config['storage_path'] ?? __DIR__ . '/data/storage.json') . '.cron.lock';
 $lock = fopen($lockPath, 'c');
@@ -17,6 +19,8 @@ $daemon = in_array('--daemon', $argv, true);
 $forceExpired = in_array('--expired', $argv, true);
 do {
     $start = microtime(true);
+    try { BatchQueue::run(); }
+    catch (Throwable $e) { error_log('HolderBot queue failed: ' . $e->getMessage()); }
     try { BackgroundTasks::tick($forceExpired); }
     catch (Throwable $e) { error_log('HolderBot background job failed: ' . $e->getMessage()); }
     $forceExpired = false;

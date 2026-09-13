@@ -6,6 +6,7 @@
  */
 
 declare(strict_types=1);
+require_once __DIR__ . '/../helpers/request_budget.php';
 
 class MarzneshinClient {
     public static string $lastError = '';
@@ -46,8 +47,8 @@ class MarzneshinClient {
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CUSTOMREQUEST => strtoupper($method),
-            CURLOPT_TIMEOUT => 5,
-            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT_MS => RequestBudget::milliseconds(5),
+            CURLOPT_CONNECTTIMEOUT_MS => RequestBudget::milliseconds(5),
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_SSL_VERIFYHOST => false,
         ];

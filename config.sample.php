@@ -42,6 +42,11 @@ return [
     // Optional absolute JSON storage path; useful outside public_html.
     'storage_path' => __DIR__ . '/data/storage.json',
 
+    // Local queue spool for both JSON and MySQL. Prefer a path outside the web root.
+    'queue_path' => __DIR__ . '/data/queue',
+    'queue_budget_seconds' => 15,
+    'queue_steps' => 10,
+
     // -------------------------------------------------------------------------
     // Storage Engine Settings
     // -------------------------------------------------------------------------

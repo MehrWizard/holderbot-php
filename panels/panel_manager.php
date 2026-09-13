@@ -46,7 +46,8 @@ class PanelManager {
         int $limit = 20,
         ?string $search = null,
         ?string $status = null,
-        ?string $admin = null
+        ?string $admin = null,
+        bool $strict = false
     ): array {
         $type = strtolower($server['type'] ?? 'marzban');
         if ($type === 'marzneshin') {
@@ -59,6 +60,7 @@ class PanelManager {
         }
 
         if (!is_array($rawList)) {
+            if ($strict) throw new RuntimeException("Unable to fetch user page");
             return [];
         }
 

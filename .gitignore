@@ -9,3 +9,6 @@ data/*.json
 
 data/*.lock
 __pycache__/
+
+# Local persistent job spool
+data/queue/

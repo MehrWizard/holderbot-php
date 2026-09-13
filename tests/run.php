@@ -4,7 +4,7 @@ declare(strict_types=1);
 error_reporting(E_ALL);
 set_error_handler(function($severity, $message, $file, $line) { throw new ErrorException($message, 0, $severity, $file, $line); });
 $path = sys_get_temp_dir() . '/holderbot-test-' . bin2hex(random_bytes(8)) . '.json';
-$config = ['storage_path' => $path, 'storage_type' => 'json'];
+$config = ['storage_path' => $path, 'storage_type' => 'json', 'queue_path' => $path . '.queue', 'admin_ids'=>[42]];
 require __DIR__ . '/../storage.php';
 require __DIR__ . '/../panels/panel_manager.php';
 require __DIR__ . '/../helpers/format.php';
@@ -14,7 +14,7 @@ require __DIR__ . '/../handlers/states.php';
 require __DIR__ . '/../handlers/callbacks.php';
 require __DIR__ . '/../handlers/inline.php';
 Storage::init();
-register_shutdown_function(function() use ($path) { foreach ([$path, $path . '.lock'] as $file) if (is_file($file)) unlink($file); });
+register_shutdown_function(function() use ($path) { if (is_dir($path . '.queue')) { $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($path . '.queue', FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST); foreach ($it as $file) { $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname()); } rmdir($path . '.queue'); } foreach ([$path, $path . '.lock'] as $file) if (is_file($file)) unlink($file); });
 $messages = []; $requests = []; $checks = 0;
 function check(bool $condition, string $message): void { global $checks; $checks++; if (!$condition) throw new RuntimeException($message); }
 function tg_send_message($chat, $text, $kb = null): array { global $messages; $messages[] = ['text' => $text, 'kb' => $kb]; return ['ok' => true, 'result' => ['message_id' => count($messages)]]; }
@@ -24,7 +24,7 @@ function tg_delete_message($chat, $id): array { return ['ok' => true]; }
 function tgbot($method, $params = []): array { return ['ok' => true, 'result' => ['username' => 'test_bot']]; }
 function tg_answer_inline_query($id, $results, $cache = 10, $switch = null, $parameter = null): void { global $inline; $inline = compact('results','cache','switch','parameter'); }
 function tg_download_file($id): string { global $document; return $document; }
-class QrGenerator { public static array $photos = []; public static function sendQrPhoto($chat, $url, $caption): void { self::$photos[] = compact('url','caption'); } }
+class QrGenerator { public static array $photos = []; public static function sendQrPhoto($chat, $url, $caption): array { self::$photos[] = compact('url','caption'); return ['ok'=>true]; } }
 function click(string $data): void { CallbackHandlers::handle(['id' => 'test', 'data' => $data, 'from' => ['id' => 42], 'message' => ['chat' => ['id' => 42], 'message_id' => 1]]); }
 function say(string $text): void { StateHandlers::handle(['chat'=>['id'=>42],'from'=>['id'=>42],'text'=>$text], Storage::getState(42)); }
 function lastText(): string { global $messages; return end($messages)['text']; }
@@ -133,6 +133,8 @@ $document=json_encode([['username'=>'json_fixed','datalimit'=>5,'datelimit'=>2,'
 StateHandlers::handle(['chat'=>['id'=>42],'from'=>['id'=>42],'document'=>['file_id'=>'fixture','file_name'=>'users.json']], Storage::getState(42));
 click('usr_cfg:none:1'); click('usr_cfg_done:1'); check(!isset($db['json_fixed']), 'JSON creation bypasses required configs');
 click('usr_cfg:all:1'); click('usr_cfg_done:1');
+check(!isset($db['json_fixed']), 'JSON creation must defer panel calls');
+BatchQueue::run(10, 100);
 check($db['json_fixed']['status']==='active' && $db['json_hold']['status']==='on_hold', 'JSON strategies');
 check($db['json_hold']['admin']['username']==='sudo', 'JSON owner');
 // Confirmations must not execute their mutations when No is selected.

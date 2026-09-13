@@ -4,6 +4,7 @@
  */
 
 declare(strict_types=1);
+require_once __DIR__ . '/../helpers/queue.php';
 
 class CallbackHandlers {
     /**
@@ -16,6 +17,19 @@ class CallbackHandlers {
         $chatId = $callbackQuery['message']['chat']['id'] ?? 0;
         $messageId = $callbackQuery['message']['message_id'] ?? 0;
         $userId = $callbackQuery['from']['id'];
+
+        if (str_starts_with($data, 'job:') || str_starts_with($data, 'job_cancel:')) {
+            [$action, $jobId] = explode(':', $data, 2);
+            $job = BatchQueue::get($jobId);
+            if (!$job || (int)$job['user_id'] !== (int)$userId || (string)$job['chat_id'] !== (string)$chatId) {
+                tg_answer_callback($id, 'Job not found.', true);
+                return;
+            }
+            if ($action === 'job_cancel') BatchQueue::cancel($jobId);
+            tg_answer_callback($id, $action === 'job_cancel' ? 'Cancellation requested. Completed work is retained.' : null);
+            tg_edit_message($chatId, $messageId, BatchQueue::describe($job), BatchQueue::keyboard($job));
+            return;
+        }
 
         if (empty($data) || $data === 'noop') {
             tg_answer_callback($id);
@@ -556,16 +570,7 @@ class CallbackHandlers {
             }
             $action = $state['data']['action'] ?? '';
             $admin = $state['data']['admin'] ?? 'ALL';
-            Storage::clearState($userId);
-            tg_answer_callback($id, "Processing config action...");
-            tg_edit_message($chatId, $messageId, "⏳");
-            $r = PanelManager::applyConfigToUsers($server, $serviceId, $action === 'add_cfg', $admin);
-            tg_edit_message(
-                $chatId,
-                $messageId,
-                "Action Finished: {$r['success']}/{$r['total']}",
-                Keyboards::cancel("srv:{$serverId}")
-            );
+            self::queueBatch('config', $server, ['admin'=>$admin, 'service_id'=>$serviceId, 'add'=>$action === 'add_cfg'], $chatId, $messageId, $userId, $id);
             return;
         }
 
@@ -578,50 +583,11 @@ class CallbackHandlers {
             $server = Storage::getServer($serverId);
             if (!$server) { tg_answer_callback($id, "❌ Not Found.", true); return; }
 
-            tg_answer_callback($id, "Processing batch action...");
-            tg_edit_message($chatId, $messageId, "⏳");
-
-            if ($action === 'del_exp') {
-                $r = PanelManager::deleteExpiredUsers($server, $admin);
-                tg_edit_message(
-                    $chatId,
-                    $messageId,
-                    "Action Finished: {$r['success']}/{$r['total']}",
-                    Keyboards::cancel("srv:{$serverId}")
-                );
-            } elseif ($action === 'del_lim') {
-                $r = PanelManager::deleteLimitedUsers($server, $admin);
-                tg_edit_message(
-                    $chatId,
-                    $messageId,
-                    "Action Finished: {$r['success']}/{$r['total']}",
-                    Keyboards::cancel("srv:{$serverId}")
-                );
-            } elseif ($action === 'del_all') {
-                $r = PanelManager::deleteAllAdminUsers($server, $admin);
-                tg_edit_message(
-                    $chatId,
-                    $messageId,
-                    "Action Finished: {$r['success']}/{$r['total']}",
-                    Keyboards::cancel("srv:{$serverId}")
-                );
-            } elseif ($action === 'act_adm') {
-                $ok = PanelManager::activateAdminUsers($server, $admin);
-                tg_edit_message(
-                    $chatId,
-                    $messageId,
-                    $ok ? "✅ Success." : "❌ Failed",
-                    Keyboards::cancel("srv:{$serverId}")
-                );
-            } elseif ($action === 'dis_adm') {
-                $ok = PanelManager::disableAdminUsers($server, $admin);
-                tg_edit_message(
-                    $chatId,
-                    $messageId,
-                    $ok ? "✅ Success." : "❌ Failed",
-                    Keyboards::cancel("srv:{$serverId}")
-                );
-            }
+            if (in_array($action, ['del_exp', 'del_lim', 'del_all'], true)) {
+                self::queueBatch('delete', $server, ['admin'=>$admin, 'status'=>match ($action) { 'del_exp'=>'expired', 'del_lim'=>'limited', default=>null }], $chatId, $messageId, $userId, $id);
+            } elseif (in_array($action, ['act_adm', 'dis_adm'], true)) {
+                self::queueBatch('admin_status', $server, ['admin'=>$admin, 'active'=>$action === 'act_adm'], $chatId, $messageId, $userId, $id);
+            } else tg_answer_callback($id, 'Unknown batch action.', true);
             return;
         }
 
@@ -694,18 +660,7 @@ class CallbackHandlers {
             }
             $fromAdmin = $state['data']['from_admin'] ?? '';
             $toAdmin = $state['data']['to_admin'] ?? '';
-            Storage::clearState($userId);
-
-            tg_answer_callback($id, "Transferring users...");
-            tg_edit_message($chatId, $messageId, "⏳");
-
-            $r = PanelManager::transferUsers($server, $fromAdmin, $toAdmin);
-            tg_edit_message(
-                $chatId,
-                $messageId,
-                "Action Finished: {$r['success']}/{$r['total']}",
-                Keyboards::cancel("srv:{$serverId}")
-            );
+            self::queueBatch('transfer', $server, ['admin'=>$fromAdmin, 'to_admin'=>$toAdmin], $chatId, $messageId, $userId, $id);
             return;
         }
 
@@ -1206,6 +1161,19 @@ class CallbackHandlers {
         tg_answer_callback($id, "Action not found.");
     }
 
+    private static function queueBatch(string $kind, array $server, array $params, int|string $chatId, int $messageId, int $userId, string $callbackId): void {
+        try {
+            $job = BatchQueue::enqueue($kind, $server, $params, $chatId, $userId, 'message:' . $messageId);
+        } catch (Throwable $e) {
+            error_log('Batch submission failed: ' . $e->getMessage());
+            tg_answer_callback($callbackId, 'Unable to queue this batch. Check queue storage and batch size.', true);
+            return;
+        }
+        Storage::clearState($userId);
+        tg_answer_callback($callbackId, 'Batch queued.');
+        tg_edit_message($chatId, $messageId, BatchQueue::describe($job), BatchQueue::keyboard($job));
+    }
+
     private static function renderHome(int|string $chatId, int $messageId): void {
         $servers = Storage::getServers();
         $text = "Welcome to HolderBot 🤖 [<code>" . HOLDERBOT_VERSION . "</code> by @ErfJabs]\n";
@@ -1535,40 +1503,17 @@ class CallbackHandlers {
             return;
         }
 
+        if (!empty($stateData['uploaded_json']) || (int)($stateData['count'] ?? 1) > 1) {
+            self::queueBatch('create', $server, $stateData, $chatId, $messageId, $userId, $callbackId);
+            return;
+        }
+
         Storage::clearState($userId);
         tg_answer_callback($callbackId, "Creating user(s)...");
         tg_edit_message($chatId, $messageId, "⏳");
 
         $admin = !empty($stateData['admin']) ? $stateData['admin'] : null;
         $selectedConfigs = $stateData['selected_configs'] ?? [];
-
-        // Check if JSON bulk upload
-        if (!empty($stateData['uploaded_json'])) {
-            $success = 0;
-            $failed = 0;
-            foreach ($stateData['uploaded_json'] as $item) {
-                $uName = $item['username'] ?? '';
-                $uData = (float)($item['datalimit'] ?? 0);
-                $uDays = (int)($item['datelimit'] ?? 0);
-                $uDateType = strtolower($item['datetypes'] ?? 'now');
-                if ($uDateType === 'unlimited') $uType = 'unlimited';
-                elseif ($uDateType === 'after first use') $uType = 'onhold';
-                else $uType = 'fixed';
-
-                $created = PanelManager::createUser($server, $uName, $uData, $uDays, null, $selectedConfigs, $uType, $admin);
-                if ($created) {
-                    $success++;
-                    if (!empty($created['subscription_url'])) {
-                        QrGenerator::sendQrPhoto($chatId, $created['subscription_url'], Formatter::userInfo($server, $created));
-                    }
-                } else {
-                    $failed++;
-                    tg_send_message($chatId, "❌ Failed to create " . Formatter::escape($uName) . ".");
-                }
-            }
-            tg_send_message($chatId, "Let's back...", Keyboards::cancel("srv:{$serverId}"));
-            return;
-        }
 
         $count = max(1, (int)($stateData['count'] ?? 1));
         $baseName = $stateData['username'] ?? 'user';

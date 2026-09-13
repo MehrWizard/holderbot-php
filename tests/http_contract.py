@@ -6,6 +6,7 @@ import json
 import subprocess
 import tempfile
 import threading
+import time
 from urllib.parse import urlparse, parse_qs
 
 root = Path(__file__).resolve().parents[1]
@@ -30,9 +31,12 @@ class Handler(BaseHTTPRequestHandler):
             result=dict(payload,username=payload.get('username','client'),subscription_url='/sub/test',status=payload.get('status','active'))
         elif path=='/api/users': result={'users':[],'items':[]}
         if path in ['/api/nodes', '/api/admins', '/empty-array']: result=[]
+        if path=='/slow': time.sleep(1)
         if path=='/empty-body': status=204
         encoded = b'' if status==204 else (b'not json' if path=='/invalid-json' else json.dumps(result).encode())
-        self.send_response(status); self.send_header('Content-Type','application/json'); self.end_headers(); self.wfile.write(encoded)
+        self.send_response(status); self.send_header('Content-Type','application/json'); self.end_headers()
+        try: self.wfile.write(encoded)
+        except BrokenPipeError: pass
     do_GET = do_POST = do_PUT = do_DELETE = handle_request
 server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
 threading.Thread(target=server.serve_forever,daemon=True).start()
@@ -59,6 +63,10 @@ foreach(['marzban','marzneshin'] as $kind) {
   if ($client::request($s,'POST',$endpoint) !== ['success'=>true]) throw new RuntimeException('Empty success response rejected');
  }
  if ($client::request($s,'GET','/invalid-json') !== null) throw new RuntimeException('Malformed JSON accepted');
+ $start=microtime(true); RequestBudget::$deadline=$start+0.2;
+ $slow=$client::request($s,'GET','/slow',null,false);
+ RequestBudget::$deadline=null;
+ if ($slow!==null || microtime(true)-$start>0.8) throw new RuntimeException('Native request exceeded worker budget');
 }
 $s['type']='marzban';
 if (PanelManager::getNodes($s)!==[] || PanelManager::getAdmins($s)!==[]) throw new RuntimeException('Empty panel lists corrupted');
