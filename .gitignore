@@ -1,0 +1,8 @@
+# User configuration (contains private tokens)
+config.php
+
+# Persistent data and logs
+data/*.json
+!data/.htaccess
+*.log
+.DS_Store
