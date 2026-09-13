@@ -30,6 +30,7 @@ require_once __DIR__ . '/storage.php';
 require_once __DIR__ . '/panels/panel_manager.php';
 require_once __DIR__ . '/helpers/format.php';
 require_once __DIR__ . '/helpers/keyboards.php';
+require_once __DIR__ . '/helpers/qrcode.php';
 require_once __DIR__ . '/handlers/commands.php';
 require_once __DIR__ . '/handlers/callbacks.php';
 require_once __DIR__ . '/handlers/states.php';
@@ -83,6 +84,8 @@ if (!empty($update['message']['from'])) {
     $fromUser = $update['callback_query']['from'];
 } elseif (!empty($update['inline_query']['from'])) {
     $fromUser = $update['inline_query']['from'];
+} elseif (!empty($update['chosen_inline_result']['from'])) {
+    $fromUser = $update['chosen_inline_result']['from'];
 }
 
 if (!$fromUser) {
@@ -93,12 +96,22 @@ $userId = (int)$fromUser['id'];
 $adminIds = array_map('intval', $config['admin_ids'] ?? []);
 
 // 6. Security Check: Admin Access Control
+// An unauthorized user is never told the bot is admin-gated: no reply is sent to
+// them at all. Instead every configured admin is alerted with the intruder's
+// identity so they can decide whether to add them.
 if (!in_array($userId, $adminIds, true)) {
-    $chatId = $update['message']['chat']['id'] ?? ($update['callback_query']['message']['chat']['id'] ?? null);
-    if ($chatId) {
+    $firstName = trim(($fromUser['first_name'] ?? '') . ' ' . ($fromUser['last_name'] ?? ''));
+    $username = !empty($fromUser['username']) ? '@' . $fromUser['username'] : '(no username)';
+    error_log("HolderBot: unauthorized access attempt by user_id={$userId} ({$username})");
+
+    foreach ($adminIds as $adminId) {
         tg_send_message(
-            $chatId,
-            "⛔ <b>Access Denied</b>\n\nYour Telegram User ID (<code>{$userId}</code>) is not authorized to use this bot.\nPlease add your ID to <code>config.php</code>."
+            $adminId,
+            "🥷🏻 <b>Oops, we have a spy!</b>\n\n" .
+            "<b>Name:</b> " . htmlspecialchars($firstName ?: 'Unknown') . "\n" .
+            "<b>Username:</b> " . htmlspecialchars($username) . "\n" .
+            "<b>ID:</b> <code>{$userId}</code>\n\n" .
+            "<a href=\"tg://openmessage?user_id={$userId}\">Open chat with this user</a>"
         );
     }
     exit;
@@ -133,17 +146,10 @@ try {
         // Check if user is inside an interactive multi-step state
         $activeState = Storage::getState($userId);
         if ($activeState !== null) {
-            $handled = StateHandlers::handle($message, $activeState);
-            if ($handled) {
-                exit;
-            }
+            StateHandlers::handle($message, $activeState);
         }
-
-        // Default fallback for regular messages outside any wizard
-        tg_send_message(
-            $chatId,
-            "💡 Use /start to open the main menu or /help for available commands."
-        );
+        // Any other plain text outside a wizard is silently ignored, matching
+        // the original bot (which only reacts to /start and /user).
     }
 } catch (Throwable $e) {
     error_log("HolderBot unhandled exception: " . $e->getMessage() . "\n" . $e->getTraceAsString());

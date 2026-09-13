@@ -20,12 +20,12 @@ class InlineHandlers {
             foreach ($servers as $s) {
                 $results[] = [
                     'type' => 'article',
-                    'id' => 'srv_' . $s['id'],
+                    'id' => (string)$s['id'],
                     'title' => "{$s['id']} | {$s['remark']}",
-                    'description' => "Server type: {$s['type']}",
+                    'description' => "server type: {$s['type']}",
+                    'thumbnail_url' => 'https://github.com/user-attachments/assets/02947eb3-421c-424c-8f64-83686168c8f5',
                     'input_message_content' => [
-                        'message_text' => "<b>Server ID:</b> <code>{$s['id']}</code>\n<b>Remark:</b> <code>{$s['remark']}</code>\n<b>Type:</b> <code>{$s['type']}</code>",
-                        'parse_mode' => 'HTML',
+                        'message_text' => "Server ID: {$s['id']}\nRemark: {$s['remark']}",
                     ],
                 ];
             }
@@ -39,7 +39,7 @@ class InlineHandlers {
                 $id,
                 [],
                 10,
-                "Please enter a valid server ID (e.g. 1)",
+                "Please enter a valid server ID (integer)",
                 "invalid_server_id"
             );
             return;
@@ -52,7 +52,7 @@ class InlineHandlers {
                 $id,
                 [],
                 10,
-                "Server ID {$serverId} not found",
+                "Server not found. Enter a valid server ID.",
                 "server_not_found"
             );
             return;
@@ -67,7 +67,7 @@ class InlineHandlers {
                 $id,
                 [],
                 10,
-                "No users found for '{$search}'",
+                "No users found for the given query.",
                 "no_users_found"
             );
             return;
@@ -75,29 +75,19 @@ class InlineHandlers {
 
         $results = [];
         foreach ($users as $u) {
-            $card = Formatter::userCard($server, $u);
-            $statusEmoji = match ($u['status']) {
-                'active' => '🟢',
-                'disabled' => '🔴',
-                'expired' => '⏱️',
-                'limited' => '🚫',
-                default => '⚪',
-            };
-
-            $used = Formatter::bytes($u['used_traffic_bytes']);
-            $limit = ($u['data_limit_bytes'] > 0) ? Formatter::bytes($u['data_limit_bytes']) : 'Unlimited';
-            $owner = !empty($u['owner_username']) ? " (@{$u['owner_username']})" : '';
+            $statusEmoji = $u['is_active'] ? '✅' : '❌';
+            $owner = !empty($u['owner_username']) ? " ({$u['owner_username']})" : '';
+            $dataLimit = ($u['data_limit_bytes'] > 0) ? Formatter::bytes($u['data_limit_bytes']) : 'Unlimited';
+            $expire = Formatter::timeDiff($u['expire_timestamp']);
 
             $results[] = [
                 'type' => 'article',
                 'id' => 'usr_' . $serverId . '_' . $u['username'],
                 'title' => "{$statusEmoji} {$u['username']}{$owner}",
-                'description' => "Usage: {$used} / {$limit} | Status: {$u['status']}",
-                'thumb_url' => 'https://raw.githubusercontent.com/erfjab/holderbot/main/holderbot.png',
+                'description' => "data: {$dataLimit} | date: {$expire}",
                 'input_message_content' => [
-                    'message_text' => $card,
+                    'message_text' => "<b>Username:</b> <code>{$u['username']}</code>\n<b>Data Limit:</b> <code>{$dataLimit}</code>\n<b>Expiration:</b> <code>{$expire}</code>\n<b>Sub Url:</b> <code>{$u['subscription_url']}</code>",
                     'parse_mode' => 'HTML',
-                    'disable_web_page_preview' => true,
                 ],
             ];
         }

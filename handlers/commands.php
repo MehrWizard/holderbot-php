@@ -7,7 +7,8 @@ declare(strict_types=1);
 
 class CommandHandlers {
     /**
-     * Handle incoming text commands (/start, /help, /user).
+     * Handle incoming text commands. Only /start and /user exist; anything else
+     * is silently ignored, matching the original bot.
      */
     public static function handle(array $message): bool {
         $text = trim($message['text'] ?? '');
@@ -28,29 +29,40 @@ class CommandHandlers {
             case '/start':
                 // Check if start command has deep link parameter: /start user_<server_id>_<username>
                 if (!empty($parts[1]) && str_starts_with($parts[1], 'user_')) {
+                    $messageId = $message['message_id'] ?? null;
+                    if ($messageId) {
+                        tg_delete_message($chatId, $messageId);
+                    }
                     $subParts = explode('_', $parts[1], 3);
                     if (count($subParts) >= 3) {
-                        return self::cmdUser($chatId, ['/user', $subParts[1], $subParts[2]]);
+                        return self::handleDeepLinkUser($chatId, (int)$subParts[1], $subParts[2]);
                     }
                 }
                 return self::cmdStart($chatId);
-
-            case '/home':
-            case '/servers':
-                return self::cmdStart($chatId);
-
-            case '/help':
-                return self::cmdHelp($chatId);
 
             case '/user':
                 return self::cmdUser($chatId, $parts);
 
             default:
-                tg_send_message(
-                    $chatId,
-                    "❓ Unknown command: <code>" . htmlspecialchars($command) . "</code>\nUse /start to open the main menu."
-                );
                 return true;
+        }
+    }
+
+    /**
+     * Deletes the previous bot-sent menu in this chat (if any) before sending a
+     * new one, so repeated /start or /user usage doesn't leave a trail of stale
+     * menus behind - matching the original bot's chat-cleanup behavior for its
+     * main entry points.
+     */
+    private static function sendFreshMenu(int|string $chatId, string $text, ?array $kb = null): void {
+        $prevId = Storage::cacheGet("last_menu_msg_{$chatId}");
+        if ($prevId) {
+            tg_delete_message($chatId, (int)$prevId);
+        }
+        $sent = tg_send_message($chatId, $text, $kb);
+        $newId = $sent['result']['message_id'] ?? null;
+        if ($newId) {
+            Storage::cacheSet("last_menu_msg_{$chatId}", $newId, 86400);
         }
     }
 
@@ -67,27 +79,19 @@ class CommandHandlers {
         }
 
         $kb = Keyboards::home($servers);
-        tg_send_message($chatId, $text, $kb);
+        self::sendFreshMenu($chatId, $text, $kb);
         return true;
     }
 
-    private static function cmdHelp(int|string $chatId): bool {
-        $text = "📖 <b>HolderBot PHP Commands:</b>\n\n";
-        $text .= "• /start - Open main server list\n";
-        $text .= "• /user &lt;server_id&gt; &lt;username&gt; - Quick user lookup\n";
-        $text .= "• /help - Show this manual\n\n";
-        $text .= "💡 <i>You can manage users, recharge, revoke subscriptions, and check node health from the inline buttons.</i>";
-
-        tg_send_message($chatId, $text);
-        return true;
-    }
-
+    /**
+     * /user <server_id> <username> is always a search that renders a results
+     * list, even on an exact match - it never resolves directly to a single
+     * user's action card and never reports "not found" (an empty list is shown
+     * instead), matching the original bot's behavior.
+     */
     private static function cmdUser(int|string $chatId, array $parts): bool {
         if (count($parts) < 3) {
-            tg_send_message(
-                $chatId,
-                "⚠️ <b>Usage:</b> <code>/user &lt;server_id&gt; &lt;username&gt;</code>\nExample: <code>/user 1 john_doe</code>"
-            );
+            tg_send_message($chatId, "❌ Invalid pattern.\n/user serverid username");
             return true;
         }
 
@@ -96,26 +100,38 @@ class CommandHandlers {
 
         $server = Storage::getServer($serverId);
         if (!$server) {
-            tg_send_message($chatId, "❌ Server with ID <code>{$serverId}</code> not found.");
-            return true;
-        }
-
-        $user = PanelManager::getUser($server, $username);
-        if ($user) {
-            $card = Formatter::userCard($server, $user);
-            $kb = Keyboards::userActions($server['id'], $user['username'], $user['is_active'], $user['status']);
-            tg_send_message($chatId, $card, $kb);
+            tg_send_message($chatId, "❌ Not Found.", Keyboards::cancel('home'));
             return true;
         }
 
         $results = PanelManager::getUsers($server, 1, 10, $username);
-        if (!empty($results)) {
-            $kb = Keyboards::usersList($server['id'], $results, 1, false);
-            tg_send_message($chatId, "🔍 Search results for <code>" . htmlspecialchars($username) . "</code>:", $kb);
+        $kb = Keyboards::usersList($server['id'], $results, 1, false);
+        self::sendFreshMenu($chatId, "📋 <b>Select items</b>", $kb);
+        return true;
+    }
+
+    /**
+     * /start user_<server_id>_<username> deep link: unlike /user, this does an
+     * EXACT lookup and, if found, jumps straight to that user's full action
+     * card - matching the original bot's deep-link handler exactly (a
+     * different code path from the /user search command).
+     */
+    private static function handleDeepLinkUser(int|string $chatId, int $serverId, string $username): bool {
+        $server = Storage::getServer($serverId);
+        if (!$server) {
+            tg_send_message($chatId, "❌ Not Found.");
             return true;
         }
 
-        tg_send_message($chatId, "❌ User <code>" . htmlspecialchars($username) . "</code> not found on <b>{$server['remark']}</b>.");
+        $user = PanelManager::getUser($server, $username);
+        if (!$user) {
+            tg_send_message($chatId, "❌ Not Found.");
+            return true;
+        }
+
+        $card = Formatter::userCard($server, $user);
+        $kb = Keyboards::userActions($serverId, $user['username'], $user['is_active'], $user['status']);
+        self::sendFreshMenu($chatId, $card, $kb);
         return true;
     }
 }
