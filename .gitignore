@@ -6,3 +6,6 @@ data/*.json
 !data/.htaccess
 *.log
 .DS_Store
+
+data/*.lock
+__pycache__/

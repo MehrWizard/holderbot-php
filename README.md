@@ -1,137 +1,45 @@
-# HolderBot PHP `v0.6.0`
+# HolderBot PHP
 
-A high-performance, **zero-dependency** 1:1 PHP rewrite of HolderBot designed to run seamlessly on standard **cPanel shared hosting** or any LAMP/LEMP server using native PHP cURL, `php://input` webhooks, and zero external composer packages.
+PHP implementation of [erfjab/holderbot](https://github.com/erfjab/holderbot), targeting the supplied Python `v0.6.0` behavior while supporting webhook-based hosting.
 
-> **Original Source:** Rewritten from the original Python implementation: [https://github.com/erfjab/holderbot/](https://github.com/erfjab/holderbot/)  
-> **Release Version:** `v0.6.0` (matched 1:1 with the upstream release)
+The bot supports Marzban and Marzneshin servers, user creation/search/modification, templates, admin batch operations, inline search, offline QR codes, node monitoring, and expiry reports. Telegram menus, prompts and cards follow the original implementation.
 
----
+See [PARITY.md](PARITY.md) for the side-by-side audit, repaired gaps, intentional fixes to upstream bugs, test coverage, and remaining validation limits. Complete equivalence across all deployments has not been certified.
 
-## 🌟 Features Implemented (1:1 with Python HolderBot v0.6.0)
+## Deploy
 
-### 1. Panel & Server Management
-- **Multi-Panel Support:** Complete native REST integration with both **Marzban** and **Marzneshin**, including a sudo-privilege check on every login - a non-sudo credential is rejected, same as the original bot.
-- **Server Switching:** Manage multiple independent servers from a single Telegram bot.
-- **Interactive Server Setup:** Add new servers directly from Telegram; credentials are verified before anything is saved.
-- **Server Settings:** Toggle Node Monitoring, Node Auto-Restart, Expired Stats reporting (each behind a confirmation), edit remark/credentials, or remove a server.
-- **Server Statistics Dashboard:** Total accounts, active/disabled/expired/limited counts, and remaining-data percentiles, scanning every user on the server (no page cap).
+1. Use PHP 8.1+ with cURL, JSON, ctype and zlib. MySQL storage additionally requires PDO MySQL; optional QR backgrounds require GD.
+2. Copy `config.sample.php` to `config.php`. Set the bot token, authorized admin IDs, HTTPS webhook URL, timezone and storage settings.
+3. Ensure the storage directory is writable. JSON defaults to `data/storage.json`; `storage_path` can place it outside the web root. Existing PHP data is preserved; new installs start without templates.
+4. Register the webhook with `php set_webhook.php set` from the deployment directory.
+5. Schedule `php /absolute/path/holderbot-php/cron.php` every minute, or run `php cron.php --daemon` under a process supervisor for the original 30-second node-monitoring interval. Use one mode at a time. A lock prevents overlapping task runners.
 
-### 2. User & Subscription Operations
-- **Status Filter Browsing:** Filter users by `Active`, `Expired`, or `Limited` with responsive pagination.
-- **User Search & Deeplinks:**
-  - Search by username via `/user <server_id> <username>` (always returns a results list).
-  - In-bot interactive search wizard.
-  - Deep-link support: `/start user_<server_id>_<username>`.
-- **Telegram Inline Queries:** Search users live in any chat via `@BotUsername <server_id> <query>`.
-- **Rich User Info Cards:** Real-time traffic breakdown (GB & percentage), remaining expiration duration, status, note, and subscription link.
-- **User Modification & Quick Actions:**
-  - ❌ / ✅ **Toggle Active/Disabled**
-  - 🧪 **Recharge User ("Charge"):** Apply a template to extend an existing account, with optional traffic usage reset.
-  - 📊 **Modify Data Limit:** Change total GB limit directly on an existing user.
-  - ⏱️ **Modify Expiration Date:** Update remaining days directly.
-  - 🗒️ **Edit Note:** Update a user's note.
-  - 👤 **Change Owner:** Reassign user ownership to another admin.
-  - 🔁 **Reset Traffic Usage:** Reset consumed bandwidth back to 0.
-  - ⛓️ **Revoke Subscription Link:** Regenerate token & subscription URL immediately.
-  - 🖼️ **QR Code:** Generated fully offline (no third-party service ever sees the subscription link).
-  - 🗑️ **Delete User:** Permanently remove user with confirmation prompt.
+The background runner refreshes panel access every eight hours and sends expiry reports at or after 06:00 in the configured timezone. `php cron.php --expired` explicitly runs the daily report immediately.
 
-### 3. Creation Wizard
-- Validates username formatting.
-- 🎲 **Random Username Generator:** 1-click random username, which then flows into the same count/template steps as a typed name.
-- 1-click template selection or custom GB and duration inputs.
-- Optional numeric suffix to create several accounts from one base name in a single pass.
-- JSON import for bulk creation from a `.json` document (strictly validated).
+For an optional QR background, set `qr_background` to a local image path. Text overrides use upstream names, for example:
 
-### 4. Batch Server Actions (`Actions` Menu)
-- **Delete Expired Users:** Automatically cleans up all expired accounts under a selected admin or globally (`ALL`), after confirmation.
-- **Delete Limited Users:** Automatically cleans up all data-exhausted accounts, after confirmation.
-- **Delete Admin Users:** Remove all of one admin's accounts, after confirmation (always scoped to a specific admin).
-- **Bulk Enable/Disable:** Enable or disable all accounts belonging to a specific panel administrator, after confirmation.
-- **Transfer Users:** Reassign all accounts from Admin A to Admin B in bulk, after confirmation.
-
-### 5. Template Management (CRUD)
-- Create new templates (Remark, Data Limit in GB, Date Limit in Days, and Date Type: unlimited / fixed date / after first use) directly inside Telegram.
-- Inspect, edit, enable/disable (with confirmation), and delete templates.
-- 1-click application in user creation and recharging - date type included.
-
-### 6. Background Tasks on cPanel (`cron.php`)
-- **Node Health Monitoring:** Periodically inspects node connectivity and auto-restarts failed nodes; a node an admin deliberately disabled is never treated as a failure.
-- **Instant Admin Alerts:** Dispatches high-priority Telegram alerts when any node experiences failure.
-- **Daily Expired Summary:** Notification listing accounts that expired in the last 24 hours, with one-click bot deeplinks.
-
----
-
-## 📁 Directory Structure
-
-```text
-holderbot-php/
-├── config.sample.php     # Sample configuration file
-├── config.php            # Your active configuration
-├── version.php           # Upstream version definition (v0.6.0)
-├── index.php             # Webhook entry point (reads php://input)
-├── tgbot.php             # Native cURL Telegram API wrapper with tgbot()
-├── storage.php           # Zero-dependency storage (JSON file or MySQL)
-├── cron.php              # Background task runner for cPanel cron jobs
-├── set_webhook.php       # Webhook registration / inspection utility
-├── panels/
-│   ├── marzban.php       # Marzban REST client (auth, users, admins, nodes, system)
-│   ├── marzneshin.php    # Marzneshin REST client (auth, users, admins, nodes, services)
-│   └── panel_manager.php # Unified normalization layer & batch orchestrator
-├── helpers/
-│   ├── format.php        # Human-readable bytes, dates, stats, and cards
-│   ├── keyboards.php     # Telegram inline keyboard builders
-│   └── qrcode.php        # Zero-dependency QR code generator
-├── handlers/
-│   ├── commands.php      # /start, /help, /user commands & deeplinks
-│   ├── callbacks.php     # Inline button actions (menus, user operations, actions)
-│   ├── states.php        # Multi-step creation, recharge & modification wizards
-│   └── inline.php        # Inline query search handler (@bot srv_id query)
-└── data/
-    └── .htaccess         # Security protection blocking browser access
+```php
+'messages' => ['START' => 'Welcome!'],
+'keyboards' => ['HOMES' => 'Home'],
 ```
 
----
+The corresponding process environment variables also work. PHP does not automatically read Python's `.env` file.
 
-## 🚀 cPanel Deployment Guide
+## Verify
 
-### 1. Upload Files
-1. Open **cPanel File Manager**.
-2. Navigate to `public_html/` and create a folder named `holderbot` (e.g. `public_html/holderbot`).
-3. Upload all files from `holderbot-php/` into that folder.
+Tests use temporary storage and local fake services; they do not load your production configuration.
 
-### 2. Configure Settings
-1. Copy `config.sample.php` to `config.php`.
-2. Edit `config.php`:
-   - Set `'bot_token'` from [@BotFather](https://t.me/BotFather).
-   - Add your Telegram User ID to `'admin_ids'` (get it from [@userinfobot](https://t.me/userinfobot)).
-   - Set `'webhook_url'` to your full HTTPS URL (e.g. `https://yourdomain.com/holderbot/index.php`).
-
-### 3. File Permissions
-Ensure the `data/` directory is writable by the web server:
 ```bash
-chmod 755 data/
+python3 -m pip install -r tests/requirements.txt
+python3 tests/run_all.py /path/to/original/holderbot
 ```
 
-### 4. Register the Webhook
-Open in your browser:
-```text
-https://yourdomain.com/holderbot/set_webhook.php?action=set
-```
-Or run via SSH:
+For PHP workflow tests alone:
+
 ```bash
-php set_webhook.php set
+php tests/run.php
 ```
 
-### 5. Setup cPanel Cron Job
-In cPanel, search for **Cron Jobs** and add a job running every minute (`* * * * *`) - the shortest interval most hosts allow, and the closest a cron-driven script can get to the original bot's continuous 30-second node monitoring:
-```bash
-php /home/yourusername/public_html/holderbot/cron.php > /dev/null 2>&1
-```
+The Python source is only a test oracle. The deployed bot has no Python or Composer dependency.
 
----
-
-## 📄 License & Attribution
-
-Original Python HolderBot repository: [https://github.com/erfjab/holderbot/](https://github.com/erfjab/holderbot/)  
-Original Author: [erfjab](https://github.com/erfjab)
+Original author: [erfjab](https://github.com/erfjab). PHP repository: [MehrWizard/holderbot-php](https://github.com/MehrWizard/holderbot-php).

@@ -32,6 +32,16 @@ return [
     // -------------------------------------------------------------------------
     'timezone' => 'UTC',
 
+    // Optional QR background image (requires PHP GD), matching QR_BACKGROUND.
+    'qr_background' => '',
+
+    // Optional text overrides, using upstream setting names (e.g. START, HOMES).
+    'messages' => [],
+    'keyboards' => [],
+
+    // Optional absolute JSON storage path; useful outside public_html.
+    'storage_path' => __DIR__ . '/data/storage.json',
+
     // -------------------------------------------------------------------------
     // Storage Engine Settings
     // -------------------------------------------------------------------------

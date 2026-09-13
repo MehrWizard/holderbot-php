@@ -6,6 +6,8 @@
  */
 
 declare(strict_types=1);
+require_once __DIR__ . '/helpers/tracker.php';
+require_once __DIR__ . '/helpers/language.php';
 
 /**
  * Executes a Telegram Bot API method via cURL.
@@ -71,6 +73,21 @@ function tgbot(string $method, array $params = []): ?array {
     return $result;
 }
 
+function tg_pack_keyboard(?array $markup): ?array {
+    if ($markup === null) return null;
+    foreach ($markup['inline_keyboard'] as &$row) {
+        foreach ($row as &$button) {
+            $button['text'] = Language::replace('keyboards', $button['text']);
+            $data = $button['callback_data'] ?? '';
+            if (strlen($data) > 64) {
+                $button['callback_data'] = 'ref:' . substr(hash('sha256', $data), 0, 48);
+                Storage::cacheSet($button['callback_data'], $data, 30 * 86400);
+            }
+        }
+    }
+    return $markup;
+}
+
 /**
  * Send a text message to a chat.
  */
@@ -82,14 +99,16 @@ function tg_send_message(
 ): ?array {
     $params = [
         'chat_id' => $chatId,
-        'text' => $text,
+        'text' => Language::replace('messages', $text),
         'parse_mode' => $parseMode,
         'disable_web_page_preview' => true,
     ];
     if ($replyMarkup !== null) {
-        $params['reply_markup'] = $replyMarkup;
+        $params['reply_markup'] = tg_pack_keyboard($replyMarkup);
     }
-    return tgbot('sendMessage', $params);
+    $response = tgbot('sendMessage', $params);
+    MessageTracker::sent($chatId, $text, $replyMarkup, $response);
+    return $response;
 }
 
 /**
@@ -102,17 +121,20 @@ function tg_edit_message(
     ?array $replyMarkup = null,
     string $parseMode = 'HTML'
 ): ?array {
+    if ($messageId <= 0) return tg_send_message($chatId, $text, $replyMarkup, $parseMode);
     $params = [
         'chat_id' => $chatId,
         'message_id' => $messageId,
-        'text' => $text,
+        'text' => Language::replace('messages', $text),
         'parse_mode' => $parseMode,
         'disable_web_page_preview' => true,
     ];
     if ($replyMarkup !== null) {
-        $params['reply_markup'] = $replyMarkup;
+        $params['reply_markup'] = tg_pack_keyboard($replyMarkup);
     }
-    return tgbot('editMessageText', $params);
+    $response = tgbot('editMessageText', $params);
+    if (!empty($response['ok'])) MessageTracker::remember($chatId, $messageId);
+    return $response;
 }
 
 /**
@@ -159,7 +181,7 @@ function tg_send_photo(
         'parse_mode' => $parseMode,
     ];
     if ($replyMarkup !== null) {
-        $params['reply_markup'] = $replyMarkup;
+        $params['reply_markup'] = tg_pack_keyboard($replyMarkup);
     }
 
     if (file_exists($photo)) {

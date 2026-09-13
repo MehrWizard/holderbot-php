@@ -1,137 +1,140 @@
 <?php
-/**
- * HolderBot PHP - String & Data Formatting Helpers
- */
-
 declare(strict_types=1);
+require_once __DIR__ . '/language.php';
 
 class Formatter {
-    /**
-     * Format bytes into a human-readable string (GB, MB, KB, B).
-     */
+    public static function escape(mixed $value): string {
+        return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    }
+    public static function start(): string {
+        require_once __DIR__ . '/../version.php';
+        return "Welcome to HolderBot 🤖 [<code>" . HOLDERBOT_VERSION . "</code> by @ErfJabs]\n" .
+            "<b><a href='https://t.me/pingihostbot'>نصب پنل و انجام تانل به صورت کامل خودکار!</a></b>";
+    }
+    public static function credentialsPrompt(): string {
+        return "<b>Enter Marz Server Credentials:\n</b>• <code>Username [sudo]</code>\n• <code>Password [sudo]</code>\n• <code>Host [https://sub.domain.com:port]</code>\n\n<b>Example:</b>\n<code>erfan\nerfan\nhttps://panel.domain.com:443</code>";
+    }
     public static function bytes(int|float|null $bytes, int $precision = 2): string {
-        if ($bytes === null || $bytes <= 0) {
-            return '0 B';
+        $value = $bytes ?? 0;
+        foreach (['bytes', 'KB', 'MB', 'GB', 'TB'] as $unit) {
+            if ($value < 1024) return number_format($value, $precision, '.', '') . ' ' . $unit;
+            $value /= 1024;
         }
-
-        $units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-        $power = floor(log($bytes, 1024));
-        $power = min($power, count($units) - 1);
-
-        $value = $bytes / pow(1024, $power);
-        return round($value, $precision) . ' ' . $units[$power];
+        return number_format($value, $precision, '.', '') . ' TB';
     }
-
-    /**
-     * Format a timestamp into relative time difference.
-     */
-    public static function timeDiff(?int $timestamp): string {
-        if (!$timestamp || $timestamp <= 0) {
-            return 'Never';
-        }
-
-        $now = time();
-        $diff = $timestamp - $now;
-
-        $dateFormatted = date('Y-m-d H:i', $timestamp);
-
-        if ($diff > 0) {
-            $days = floor($diff / 86400);
-            $hours = floor(($diff % 86400) / 3600);
-            if ($days > 0) {
-                return "{$days}d {$hours}h remaining ({$dateFormatted})";
-            }
-            return "{$hours}h remaining ({$dateFormatted})";
-        }
-
-        $absDiff = abs($diff);
-        $days = floor($absDiff / 86400);
-        return "Expired {$days}d ago ({$dateFormatted})";
+    public static function timestamp(mixed $value): ?int {
+        if ($value === null || $value === '') return null;
+        if (is_int($value)) return $value;
+        try { return (new DateTimeImmutable((string)$value, new DateTimeZone('UTC')))->getTimestamp(); }
+        catch (Exception) { return null; }
     }
-
-    /**
-     * Format user details into a Telegram HTML message card.
-     */
-    public static function userCard(array $server, array $user): string {
-        $username = htmlspecialchars($user['username']);
-        $status = $user['status'];
-        $isActive = $user['is_active'];
-
-        $statusEmoji = match ($status) {
-            'active' => '✅ Active',
-            'disabled' => '❌ Disabled',
-            'expired' => '⏱️ Expired',
-            'limited' => '🚫 Limited',
-            'on_hold' => '⏸️ On Hold',
-            default => "ℹ️ " . ucfirst($status),
+    public static function timeDiff(?int $timestamp, ?int $now = null): string {
+        if ($timestamp === null) return '➖';
+        $diff = $timestamp - ($now ?? time());
+        if ($diff === 0) return 'now';
+        $seconds = abs($diff);
+        if ($seconds < 60) $value = $seconds . ' sec';
+        elseif ($seconds < 3600) $value = intdiv($seconds, 60) . ' min';
+        elseif ($seconds < 86400) $value = intdiv($seconds, 3600) . ' hour';
+        else $value = abs((int)floor($diff / 86400)) . ' day';
+        return $diff > 0 ? 'in ' . $value : $value . ' ago';
+    }
+    public static function expireInfo(array $user): string {
+        $raw = $user['raw'] ?? [];
+        return match ($raw['expire_strategy'] ?? 'never') {
+            'never' => 'Never expires',
+            'fixed_date' => !empty($raw['expire_date']) ? self::timeDiff(self::timestamp($raw['expire_date'])) : 'Unknown',
+            'start_on_first_use' => !empty($raw['usage_duration']) ? (int)($raw['usage_duration'] / 86400) . ' days after first use' : 'Unknown',
+            default => 'Unknown',
         };
-
-        $usedTraffic = self::bytes($user['used_traffic_bytes']);
-        $dataLimit = ($user['data_limit_bytes'] > 0) ? self::bytes($user['data_limit_bytes']) : 'Unlimited';
-
-        $trafficPercent = '';
-        if ($user['data_limit_bytes'] > 0) {
-            $pct = round(($user['used_traffic_bytes'] / $user['data_limit_bytes']) * 100, 1);
-            $trafficPercent = " ({$pct}%)";
-        }
-
-        $expire = self::timeDiff($user['expire_timestamp']);
-        $serverName = htmlspecialchars($server['remark']);
-
-        $card = "<b>👤 User:</b> <code>{$username}</code>\n";
-        $card .= "<b>🖥 Server:</b> <code>{$serverName}</code>\n";
-        $card .= "<b>🚦 Status:</b> <b>{$statusEmoji}</b>\n";
-        $card .= "<b>📊 Traffic:</b> <code>{$usedTraffic} / {$dataLimit}{$trafficPercent}</code>\n";
-        if (!empty($user['lifetime_used_traffic_bytes'])) {
-            $card .= "<b>📈 Lifetime Used Traffic:</b> <code>" . self::bytes($user['lifetime_used_traffic_bytes']) . "</code>\n";
-        }
-        $card .= "<b>⏱ Expiration:</b> <code>{$expire}</code>\n";
-
-        if (!empty($user['note'])) {
-            $note = htmlspecialchars($user['note']);
-            $card .= "<b>📝 Note:</b> <code>{$note}</code>\n";
-        }
-
-        if (!empty($user['subscription_url'])) {
-            $subUrl = $user['subscription_url'];
-            $card .= "\n<b>🔗 Subscription Link:</b>\n<code>{$subUrl}</code>\n";
-        }
-
-        return $card;
     }
-
-    /**
-     * Format server details card.
-     */
+    public static function briefData(array $server, array $user): array {
+        $neshin = $server['type'] === 'marzneshin';
+        return [
+            'username' => $user['username'],
+            'data_limit' => !empty($user['data_limit_bytes']) ? self::bytes($user['data_limit_bytes']) : ($neshin ? 'Unlimited' : 'None'),
+            'expire_strategy' => $neshin ? ($user['raw']['expire_strategy'] ?? 'never') . ' (' . self::expireInfo($user) . ')' : $user['status'],
+            'subscription_url' => $user['subscription_url'],
+        ];
+    }
+    public static function userInfo(array $server, array $user): string {
+        $d = array_map([self::class, 'escape'], self::briefData($server, $user));
+        $template = Language::get('messages', 'USER_INFO');
+        foreach ($d as $key => $value) $template = str_replace('{' . $key . '}', $value, $template);
+        return $template;
+    }
+    public static function userCard(array $server, array $user): string {
+        $r = $user['raw'] ?? [];
+        $date = fn($key) => self::timeDiff(self::timestamp($r[$key] ?? null));
+        $yes = fn($key) => !empty($r[$key]) ? 'Yes' : 'No';
+        $fields = ['Username' => $user['username']];
+        if ($server['type'] === 'marzneshin') {
+            $fields += [
+                'Expire Strategy' => ($r['expire_strategy'] ?? 'never') . ' (' . self::expireInfo($user) . ')',
+                'Activation Deadline' => $date('activation_deadline'),
+                'Data Limit' => !empty($r['data_limit']) ? self::bytes($r['data_limit']) : 'Unlimited',
+                'Data Reset Strategy' => $r['data_limit_reset_strategy'] ?? 'no_reset',
+                'Used Traffic' => self::bytes($r['used_traffic'] ?? 0),
+                'Total Used Traffic' => self::bytes($r['lifetime_used_traffic'] ?? 0),
+                'Last Update' => $date('sub_updated_at'), 'Last User Agent' => ($r['sub_last_user_agent'] ?? '') ?: '➖',
+                'Last Online' => $date('online_at'), 'Activated' => $yes('activated'), 'Enabled' => $yes('enabled'),
+                'Active' => $yes('is_active'), 'Expired' => $yes('expired'), 'Data Limit Reached' => $yes('data_limit_reached'),
+                'Services' => implode(', ', $r['service_ids'] ?? []), 'Owner' => $r['owner_username'] ?? '➖',
+                'Note' => ($r['note'] ?? '') ?: '➖', 'Revoked At' => $date('sub_revoked_at'),
+                'Traffic Reset At' => $date('traffic_reset_at'), 'Created At' => $date('created_at'),
+                'Subscription URL' => $user['subscription_url'],
+            ];
+        } else {
+            $fields += [
+                'Status' => $user['status'], 'Expire' => !empty($r['expire']) ? self::timeDiff((int)$r['expire']) : 'Never',
+                'Expire Strategy: ' => $user['status'],
+                'Data Limit' => !empty($r['data_limit']) ? self::bytes($r['data_limit']) : 'Unlimited',
+                'Data Reset Strategy' => $r['data_limit_reset_strategy'] ?? 'no_reset',
+                'Used Traffic' => !empty($r['used_traffic']) ? self::bytes($r['used_traffic']) : '0B',
+                'Lifetime Used Traffic' => !empty($r['lifetime_used_traffic']) ? self::bytes($r['lifetime_used_traffic']) : '0B',
+                'Last Update' => $date('sub_updated_at'), 'Last User Agent' => ($r['sub_last_user_agent'] ?? '') ?: '➖',
+                'Last Online' => $date('online_at'), 'On Hold Expire Duration' => ($r['on_hold_expire_duration'] ?? 0) ?: '➖',
+                'On Hold Timeout' => $date('on_hold_timeout'), 'Note' => ($r['note'] ?? '') ?: '➖',
+                'Subscription URL' => $user['subscription_url'] ?: '➖', 'Created At' => $date('created_at'),
+                'Admin' => $r['admin']['username'] ?? '➖',
+            ];
+        }
+        $lines = [];
+        foreach ($fields as $key => $value) {
+            $label = $key === 'Expire Strategy: ' ? $key : $key . ':';
+            $lines[] = '<b>• ' . $label . '</b> <code>' . self::escape($value) . '</code>';
+        }
+        return implode("\n", $lines);
+    }
+    private static function age(array $item): string {
+        $created = self::timestamp($item['created_at'] ?? null);
+        return $created !== null ? (int)floor((time() - $created) / 86400) . ' days ago' : '➖';
+    }
     public static function serverCard(array $server): string {
-        $remark = htmlspecialchars($server['remark']);
-        $type = strtoupper($server['type']);
-        $baseUrl = htmlspecialchars($server['base_url']);
-        $activeEmoji = !empty($server['is_active']) ? '✅ Active' : '❌ Inactive';
-        $onlineEmoji = PanelManager::isOnline($server) ? '✅ Yes' : '❌ No';
-        $monitorEmoji = !empty($server['node_monitoring']) ? '✅ Enabled' : '❌ Disabled';
-        $restartEmoji = !empty($server['node_restart']) ? '✅ Enabled' : '❌ Disabled';
-        $expiredStatsEmoji = !empty($server['expired_stats']) ? '✅ Enabled' : '❌ Disabled';
-
-        $text = "<b>🖥 Server:</b> <code>{$remark}</code> (ID: <code>{$server['id']}</code>)\n";
-        $text .= "<b>⚙️ Type:</b> <code>{$type}</code>\n";
-        $text .= "<b>🌐 URL:</b> <code>{$baseUrl}</code>\n";
-        $text .= "<b>🚦 State:</b> {$activeEmoji}\n";
-        $text .= "<b>🛰 Online:</b> {$onlineEmoji}\n";
-        $text .= "<b>📡 Node Monitoring:</b> {$monitorEmoji}\n";
-        $text .= "<b>🔄 Auto Restart:</b> {$restartEmoji}\n";
-        $text .= "<b>⚰️ Expired Stats:</b> {$expiredStatsEmoji}\n";
-
+        $fields = ['ID' => $server['id'], 'Remark' => $server['remark'], 'Active' => ($server['is_active'] ?? true) ? 'Yes' : 'No',
+            'Online' => PanelManager::isOnline($server) ? 'Yes' : 'No',
+            'Node Monitoring' => !empty($server['node_monitoring']) ? 'Yes' : 'No',
+            'Node Auto Restart' => !empty($server['node_restart']) ? 'Yes' : 'No',
+            'Expired Stats' => !empty($server['expired_stats']) ? 'Yes' : 'No', 'Types' => $server['type']];
+        $text = '';
+        foreach ($fields as $key => $value) $text .= '• <b>' . $key . ':</b> <code>' . self::escape($value) . "</code>\n";
+        $text .= "• <b>Data</b>\n";
+        foreach (['username' => 'username', 'password' => 'password', 'host' => 'base_url'] as $label => $key) $text .= '     • <b>' . $label . ':</b> <code>' . self::escape($server[$key] ?? '') . "</code>\n";
+        return $text . '• <b>Updated At:</b> <code>' . self::escape($server['updated_at'] ?? '➖') . "</code>\n• <b>Created At:</b> <code>" . self::age($server) . "</code>\n";
+    }
+    public static function templateCard(array $template): string {
+        $type = ['fixed' => 'now', 'onhold' => 'after first use', 'unlimited' => 'unlimited'][$template['date_type'] ?? 'fixed'];
+        $fields = ['Remark' => $template['remark'], 'Active' => ($template['is_active'] ?? true) ? 'Yes' : 'No',
+            'Data limit' => $template['data_limit'], 'Date limit' => $template['date_limit'], 'Date types' => $type,
+            'Updated At' => $template['updated_at'] ?? '➖', 'Created At' => self::age($template)];
+        $text = '';
+        foreach ($fields as $key => $value) $text .= '• <b>' . $key . ':</b> <code>' . self::escape($value) . "</code>\n";
         return $text;
     }
-
-    /**
-     * Format server statistics dashboard card.
-     */
     public static function statsCard(array $server, array $stats): string {
         $remark = htmlspecialchars($server['remark']);
 
-        $text = "📊 <b>Statistics Dashboard - {$remark}</b>\n\n";
+        $text = "";
         $text .= "📊 <b>Total:</b> <code>{$stats['total_users']}</code>\n";
         $text .= "✅ <b>Enable:</b> <code>{$stats['active_users']}</code>\n";
         $text .= "🚫 <b>Disable:</b> <code>{$stats['disabled_users']}</code>\n";
@@ -143,28 +146,10 @@ class Formatter {
         $text .= "📆 <b>Last Week Sub-Updated/Online:</b> <code>" . ($stats['update_week'] ?? 0) . "</code>/<code>" . ($stats['online_week'] ?? 0) . "</code>\n";
         $text .= "📅 <b>Last Month Sub-Updated/Online:</b> <code>" . ($stats['update_month'] ?? 0) . "</code>/<code>" . ($stats['online_month'] ?? 0) . "</code>\n";
 
-        $expiredList = !empty($stats['today_expired']) ? implode(', ', $stats['today_expired']) : '<code>None</code>';
-        $text .= "⚰️ <b>List of users:</b> {$expiredList}\n";
+        $expiredList = !empty($stats['today_expired']) ? implode(',', $stats['today_expired']) : '<code>None</code>';
+        $text .= "⚰️ <b>Expired in 24 Hours:</b> {$expiredList}";
 
         return $text;
     }
 
-    /**
-     * Format template card.
-     */
-    public static function templateCard(array $template): string {
-        $remark = htmlspecialchars($template['remark']);
-        $isActive = !isset($template['is_active']) || !empty($template['is_active']);
-        $dateType = $template['date_type'] ?? 'fixed';
-        $dateTypeLabel = match ($dateType) {
-            'unlimited' => 'Unlimited',
-            'onhold' => 'After First Use',
-            default => 'Fixed Date',
-        };
-        return "📋 <b>Template:</b> <code>{$remark}</code> (ID: <code>{$template['id']}</code>)\n\n" .
-               "• <b>Active:</b> <code>" . ($isActive ? 'Yes' : 'No') . "</code>\n" .
-               "• <b>Data Limit:</b> <code>{$template['data_limit']} GB</code>\n" .
-               "• <b>Date Limit:</b> <code>{$template['date_limit']} Days</code>\n" .
-               "• <b>Date Type:</b> <code>{$dateTypeLabel}</code>\n";
-    }
 }

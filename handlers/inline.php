@@ -34,7 +34,7 @@ class InlineHandlers {
         }
 
         // First parameter must be server ID
-        if (!is_numeric($parts[0])) {
+        if (!ctype_digit($parts[0])) {
             tg_answer_inline_query(
                 $id,
                 [],
@@ -75,18 +75,20 @@ class InlineHandlers {
 
         $results = [];
         foreach ($users as $u) {
-            $statusEmoji = $u['is_active'] ? '✅' : '❌';
-            $owner = !empty($u['owner_username']) ? " ({$u['owner_username']})" : '';
-            $dataLimit = ($u['data_limit_bytes'] > 0) ? Formatter::bytes($u['data_limit_bytes']) : 'Unlimited';
-            $expire = Formatter::timeDiff($u['expire_timestamp']);
+            $statusEmoji = $u['is_active'] ? '✅ ' : '❌ ';
+            $owner = $u['owner_username'] ?: 'None';
+            $brief = Formatter::briefData($server, $u);
+            $dataLimit = $brief['data_limit'];
+            $expire = $brief['expire_strategy'];
 
             $results[] = [
                 'type' => 'article',
-                'id' => 'usr_' . $serverId . '_' . $u['username'],
-                'title' => "{$statusEmoji} {$u['username']}{$owner}",
+                'id' => $u['username'],
+                'title' => "{$statusEmoji} {$u['username']} ({$owner})",
                 'description' => "data: {$dataLimit} | date: {$expire}",
+                'thumbnail_url' => 'https://github.com/user-attachments/assets/02947eb3-421c-424c-8f64-83686168c8f5',
                 'input_message_content' => [
-                    'message_text' => "<b>Username:</b> <code>{$u['username']}</code>\n<b>Data Limit:</b> <code>{$dataLimit}</code>\n<b>Expiration:</b> <code>{$expire}</code>\n<b>Sub Url:</b> <code>{$u['subscription_url']}</code>",
+                    'message_text' => Formatter::userInfo($server, $u),
                     'parse_mode' => 'HTML',
                 ],
             ];

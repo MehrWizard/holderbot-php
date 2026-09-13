@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 class MarzneshinClient {
     public static string $lastError = '';
+    public static ?Closure $transport = null;
 
     public static function getLastError(): string {
         return self::$lastError;
@@ -17,7 +18,7 @@ class MarzneshinClient {
     /**
      * Send HTTP request to Marzneshin API.
      */
-    private static function request(
+    public static function request(
         array $server,
         string $method,
         string $endpoint,
@@ -25,6 +26,7 @@ class MarzneshinClient {
         bool $requiresAuth = true,
         bool $asFormUrlencoded = false
     ): ?array {
+        if (self::$transport !== null) return (self::$transport)($server, $method, $endpoint, $payload);
         $baseUrl = rtrim($server['base_url'], '/');
         $url = $baseUrl . $endpoint;
 
@@ -44,8 +46,8 @@ class MarzneshinClient {
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CUSTOMREQUEST => strtoupper($method),
-            CURLOPT_TIMEOUT => 25,
-            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT => 5,
+            CURLOPT_CONNECTTIMEOUT => 5,
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_SSL_VERIFYHOST => false,
         ];
@@ -74,7 +76,7 @@ class MarzneshinClient {
             return null;
         }
 
-        if ($httpCode >= 400) {
+        if ($httpCode < 200 || $httpCode >= 300) {
             $errData = json_decode($response, true);
             $msg = $errData['detail'] ?? "HTTP {$httpCode}: {$response}";
             if (is_array($msg)) {
@@ -85,8 +87,15 @@ class MarzneshinClient {
             return null;
         }
 
+        if (trim($response) === '') {
+            return ['success' => true];
+        }
         $decoded = json_decode($response, true);
-        return is_array($decoded) ? $decoded : ['raw' => $response, 'code' => $httpCode];
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            self::$lastError = 'Invalid JSON response: ' . json_last_error_msg();
+            return null;
+        }
+        return is_array($decoded) ? ($decoded === [] && str_starts_with(ltrim($response), '{') ? ['success' => true] : $decoded) : null;
     }
 
     /** Recursively remove null values so they are omitted from the JSON body entirely. */
@@ -110,10 +119,10 @@ class MarzneshinClient {
      * original bot, which refuses to onboard (or keep using) a non-sudo panel
      * account.
      */
-    public static function getToken(array &$server): ?string {
-        $cacheKey = "marzneshin_token_" . ($server['id'] ?? md5($server['base_url']));
+    public static function getToken(array &$server, bool $force = false): ?string {
+        $cacheKey = "marzneshin_token_" . hash('sha256', json_encode([$server['base_url'], $server['username'], $server['password']]));
         $cached = Storage::cacheGet($cacheKey);
-        if ($cached) {
+        if ($cached && !$force) {
             return $cached;
         }
 
@@ -141,7 +150,7 @@ class MarzneshinClient {
         }
 
         $token = $resp['access_token'];
-        Storage::cacheSet($cacheKey, $token, 7 * 3600);
+        Storage::cacheSet($cacheKey, $token, 8 * 3600);
         Storage::cacheSet("online_" . ($server['id'] ?? md5($server['base_url'])), time(), 86400);
         return $token;
     }
@@ -242,6 +251,7 @@ class MarzneshinClient {
      * Modify existing user data.
      */
     public static function modifyUser(array $server, string $username, array $data): ?array {
+        $data['username'] = $username;
         return self::request($server, 'PUT', '/api/users/' . rawurlencode($username), $data);
     }
 
@@ -249,7 +259,8 @@ class MarzneshinClient {
      * Toggle user status (active/disabled).
      */
     public static function setStatus(array $server, string $username, bool $active): bool {
-        $endpoint = $active ? "/api/users/{$username}/enable" : "/api/users/{$username}/disable";
+        $encoded = rawurlencode($username);
+        $endpoint = $active ? "/api/users/{$encoded}/enable" : "/api/users/{$encoded}/disable";
         $resp = self::request($server, 'POST', $endpoint);
         return $resp !== null;
     }

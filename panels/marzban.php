@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 class MarzbanClient {
     public static string $lastError = '';
+    public static ?Closure $transport = null;
 
     public static function getLastError(): string {
         return self::$lastError;
@@ -17,7 +18,7 @@ class MarzbanClient {
     /**
      * Send HTTP request to Marzban API.
      */
-    private static function request(
+    public static function request(
         array $server,
         string $method,
         string $endpoint,
@@ -26,6 +27,7 @@ class MarzbanClient {
         bool $asFormUrlencoded = false,
         ?string $bearerOverride = null
     ): ?array {
+        if (self::$transport !== null) return (self::$transport)($server, $method, $endpoint, $payload);
         $baseUrl = rtrim($server['base_url'], '/');
         $url = $baseUrl . $endpoint;
 
@@ -47,8 +49,8 @@ class MarzbanClient {
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CUSTOMREQUEST => strtoupper($method),
-            CURLOPT_TIMEOUT => 25,
-            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT => 5,
+            CURLOPT_CONNECTTIMEOUT => 5,
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_SSL_VERIFYHOST => false,
         ];
@@ -77,7 +79,7 @@ class MarzbanClient {
             return null;
         }
 
-        if ($httpCode >= 400) {
+        if ($httpCode < 200 || $httpCode >= 300) {
             $errData = json_decode($response, true);
             $msg = $errData['detail'] ?? "HTTP {$httpCode}: {$response}";
             if (is_array($msg)) {
@@ -88,8 +90,15 @@ class MarzbanClient {
             return null;
         }
 
+        if (trim($response) === '') {
+            return ['success' => true];
+        }
         $decoded = json_decode($response, true);
-        return is_array($decoded) ? $decoded : ['raw' => $response, 'code' => $httpCode];
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            self::$lastError = 'Invalid JSON response: ' . json_last_error_msg();
+            return null;
+        }
+        return is_array($decoded) ? ($decoded === [] && str_starts_with(ltrim($response), '{') ? ['success' => true] : $decoded) : null;
     }
 
     /** Recursively remove null values so they are omitted from the JSON body entirely. */
@@ -113,10 +122,10 @@ class MarzbanClient {
      * original bot, which refuses to onboard (or keep using) a non-sudo panel
      * account.
      */
-    public static function getToken(array &$server): ?string {
-        $cacheKey = "marzban_token_" . ($server['id'] ?? md5($server['base_url']));
+    public static function getToken(array &$server, bool $force = false): ?string {
+        $cacheKey = "marzban_token_" . hash('sha256', json_encode([$server['base_url'], $server['username'], $server['password']]));
         $cached = Storage::cacheGet($cacheKey);
-        if ($cached) {
+        if ($cached && !$force) {
             return $cached;
         }
 
@@ -155,7 +164,7 @@ class MarzbanClient {
             return null;
         }
 
-        Storage::cacheSet($cacheKey, $token, 7 * 3600);
+        Storage::cacheSet($cacheKey, $token, 8 * 3600);
         Storage::cacheSet("online_" . ($server['id'] ?? md5($server['base_url'])), time(), 86400);
         return $token;
     }
@@ -242,7 +251,7 @@ class MarzbanClient {
 
         if ($status === 'on_hold') {
             $payload['expire'] = null;
-            if ($onHoldExpireDuration !== null && $onHoldExpireDuration > 0) {
+            if ($onHoldExpireDuration !== null) {
                 $payload['on_hold_expire_duration'] = $onHoldExpireDuration;
             }
         } else {

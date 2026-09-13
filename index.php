@@ -105,17 +105,23 @@ if (!in_array($userId, $adminIds, true)) {
     error_log("HolderBot: unauthorized access attempt by user_id={$userId} ({$username})");
 
     foreach ($adminIds as $adminId) {
+        $usernameDisplay = !empty($fromUser['username']) ? $fromUser['username'] : '➖';
         tg_send_message(
             $adminId,
-            "🥷🏻 <b>Oops, we have a spy!</b>\n\n" .
-            "<b>Name:</b> " . htmlspecialchars($firstName ?: 'Unknown') . "\n" .
-            "<b>Username:</b> " . htmlspecialchars($username) . "\n" .
-            "<b>ID:</b> <code>{$userId}</code>\n\n" .
-            "<a href=\"tg://openmessage?user_id={$userId}\">Open chat with this user</a>"
+            "<b>Oops, we have a spy!</b>\n" .
+            "🥷🏻 <b>Full Name:</b> <code>" . htmlspecialchars($firstName) . "</code>\n" .
+            "📌 <b>Username:</b> <code>{$usernameDisplay}</code>\n" .
+            "🆔 <b>User ID:</b> <code>{$userId}</code>\n" .
+            "🔗 <b>Private Chat Link:</b> <a href='tg://openmessage?user_id={$userId}'>Click here to open chat</a>"
         );
     }
     exit;
 }
+
+Storage::setChatContext($update['message']['chat']['id'] ?? $update['callback_query']['message']['chat']['id'] ?? $userId);
+
+$interactiveChat = $update['message']['chat']['id'] ?? $update['callback_query']['message']['chat']['id'] ?? null;
+if ($interactiveChat !== null) MessageTracker::begin($interactiveChat, $update['message']['message_id'] ?? null);
 
 // 7. Route Updates
 try {

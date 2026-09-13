@@ -11,11 +11,30 @@ class Storage {
     private static ?PDO $pdo = null;
     private static string $jsonFile = __DIR__ . '/data/storage.json';
 
+    private static int|string|null $chatContext = null;
+    public static function setChatContext(int|string|null $chatId): void { self::$chatContext = $chatId; }
+    private static function stateKey(int $userId): string {
+        $chatId = self::$chatContext ?? $userId;
+        return (string)$chatId === (string)$userId ? (string)$userId : $userId . ':' . $chatId;
+    }
+    private static function stateChat(int $userId): int|string { return self::$chatContext ?? $userId; }
+
+    private static bool $jsonLocked = false;
+    private static function jsonMutation(Closure $operation): mixed {
+        if (!is_dir(dirname(self::$jsonFile))) mkdir(dirname(self::$jsonFile), 0755, true);
+        $lock = fopen(self::$jsonFile . '.lock', 'c');
+        if (!$lock || !flock($lock, LOCK_EX)) throw new RuntimeException('Unable to lock storage');
+        self::$jsonLocked = true;
+        try { return $operation(); }
+        finally { self::$jsonLocked = false; flock($lock, LOCK_UN); fclose($lock); }
+    }
+
     /**
      * Initialize storage and auto-migrate if needed.
      */
     public static function init(): void {
         global $config;
+        self::$jsonFile = $config['storage_path'] ?? self::$jsonFile;
         $type = $config['storage_type'] ?? 'json';
 
         if ($type === 'mysql' && extension_loaded('pdo_mysql')) {
@@ -30,6 +49,7 @@ class Storage {
     // =========================================================================
 
     private static function initJson(): void {
+        if (!self::$jsonLocked) { self::jsonMutation(fn() => self::initJson()); return; }
         if (!file_exists(dirname(self::$jsonFile))) {
             mkdir(dirname(self::$jsonFile), 0755, true);
         }
@@ -38,22 +58,7 @@ class Storage {
             global $config;
             $initialData = [
                 'servers' => $config['servers'] ?? [],
-                'templates' => [
-                    [
-                        'id' => 1,
-                        'remark' => 'Standard 30D / 50GB',
-                        'data_limit' => 50,
-                        'date_limit' => 30,
-                        'date_type' => 'fixed',
-                    ],
-                    [
-                        'id' => 2,
-                        'remark' => 'Heavy 30D / 100GB',
-                        'data_limit' => 100,
-                        'date_limit' => 30,
-                        'date_type' => 'fixed',
-                    ],
-                ],
+                'templates' => [],
                 'states' => [],
                 'cache' => [],
             ];
@@ -120,50 +125,81 @@ class Storage {
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             ]);
 
-            // Auto-create tables if they do not exist
-            self::$pdo->exec("
-                CREATE TABLE IF NOT EXISTS servers (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    remark VARCHAR(64) NOT NULL,
-                    type VARCHAR(32) NOT NULL,
-                    base_url VARCHAR(255) NOT NULL,
-                    username VARCHAR(64) NOT NULL,
-                    password VARCHAR(64) NOT NULL,
-                    is_active TINYINT(1) DEFAULT 1,
-                    node_monitoring TINYINT(1) DEFAULT 0,
-                    node_restart TINYINT(1) DEFAULT 0,
-                    expired_stats TINYINT(1) DEFAULT 0,
-                    cached_token TEXT NULL,
-                    token_expires_at INT NULL
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            // Serialize schema upgrades across concurrent webhook/cron workers.
+            $schemaLock = 'holderbot-schema-' . substr(hash('sha256', $mc['database'] ?? 'holderbot'), 0, 32);
+            $lockStatement = self::$pdo->prepare('SELECT GET_LOCK(?, 30)');
+            $lockStatement->execute([$schemaLock]);
+            if ((int)$lockStatement->fetchColumn() !== 1) throw new RuntimeException('Unable to lock schema upgrade');
+            try {
+                // Auto-create tables if they do not exist
+                self::$pdo->exec("
+                    CREATE TABLE IF NOT EXISTS servers (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        remark VARCHAR(64) NOT NULL,
+                        type VARCHAR(32) NOT NULL,
+                        base_url VARCHAR(255) NOT NULL,
+                        username VARCHAR(64) NOT NULL,
+                        password VARCHAR(64) NOT NULL,
+                        is_active TINYINT(1) DEFAULT 1,
+                        node_monitoring TINYINT(1) DEFAULT 0,
+                        node_restart TINYINT(1) DEFAULT 0,
+                        expired_stats TINYINT(1) DEFAULT 0,
+                        cached_token TEXT NULL,
+                        token_expires_at INT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-                CREATE TABLE IF NOT EXISTS templates (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    remark VARCHAR(64) NOT NULL,
-                    data_limit INT NOT NULL,
-                    date_limit INT NOT NULL,
-                    date_type VARCHAR(16) NOT NULL DEFAULT 'fixed',
-                    is_active TINYINT(1) DEFAULT 1
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    CREATE TABLE IF NOT EXISTS templates (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        remark VARCHAR(64) NOT NULL,
+                        data_limit INT NOT NULL,
+                        date_limit INT NOT NULL,
+                        date_type VARCHAR(16) NOT NULL DEFAULT 'fixed',
+                        is_active TINYINT(1) DEFAULT 1
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-                CREATE TABLE IF NOT EXISTS bot_states (
-                    user_id BIGINT PRIMARY KEY,
-                    step VARCHAR(64) NOT NULL,
-                    data JSON NULL,
-                    updated_at INT NOT NULL
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    CREATE TABLE IF NOT EXISTS bot_states (
+                        user_id BIGINT NOT NULL,
+                        chat_id BIGINT NOT NULL,
+                        PRIMARY KEY (user_id, chat_id),
+                        step VARCHAR(64) NOT NULL,
+                        data JSON NULL,
+                        updated_at INT NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-                CREATE TABLE IF NOT EXISTS bot_cache (
-                    cache_key VARCHAR(128) PRIMARY KEY,
-                    cache_value TEXT NOT NULL,
-                    expires_at INT NOT NULL
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            ");
+                    CREATE TABLE IF NOT EXISTS bot_cache (
+                        cache_key VARCHAR(128) PRIMARY KEY,
+                        cache_value TEXT NOT NULL,
+                        expires_at INT NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                ");
 
-            // Auto-migrate newly added columns if upgrading an existing database
-            try { self::$pdo->exec("ALTER TABLE servers ADD COLUMN expired_stats TINYINT(1) DEFAULT 0"); } catch (Throwable) {}
-            try { self::$pdo->exec("ALTER TABLE templates ADD COLUMN is_active TINYINT(1) DEFAULT 1"); } catch (Throwable) {}
-            try { self::$pdo->exec("ALTER TABLE templates ADD COLUMN date_type VARCHAR(16) NOT NULL DEFAULT 'fixed'"); } catch (Throwable) {}
+                $stateColumns = self::$pdo->query('SHOW COLUMNS FROM bot_states')->fetchAll(PDO::FETCH_COLUMN);
+                if (!in_array('chat_id', $stateColumns, true)) {
+                    self::$pdo->exec('ALTER TABLE bot_states ADD COLUMN chat_id BIGINT NOT NULL DEFAULT 0');
+                }
+                // Resume safely if an earlier process stopped after adding chat_id.
+                $primaryColumns = self::$pdo->query("SHOW INDEX FROM bot_states WHERE Key_name = 'PRIMARY'")->fetchAll();
+                usort($primaryColumns, fn($a, $b) => (int)$a['Seq_in_index'] <=> (int)$b['Seq_in_index']);
+                if (array_column($primaryColumns, 'Column_name') !== ['user_id', 'chat_id']) {
+                    self::$pdo->exec('UPDATE bot_states SET chat_id = user_id WHERE chat_id = 0');
+                    $dropPrimary = $primaryColumns ? 'DROP PRIMARY KEY, ' : '';
+                    self::$pdo->exec('ALTER TABLE bot_states ' . $dropPrimary . 'ADD PRIMARY KEY (user_id, chat_id)');
+                }
+
+                foreach (['servers', 'templates'] as $table) {
+                    $columns = self::$pdo->query("SHOW COLUMNS FROM {$table}")->fetchAll(PDO::FETCH_COLUMN);
+                    if (!in_array('created_at', $columns, true)) self::$pdo->exec("ALTER TABLE {$table} ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP");
+                    if (!in_array('updated_at', $columns, true)) self::$pdo->exec("ALTER TABLE {$table} ADD COLUMN updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP");
+                }
+
+                // Auto-migrate newly added columns if upgrading an existing database
+                try { self::$pdo->exec("ALTER TABLE servers ADD COLUMN expired_stats TINYINT(1) DEFAULT 0"); } catch (Throwable) {}
+                try { self::$pdo->exec("ALTER TABLE templates ADD COLUMN is_active TINYINT(1) DEFAULT 1"); } catch (Throwable) {}
+                try { self::$pdo->exec("ALTER TABLE templates ADD COLUMN date_type VARCHAR(16) NOT NULL DEFAULT 'fixed'"); } catch (Throwable) {}
+            } finally {
+                $releaseStatement = self::$pdo->prepare('SELECT RELEASE_LOCK(?)');
+                $releaseStatement->execute([$schemaLock]);
+            }
         } catch (Throwable $e) {
             error_log("Storage MySQL initialization error: " . $e->getMessage());
             self::$pdo = null;
@@ -195,6 +231,9 @@ class Storage {
     }
 
     public static function saveServer(array $server): int {
+        if (!self::$pdo && !self::$jsonLocked) { return self::jsonMutation(fn() => self::saveServer($server)); }
+        $server['updated_at'] = !empty($server['id']) ? gmdate('Y-m-d H:i:s') : null;
+        if (empty($server['id'])) $server['created_at'] = gmdate('Y-m-d H:i:s');
         if (self::$pdo) {
             if (!empty($server['id'])) {
                 $stmt = self::$pdo->prepare("
@@ -257,6 +296,7 @@ class Storage {
     }
 
     public static function deleteServer(int $id): bool {
+        if (!self::$pdo && !self::$jsonLocked) { return self::jsonMutation(fn() => self::deleteServer($id)); }
         if (self::$pdo) {
             $stmt = self::$pdo->prepare("DELETE FROM servers WHERE id = ?");
             return $stmt->execute([$id]);
@@ -297,6 +337,9 @@ class Storage {
     }
 
     public static function saveTemplate(array $template): int {
+        if (!self::$pdo && !self::$jsonLocked) { return self::jsonMutation(fn() => self::saveTemplate($template)); }
+        $template['updated_at'] = !empty($template['id']) ? gmdate('Y-m-d H:i:s') : null;
+        if (empty($template['id'])) $template['created_at'] = gmdate('Y-m-d H:i:s');
         if (self::$pdo) {
             if (!empty($template['id'])) {
                 $stmt = self::$pdo->prepare("
@@ -354,6 +397,7 @@ class Storage {
     }
 
     public static function deleteTemplate(int $id): bool {
+        if (!self::$pdo && !self::$jsonLocked) { return self::jsonMutation(fn() => self::deleteTemplate($id)); }
         if (self::$pdo) {
             $stmt = self::$pdo->prepare("DELETE FROM templates WHERE id = ?");
             return $stmt->execute([$id]);
@@ -371,8 +415,8 @@ class Storage {
 
     public static function getState(int $userId): ?array {
         if (self::$pdo) {
-            $stmt = self::$pdo->prepare("SELECT * FROM bot_states WHERE user_id = ?");
-            $stmt->execute([$userId]);
+            $stmt = self::$pdo->prepare("SELECT * FROM bot_states WHERE user_id = ? AND chat_id = ?");
+            $stmt->execute([$userId, self::stateChat($userId)]);
             $row = $stmt->fetch();
             if ($row) {
                 return [
@@ -384,22 +428,23 @@ class Storage {
         }
 
         $data = self::readJson();
-        return $data['states'][$userId] ?? null;
+        return $data['states'][self::stateKey($userId)] ?? null;
     }
 
     public static function setState(int $userId, string $step, array $stateData = []): void {
+        if (!self::$pdo && !self::$jsonLocked) { self::jsonMutation(fn() => self::setState($userId, $step, $stateData)); return; }
         if (self::$pdo) {
             $stmt = self::$pdo->prepare("
-                INSERT INTO bot_states (user_id, step, data, updated_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO bot_states (user_id, chat_id, step, data, updated_at)
+                VALUES (?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE step = VALUES(step), data = VALUES(data), updated_at = VALUES(updated_at)
             ");
-            $stmt->execute([$userId, $step, json_encode($stateData), time()]);
+            $stmt->execute([$userId, self::stateChat($userId), $step, json_encode($stateData), time()]);
             return;
         }
 
         $data = self::readJson();
-        $data['states'][$userId] = [
+        $data['states'][self::stateKey($userId)] = [
             'step' => $step,
             'data' => $stateData,
             'updated_at' => time(),
@@ -408,14 +453,15 @@ class Storage {
     }
 
     public static function clearState(int $userId): void {
+        if (!self::$pdo && !self::$jsonLocked) { self::jsonMutation(fn() => self::clearState($userId)); return; }
         if (self::$pdo) {
-            $stmt = self::$pdo->prepare("DELETE FROM bot_states WHERE user_id = ?");
-            $stmt->execute([$userId]);
+            $stmt = self::$pdo->prepare("DELETE FROM bot_states WHERE user_id = ? AND chat_id = ?");
+            $stmt->execute([$userId, self::stateChat($userId)]);
             return;
         }
 
         $data = self::readJson();
-        unset($data['states'][$userId]);
+        unset($data['states'][self::stateKey($userId)]);
         self::writeJson($data);
     }
 
@@ -443,6 +489,7 @@ class Storage {
     }
 
     public static function cacheSet(string $key, mixed $value, int $ttlSeconds = 3600): void {
+        if (!self::$pdo && !self::$jsonLocked) { self::jsonMutation(fn() => self::cacheSet($key, $value, $ttlSeconds)); return; }
         if (self::$pdo) {
             $stmt = self::$pdo->prepare("
                 INSERT INTO bot_cache (cache_key, cache_value, expires_at)

@@ -95,8 +95,8 @@ class PanelManager {
         }
 
         if ($type === 'marzneshin') {
-            $strategy = ($dateType === 'unlimited') ? 'never' : (($dateType === 'onhold') ? 'start_on_first_use' : ($expireTimestamp ? 'fixed_date' : 'never'));
-            $expireDate = ($strategy === 'fixed_date' && $expireTimestamp) ? gmdate('Y-m-d\TH:i:s\Z', $expireTimestamp) : null;
+            $strategy = ($dateType === 'unlimited') ? 'never' : (($dateType === 'onhold') ? 'start_on_first_use' : 'fixed_date');
+            $expireDate = ($strategy === 'fixed_date') ? gmdate('Y-m-d\TH:i:s\Z', $expireTimestamp ?? 0) : null;
             $usageDuration = ($strategy === 'start_on_first_use') ? ($expireDays * 86400) : null;
             $serviceIds = !empty($selectedConfigs) ? array_map('intval', $selectedConfigs) : [];
 
@@ -221,140 +221,57 @@ class PanelManager {
         string $dateType = 'fixed'
     ): ?array {
         $user = self::getUser($server, $username);
-        if (!$user) {
-            return null;
-        }
-
-        $type = strtolower($server['type'] ?? 'marzban');
-        $addedBytes = ($dataLimitGb > 0) ? (int)round($dataLimitGb * 1024 * 1024 * 1024) : 0;
-        $currentBytes = (int)($user['data_limit_bytes'] ?? 0);
+        if (!$user) return null;
+        if ($resetUsage && !self::resetUsage($server, $username)) return null;
+        $payload = self::datePayload($server, $username, $expireDays, $dateType);
+        $bytes = (int)$dataLimitGb * (1024 ** 3);
+        $currentBytes = $user['data_limit_bytes'];
+        $payload['data_limit'] = $additive ? ($currentBytes ? $currentBytes + $bytes : 0) : $bytes;
         if ($additive) {
-            // Adding on top of an unlimited user leaves them unlimited - the top-up
-            // amount is not applied, matching the original bot's behavior.
-            $bytes = $currentBytes ? ($addedBytes + $currentBytes) : 0;
-        } else {
-            $bytes = $addedBytes;
-        }
-
-        $now = time();
-
-        if ($dateType === 'onhold') {
-            if ($type === 'marzneshin') {
-                $payload = [
-                    'data_limit' => $bytes,
-                    'is_active' => true,
-                    'expire_strategy' => 'start_on_first_use',
-                    'usage_duration' => $expireDays * 86400,
-                    'expire_date' => null,
-                ];
-                MarzneshinClient::modifyUser($server, $username, $payload);
-                MarzneshinClient::setStatus($server, $username, true);
+            $raw = $user['raw'];
+            $seconds = $expireDays * 86400;
+            if ($server['type'] === 'marzban') {
+                if ($dateType === 'onhold') $payload['on_hold_expire_duration'] = ($raw['on_hold_expire_duration'] ?? 0) + $seconds;
+                else $payload['expire'] = ($raw['expire'] ?? time()) + $seconds;
             } else {
-                MarzbanClient::modifyUser($server, $username, [
-                    'data_limit' => $bytes,
-                    'status' => 'on_hold',
-                    'on_hold_expire_duration' => $expireDays * 86400,
-                    'expire' => null,
-                ]);
+                $remaining = match ($raw['expire_strategy'] ?? 'never') {
+                    'fixed_date' => ($user['expire_timestamp'] ?? time()) - time(),
+                    'start_on_first_use' => $raw['usage_duration'] ?? 0,
+                    default => 0,
+                };
+                if ($dateType === 'onhold') $payload['usage_duration'] = $remaining + $seconds;
+                elseif ($dateType === 'fixed') $payload['expire_date'] = gmdate('Y-m-d\TH:i:s\Z', time() + $remaining + $seconds);
             }
-            if ($resetUsage) {
-                self::resetUsage($server, $username);
-            }
-            return self::getUser($server, $username);
         }
-
-        if ($dateType === 'unlimited') {
-            // Explicitly clear the expiry (send 0 / 'never', not an omitted
-            // field) so a previously-expiring user actually becomes unlimited
-            // rather than keeping their old expiry date.
-            if ($type === 'marzneshin') {
-                MarzneshinClient::modifyUser($server, $username, [
-                    'data_limit' => $bytes,
-                    'is_active' => true,
-                    'expire_strategy' => 'never',
-                    'expire_date' => null,
-                    'usage_duration' => null,
-                ]);
-                MarzneshinClient::setStatus($server, $username, true);
-            } else {
-                MarzbanClient::modifyUser($server, $username, [
-                    'data_limit' => $bytes,
-                    'status' => 'active',
-                    'expire' => 0,
-                ]);
-            }
-            if ($resetUsage) {
-                self::resetUsage($server, $username);
-            }
-            return self::getUser($server, $username);
-        }
-
-        // Fixed date: only "additive" extends from the user's current, still-valid
-        // expiry. "Normal" and "reset usage" always recompute from now, discarding
-        // any remaining time - matching the original bot's semantics for each mode.
-        if ($additive) {
-            $currentExpire = $user['expire_timestamp'] ?? 0;
-            $baseTime = ($currentExpire > $now) ? $currentExpire : $now;
-        } else {
-            $baseTime = $now;
-        }
-        $newExpireTs = ($expireDays > 0) ? ($baseTime + ($expireDays * 86400)) : 0;
-
-        if ($type === 'marzneshin') {
-            $payload = [
-                'data_limit' => $bytes,
-                'is_active' => true,
-                'expire_strategy' => 'fixed_date',
-                'expire_date' => gmdate('Y-m-d\TH:i:s\Z', $newExpireTs),
-                'usage_duration' => null,
-            ];
-            MarzneshinClient::modifyUser($server, $username, $payload);
-            MarzneshinClient::setStatus($server, $username, true);
-        } else {
-            $payload = [
-                'data_limit' => $bytes,
-                'status' => 'active',
-                'expire' => $newExpireTs,
-            ];
-            MarzbanClient::modifyUser($server, $username, $payload);
-        }
-
-        if ($resetUsage) {
-            self::resetUsage($server, $username);
-        }
-
-        return self::getUser($server, $username);
+        $resp = $server['type'] === 'marzneshin'
+            ? MarzneshinClient::modifyUser($server, $username, $payload)
+            : MarzbanClient::modifyUser($server, $username, $payload);
+        return $resp && isset($resp['username']) ? self::normalizeUser($server, $resp) : null;
     }
 
-    /**
-     * Update only the date limit / expire strategy for a user.
-     * $type: 'fixed' (days from now), 'unlimited' (remove expiry), 'onhold' (after first use)
-     */
-    public static function updateDateLimit(array $server, string $username, int $days, string $type = 'fixed'): bool {
-        $serverType = strtolower($server['type'] ?? 'marzban');
-
-        if ($serverType === 'marzneshin') {
-            if ($type === 'unlimited') {
-                $payload = ['expire_strategy' => 'never', 'expire_date' => null, 'usage_duration' => null];
-            } elseif ($type === 'onhold') {
-                $payload = ['expire_strategy' => 'start_on_first_use', 'usage_duration' => $days * 86400, 'expire_date' => null];
-            } else {
-                $expireDate = ($days > 0) ? gmdate('Y-m-d\TH:i:s\Z', time() + $days * 86400) : null;
-                $payload = ['expire_strategy' => ($days > 0 ? 'fixed_date' : 'never'), 'expire_date' => $expireDate, 'usage_duration' => null];
-            }
-            $resp = MarzneshinClient::modifyUser($server, $username, $payload);
-        } else {
-            // Marzban
-            if ($type === 'unlimited') {
-                $payload = ['expire' => 0];
-            } elseif ($type === 'onhold') {
-                $payload = ['status' => 'on_hold', 'on_hold_expire_duration' => $days * 86400];
-            } else {
-                $payload = ['expire' => ($days > 0 ? time() + $days * 86400 : 0)];
-            }
-            $resp = MarzbanClient::modifyUser($server, $username, $payload);
+    /** Payload shared by normal recharge and date-only edits. */
+    public static function datePayload(array $server, string $username, int $days, string $type): array {
+        if (!in_array($type, ['fixed', 'onhold', 'unlimited'], true)) throw new InvalidArgumentException('Invalid date type');
+        if ($server['type'] === 'marzneshin') {
+            return [
+                'username' => $username,
+                'expire_strategy' => ['fixed' => 'fixed_date', 'onhold' => 'start_on_first_use', 'unlimited' => 'never'][$type],
+                'expire_date' => $type === 'fixed' ? gmdate('Y-m-d\TH:i:s\Z', $days ? time() + $days * 86400 : 0) : null,
+                'usage_duration' => $type === 'onhold' ? $days * 86400 : null,
+            ];
         }
+        return [
+            'status' => $type === 'onhold' ? 'on_hold' : 'active',
+            'expire' => $type === 'onhold' ? null : ($type === 'unlimited' ? 0 : ($days ? time() + $days * 86400 : null)),
+            'on_hold_expire_duration' => $type === 'onhold' ? $days * 86400 : null,
+        ];
+    }
 
+    public static function updateDateLimit(array $server, string $username, int $days, string $type = 'fixed'): bool {
+        $payload = self::datePayload($server, $username, $days, $type);
+        $resp = $server['type'] === 'marzneshin'
+            ? MarzneshinClient::modifyUser($server, $username, $payload)
+            : MarzbanClient::modifyUser($server, $username, $payload);
         return $resp !== null;
     }
 
@@ -377,21 +294,7 @@ class PanelManager {
      * Modify user's expiration date directly (in days from now).
      */
     public static function modifyUserDateLimit(array $server, string $username, int $days): bool {
-        $type = strtolower($server['type'] ?? 'marzban');
-        $newExpireTs = ($days > 0) ? (time() + ($days * 86400)) : 0;
-
-        if ($type === 'marzneshin') {
-            $payload = [
-                'expire_strategy' => ($days > 0) ? 'fixed_date' : 'never',
-                'expire_date' => ($days > 0) ? gmdate('Y-m-d\TH:i:s\Z', $newExpireTs) : null,
-            ];
-            $resp = MarzneshinClient::modifyUser($server, $username, $payload);
-        } else {
-            $payload = ['expire' => $newExpireTs];
-            $resp = MarzbanClient::modifyUser($server, $username, $payload);
-        }
-
-        return $resp !== null;
+        return self::updateDateLimit($server, $username, $days, 'fixed');
     }
 
     /**
@@ -462,24 +365,23 @@ class PanelManager {
     /**
      * Delete all expired users.
      */
-    public static function deleteExpiredUsers(array $server, ?string $admin = null): array {
-        $success = 0;
-        $total = 0;
-        $page = 1;
+    private static function snapshotUsers(array $server, ?string $status, ?string $admin): array {
+        $all = [];
         $size = self::pageSize($server);
-        while (true) {
-            $users = self::getUsers($server, $page, $size, null, 'expired', $admin);
-            if (empty($users)) {
-                break;
-            }
-            foreach ($users as $u) {
-                $total++;
-                if (self::deleteUser($server, $u['username'])) {
-                    $success++;
-                }
-            }
+        for ($page = 1; ; $page++) {
+            $users = self::getUsers($server, $page, $size, null, $status, $admin === 'ALL' ? null : $admin);
+            foreach ($users as $user) $all[$user['username']] = $user;
             if (count($users) < $size) break;
-            $page++;
+        }
+        return array_values($all);
+    }
+
+    public static function deleteExpiredUsers(array $server, ?string $admin = null): array {
+        $users = self::snapshotUsers($server, 'expired', $admin);
+        $success = 0;
+        $total = count($users);
+        foreach ($users as $u) {
+            if (self::deleteUser($server, $u['username'])) $success++;
         }
         return ['success' => $success, 'total' => $total];
     }
@@ -488,23 +390,11 @@ class PanelManager {
      * Delete all limited users.
      */
     public static function deleteLimitedUsers(array $server, ?string $admin = null): array {
+        $users = self::snapshotUsers($server, 'limited', $admin);
         $success = 0;
-        $total = 0;
-        $page = 1;
-        $size = self::pageSize($server);
-        while (true) {
-            $users = self::getUsers($server, $page, $size, null, 'limited', $admin);
-            if (empty($users)) {
-                break;
-            }
-            foreach ($users as $u) {
-                $total++;
-                if (self::deleteUser($server, $u['username'])) {
-                    $success++;
-                }
-            }
-            if (count($users) < $size) break;
-            $page++;
+        $total = count($users);
+        foreach ($users as $u) {
+            if (self::deleteUser($server, $u['username'])) $success++;
         }
         return ['success' => $success, 'total' => $total];
     }
@@ -513,23 +403,11 @@ class PanelManager {
      * Transfer all users from one admin to another.
      */
     public static function transferUsers(array $server, string $fromAdmin, string $toAdmin): array {
+        $users = self::snapshotUsers($server, null, $fromAdmin);
         $success = 0;
-        $total = 0;
-        $page = 1;
-        $size = self::pageSize($server);
-        while (true) {
-            $users = self::getUsers($server, $page, $size, null, null, $fromAdmin);
-            if (empty($users)) {
-                break;
-            }
-            foreach ($users as $u) {
-                $total++;
-                if (self::setOwner($server, $u['username'], $toAdmin)) {
-                    $success++;
-                }
-            }
-            if (count($users) < $size) break;
-            $page++;
+        $total = count($users);
+        foreach ($users as $u) {
+            if (self::setOwner($server, $u['username'], $toAdmin)) $success++;
         }
         return ['success' => $success, 'total' => $total];
     }
@@ -538,23 +416,11 @@ class PanelManager {
      * Delete all users belonging to an admin.
      */
     public static function deleteAllAdminUsers(array $server, string $admin): array {
+        $users = self::snapshotUsers($server, null, $admin);
         $success = 0;
-        $total = 0;
-        $page = 1;
-        $size = self::pageSize($server);
-        while (true) {
-            $users = self::getUsers($server, $page, $size, null, null, $admin === 'ALL' ? null : $admin);
-            if (empty($users)) {
-                break;
-            }
-            foreach ($users as $u) {
-                $total++;
-                if (self::deleteUser($server, $u['username'])) {
-                    $success++;
-                }
-            }
-            if (count($users) < $size) break;
-            $page++;
+        $total = count($users);
+        foreach ($users as $u) {
+            if (self::deleteUser($server, $u['username'])) $success++;
         }
         return ['success' => $success, 'total' => $total];
     }
@@ -639,7 +505,6 @@ class PanelManager {
             $users = self::getUsers($server, $page, $size, null, null, $admin === 'ALL' ? null : $admin);
             if (empty($users)) break;
             foreach ($users as $user) {
-                $total++;
                 if ($type === 'marzneshin') {
                     $ids = $user['service_ids'] ?? [];
                     if ($add && !in_array((int)$serviceId, $ids)) {
@@ -649,6 +514,7 @@ class PanelManager {
                     } else {
                         continue;
                     }
+                    $total++;
                     $resp = MarzneshinClient::modifyUser($server, $user['username'], [
                         'username' => $user['username'],
                         'service_ids' => $ids,
@@ -693,25 +559,25 @@ class PanelManager {
 
             foreach ($users as $u) {
                 $total++;
-                if ($u['is_active']) {
+                if ($u['is_enabled'] ?? $u['is_active']) {
                     $active++;
                 } else {
                     $disabled++;
                 }
-                if ($u['status'] === 'expired') $expired++;
-                if ($u['status'] === 'limited') $limited++;
+                if ($u['raw']['expired'] ?? ($u['status'] === 'expired')) $expired++;
+                if ($u['raw']['data_limit_reached'] ?? ($u['status'] === 'limited')) $limited++;
 
                 // Remaining data percent
                 if (!empty($u['data_limit_bytes']) && $u['data_limit_bytes'] > 0) {
-                    $pctRemaining = (1.0 - ($u['used_traffic_bytes'] / $u['data_limit_bytes'])) * 100.0;
+                    $pctRemaining = max(0, (int)((($u['data_limit_bytes'] - $u['used_traffic_bytes']) / $u['data_limit_bytes']) * 100));
                     if ($pctRemaining <= 1.0) $data1++;
                     if ($pctRemaining <= 10.0) $data10++;
                 }
 
                 // Online hour windows
                 if (!empty($u['online_at'])) {
-                    $hoursAgo = ($now - $u['online_at']) / 3600.0;
-                    if ($hoursAgo >= 0) {
+                    $hoursAgo = (int)(($now - $u['online_at']) / 3600);
+                    if ($hoursAgo !== 0) {
                         if ($hoursAgo < 24) $onlineDay++;
                         if ($hoursAgo < (24 * 7)) $onlineWeek++;
                         if ($hoursAgo < (24 * 31)) $onlineMonth++;
@@ -720,8 +586,8 @@ class PanelManager {
 
                 // Sub update hour windows
                 if (!empty($u['sub_updated_at'])) {
-                    $hoursAgo = ($now - $u['sub_updated_at']) / 3600.0;
-                    if ($hoursAgo >= 0) {
+                    $hoursAgo = (int)(($now - $u['sub_updated_at']) / 3600);
+                    if ($hoursAgo !== 0) {
                         if ($hoursAgo < 24) $updateDay++;
                         if ($hoursAgo < (24 * 7)) $updateWeek++;
                         if ($hoursAgo < (24 * 31)) $updateMonth++;
@@ -731,11 +597,11 @@ class PanelManager {
                 // Scheduled to expire today: NOT YET expired, and due within the next
                 // 24 hours (matches Python's last_expired_hour, which returns None
                 // for a user already past their expiry and hours-remaining otherwise).
-                if (!empty($u['expire_timestamp'])) {
-                    $hoursUntilExpiry = ($u['expire_timestamp'] - $now) / 3600.0;
-                    if ($hoursUntilExpiry > 0 && $hoursUntilExpiry < 24) {
+                if (!empty($u['expire_timestamp']) && ($server['type'] !== 'marzneshin' || ($u['raw']['expire_strategy'] ?? '') === 'fixed_date')) {
+                    $hoursUntilExpiry = (int)(($u['expire_timestamp'] - $now) / 3600);
+                    if ($hoursUntilExpiry > 0 && $hoursUntilExpiry <= 24) {
                         $todayExpired[] = $botUsername
-                            ? "<a href='https://t.me/{$botUsername}?start=user_{$server['id']}_{$u['username']}'><code>{$u['username']}</code></a>"
+                            ? "<a href='https://t.me/{$botUsername}?start=user_{$server['id']}_{$u['username']}'> <code>{$u['username']}</code> </a>"
                             : "<code>{$u['username']}</code>";
                     }
                 }
@@ -809,9 +675,13 @@ class PanelManager {
      * disabled is not a failure - only a defined set of error states is, matching
      * the original bot (which never alerts/restarts on a "disabled" node).
      */
-    public static function isNodeOk(array $node): bool {
+    public static function isNodeOk(array $node, ?string $type = null): bool {
         $status = strtolower($node['status'] ?? 'unknown');
-        $badStatuses = ['error', 'connecting', 'unhealthy', 'disconnected', 'failed'];
+        $badStatuses = match ($type) {
+            'marzban' => ['error', 'connecting'],
+            'marzneshin' => ['unhealthy'],
+            default => ['error', 'connecting', 'unhealthy'],
+        };
         return !in_array($status, $badStatuses, true);
     }
 
@@ -828,6 +698,11 @@ class PanelManager {
     /**
      * Normalize panel-specific raw user data into standard array.
      */
+    private static function utcTimestamp(string $value): ?int {
+        try { return (new DateTimeImmutable($value, new DateTimeZone('UTC')))->getTimestamp(); }
+        catch (Exception) { return null; }
+    }
+
     public static function normalizeUser(array $server, array $raw): array {
         $type = strtolower($server['type'] ?? 'marzban');
         $baseUrl = rtrim($server['base_url'], '/');
@@ -847,7 +722,7 @@ class PanelManager {
 
             $expireTs = null;
             if (!empty($raw['expire_date'])) {
-                $expireTs = strtotime($raw['expire_date']) ?: null;
+                $expireTs = self::utcTimestamp($raw['expire_date']) ?: null;
             }
 
             $subUrl = $raw['subscription_url'] ?? '';
@@ -855,23 +730,24 @@ class PanelManager {
                 $subUrl = $baseUrl . $subUrl;
             }
 
-            $onlineAt = !empty($raw['last_online']) ? strtotime($raw['last_online']) : (!empty($raw['online_at']) ? strtotime($raw['online_at']) : null);
-            $subUpdatedAt = !empty($raw['sub_updated_at']) ? strtotime($raw['sub_updated_at']) : null;
+            $onlineAt = !empty($raw['last_online']) ? self::utcTimestamp($raw['last_online']) : (!empty($raw['online_at']) ? self::utcTimestamp($raw['online_at']) : null);
+            $subUpdatedAt = !empty($raw['sub_updated_at']) ? self::utcTimestamp($raw['sub_updated_at']) : null;
 
             return [
                 'username'          => $raw['username'],
                 'status'            => $status,
-                'is_active'         => $isEnabled,
+                'is_active'         => (bool)($raw['is_active'] ?? $isEnabled),
+                'is_enabled'        => $isEnabled,
                 'data_limit_bytes'  => (int)($raw['data_limit'] ?? 0),
                 'used_traffic_bytes'=> (int)($raw['used_traffic'] ?? 0),
                 'lifetime_used_traffic_bytes' => (int)($raw['lifetime_used_traffic'] ?? 0),
                 'expire_timestamp'  => $expireTs,
                 'subscription_url'  => $subUrl,
                 'note'              => $raw['note'] ?? '',
-                'created_at'        => !empty($raw['created_at']) ? strtotime($raw['created_at']) : null,
+                'created_at'        => !empty($raw['created_at']) ? self::utcTimestamp($raw['created_at']) : null,
                 'online_at'         => $onlineAt,
                 'sub_updated_at'    => $subUpdatedAt,
-                'owner_username'    => $raw['admin_username'] ?? ($raw['admin'] ?? ''),
+                'owner_username'    => $raw['owner_username'] ?? ($raw['admin_username'] ?? ''),
                 'service_ids'       => $raw['service_ids'] ?? [],
                 'raw'               => $raw,
             ];
@@ -885,8 +761,8 @@ class PanelManager {
             $subUrl = $baseUrl . $subUrl;
         }
 
-        $onlineAt = !empty($raw['online_at']) ? strtotime($raw['online_at']) : null;
-        $subUpdatedAt = !empty($raw['sub_updated_at']) ? strtotime($raw['sub_updated_at']) : null;
+        $onlineAt = !empty($raw['online_at']) ? self::utcTimestamp($raw['online_at']) : null;
+        $subUpdatedAt = !empty($raw['sub_updated_at']) ? self::utcTimestamp($raw['sub_updated_at']) : null;
 
         // Inbounds / service_ids for Marzban: extract inbound tags
         $inboundTags = [];
@@ -908,10 +784,10 @@ class PanelManager {
             'expire_timestamp'  => !empty($raw['expire']) ? (int)$raw['expire'] : null,
             'subscription_url'  => $subUrl,
             'note'              => $raw['note'] ?? '',
-            'created_at'        => !empty($raw['created_at']) ? strtotime($raw['created_at']) : null,
+            'created_at'        => !empty($raw['created_at']) ? self::utcTimestamp($raw['created_at']) : null,
             'online_at'         => $onlineAt,
             'sub_updated_at'    => $subUpdatedAt,
-            'owner_username'    => $raw['admin'] ?? ($raw['owner'] ?? ''),
+            'owner_username'    => $raw['admin']['username'] ?? ($raw['owner'] ?? ''),
             'service_ids'       => $inboundTags,
             'raw'               => $raw,
         ];

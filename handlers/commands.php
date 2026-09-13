@@ -19,11 +19,8 @@ class CommandHandlers {
             return false;
         }
 
-        // Clear any active wizard state on new command
-        Storage::clearState($userId);
-
-        $parts = preg_split('/\s+/', $text);
-        $command = strtolower($parts[0]);
+        $parts = preg_split('/\s+/', $text, 3);
+        $command = explode('@', strtolower($parts[0]), 2)[0];
 
         switch ($command) {
             case '/start':
@@ -38,6 +35,8 @@ class CommandHandlers {
                         return self::handleDeepLinkUser($chatId, (int)$subParts[1], $subParts[2]);
                     }
                 }
+                Storage::clearState($userId);
+                if (!empty($message['message_id'])) tg_delete_message($chatId, $message['message_id']);
                 return self::cmdStart($chatId);
 
             case '/user':
@@ -69,14 +68,7 @@ class CommandHandlers {
     private static function cmdStart(int|string $chatId): bool {
         $servers = Storage::getServers();
 
-        $text = "🤖 <b>Welcome to HolderBot PHP</b>\n\n";
-        $text .= "Easily manage your Marzban & Marzneshin VPN panels directly from Telegram.\n\n";
-
-        if (empty($servers)) {
-            $text .= "⚠️ <i>No servers configured yet. Click '➕ Add Server' below or configure them in config.php.</i>";
-        } else {
-            $text .= "Select a server below to manage users, inspect nodes, or create subscriptions:";
-        }
+        $text = Formatter::start();
 
         $kb = Keyboards::home($servers);
         self::sendFreshMenu($chatId, $text, $kb);
@@ -105,8 +97,8 @@ class CommandHandlers {
         }
 
         $results = PanelManager::getUsers($server, 1, 10, $username);
-        $kb = Keyboards::usersList($server['id'], $results, 1, false);
-        self::sendFreshMenu($chatId, "📋 <b>Select items</b>", $kb);
+        $kb = Keyboards::usersList($server['id'], $results, 1, false, 'all', true);
+        self::sendFreshMenu($chatId, "Select items", $kb);
         return true;
     }
 

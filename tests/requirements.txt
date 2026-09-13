@@ -1,0 +1,2 @@
+# Only the QR reference test needs a third-party Python library.
+qrcode==8.2

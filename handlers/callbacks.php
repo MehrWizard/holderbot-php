@@ -12,12 +12,38 @@ class CallbackHandlers {
     public static function handle(array $callbackQuery): void {
         $id = $callbackQuery['id'];
         $data = $callbackQuery['data'] ?? '';
+        if (str_starts_with($data, 'ref:')) $data = Storage::cacheGet($data) ?? '';
         $chatId = $callbackQuery['message']['chat']['id'] ?? 0;
         $messageId = $callbackQuery['message']['message_id'] ?? 0;
         $userId = $callbackQuery['from']['id'];
 
         if (empty($data) || $data === 'noop') {
             tg_answer_callback($id);
+            return;
+        }
+
+        if (str_starts_with($data, 'decline:')) {
+            Storage::clearState($userId);
+            tg_answer_callback($id);
+            $back = substr($data, strlen('decline:'));
+            if (str_starts_with($back, 'act_confirm:')) {
+                $parts = explode(':', $back);
+                $back = "usr:{$parts[2]}:{$parts[3]}";
+            }
+            tg_edit_message($chatId, $messageId, "❌ Failed", Keyboards::cancel($back));
+            return;
+        }
+        if (str_starts_with($data, 'srv_type:')) {
+            $state = Storage::getState($userId);
+            $type = substr($data, strlen('srv_type:'));
+            if (($state['step'] ?? '') !== 'add_server_type' || !in_array($type, ['marzban', 'marzneshin'], true)) {
+                tg_answer_callback($id, "❌ Not Found.", true);
+                return;
+            }
+            $state['data']['type'] = $type;
+            Storage::setState($userId, 'add_server_credentials', $state['data']);
+            tg_answer_callback($id);
+            tg_edit_message($chatId, $messageId, Formatter::credentialsPrompt(), Keyboards::cancel());
             return;
         }
 
@@ -31,7 +57,7 @@ class CallbackHandlers {
 
         // Server Menu: srv:<id>
         if (str_starts_with($data, 'srv:')) {
-            $serverId = (int)substr($data, 4);
+            $serverId = (int)substr($data, strlen('srv:'));
             Storage::clearState($userId);
             tg_answer_callback($id);
             self::renderServerMenu($chatId, $messageId, $serverId);
@@ -40,7 +66,7 @@ class CallbackHandlers {
 
         // Server Settings: srv_cfg:<id>
         if (str_starts_with($data, 'srv_cfg:')) {
-            $serverId = (int)substr($data, 8);
+            $serverId = (int)substr($data, strlen('srv_cfg:'));
             tg_answer_callback($id);
             self::renderServerSettings($chatId, $messageId, $serverId);
             return;
@@ -48,96 +74,96 @@ class CallbackHandlers {
 
         // Server Settings Toggles - each requires a confirmation step first
         if (str_starts_with($data, 'tgl_srv_mon_ask:')) {
-            $serverId = (int)substr($data, 16);
+            $serverId = (int)substr($data, strlen('tgl_srv_mon_ask:'));
             tg_answer_callback($id);
             tg_edit_message($chatId, $messageId, "Are your sure?", Keyboards::confirm("tgl_srv_mon:{$serverId}", "srv_cfg:{$serverId}"));
             return;
         }
         if (str_starts_with($data, 'tgl_srv_res_ask:')) {
-            $serverId = (int)substr($data, 16);
+            $serverId = (int)substr($data, strlen('tgl_srv_res_ask:'));
             tg_answer_callback($id);
             tg_edit_message($chatId, $messageId, "Are your sure?", Keyboards::confirm("tgl_srv_res:{$serverId}", "srv_cfg:{$serverId}"));
             return;
         }
         if (str_starts_with($data, 'tgl_srv_exp_ask:')) {
-            $serverId = (int)substr($data, 16);
+            $serverId = (int)substr($data, strlen('tgl_srv_exp_ask:'));
             tg_answer_callback($id);
             tg_edit_message($chatId, $messageId, "Are your sure?", Keyboards::confirm("tgl_srv_exp:{$serverId}", "srv_cfg:{$serverId}"));
             return;
         }
         if (str_starts_with($data, 'tgl_srv_mon:')) {
-            $serverId = (int)substr($data, 12);
+            $serverId = (int)substr($data, strlen('tgl_srv_mon:'));
             $server = Storage::getServer($serverId);
             if ($server) {
                 $server['node_monitoring'] = empty($server['node_monitoring']) ? 1 : 0;
                 Storage::saveServer($server);
             }
-            tg_answer_callback($id, "✅ Success.");
-            self::renderServerSettings($chatId, $messageId, $serverId);
+            tg_answer_callback($id);
+            tg_edit_message($chatId, $messageId, $server ? "✅ Success." : "❌ Not Found.", Keyboards::cancel("srv:{$serverId}"));
             return;
         }
         if (str_starts_with($data, 'tgl_srv_res:')) {
-            $serverId = (int)substr($data, 12);
+            $serverId = (int)substr($data, strlen('tgl_srv_res:'));
             $server = Storage::getServer($serverId);
             if ($server) {
                 $server['node_restart'] = empty($server['node_restart']) ? 1 : 0;
                 Storage::saveServer($server);
             }
-            tg_answer_callback($id, "✅ Success.");
-            self::renderServerSettings($chatId, $messageId, $serverId);
+            tg_answer_callback($id);
+            tg_edit_message($chatId, $messageId, $server ? "✅ Success." : "❌ Not Found.", Keyboards::cancel("srv:{$serverId}"));
             return;
         }
         if (str_starts_with($data, 'tgl_srv_exp:')) {
-            $serverId = (int)substr($data, 12);
+            $serverId = (int)substr($data, strlen('tgl_srv_exp:'));
             $server = Storage::getServer($serverId);
             if ($server) {
                 $server['expired_stats'] = empty($server['expired_stats']) ? 1 : 0;
                 Storage::saveServer($server);
             }
-            tg_answer_callback($id, "✅ Success.");
-            self::renderServerSettings($chatId, $messageId, $serverId);
+            tg_answer_callback($id);
+            tg_edit_message($chatId, $messageId, $server ? "✅ Success." : "❌ Not Found.", Keyboards::cancel("srv:{$serverId}"));
             return;
         }
         if (str_starts_with($data, 'srv_edit_remark:')) {
-            $serverId = (int)substr($data, 16);
+            $serverId = (int)substr($data, strlen('srv_edit_remark:'));
             Storage::setState($userId, 'srv_edit_remark', ['server_id' => $serverId]);
             tg_answer_callback($id);
             tg_edit_message(
                 $chatId,
                 $messageId,
-                "✏️ <b>Edit Server Remark</b>\n\nPlease send the new remark/name for this server:",
-                Keyboards::cancel("srv_cfg:{$serverId}")
+                "Enter remark: [a-z]",
+                Keyboards::cancel("srv:{$serverId}")
             );
             return;
         }
         if (str_starts_with($data, 'srv_edit_creds:')) {
-            $serverId = (int)substr($data, 15);
+            $serverId = (int)substr($data, strlen('srv_edit_creds:'));
             Storage::setState($userId, 'srv_edit_creds', ['server_id' => $serverId]);
             tg_answer_callback($id);
             tg_edit_message(
                 $chatId,
                 $messageId,
-                "🔑 <b>Edit Server Credentials</b>\n\nPlease send credentials in format:\n<code>username password https://panel.url:port</code>",
-                Keyboards::cancel("srv_cfg:{$serverId}")
+                Formatter::credentialsPrompt(),
+                Keyboards::cancel("srv:{$serverId}")
             );
             return;
         }
         if (str_starts_with($data, 'del_srv_ask:')) {
-            $serverId = (int)substr($data, 12);
+            $serverId = (int)substr($data, strlen('del_srv_ask:'));
             tg_answer_callback($id);
             tg_edit_message(
                 $chatId,
                 $messageId,
-                "⚠️ Are you sure you want to remove this server configuration?",
+                "Are your sure?",
                 Keyboards::confirm("del_srv_ok:{$serverId}", "srv_cfg:{$serverId}")
             );
             return;
         }
         if (str_starts_with($data, 'del_srv_ok:')) {
-            $serverId = (int)substr($data, 11);
-            Storage::deleteServer($serverId);
-            tg_answer_callback($id, "Server deleted.", true);
-            self::renderHome($chatId, $messageId);
+            $serverId = (int)substr($data, strlen('del_srv_ok:'));
+             $ok = Storage::deleteServer($serverId);
+            tg_answer_callback($id);
+            tg_edit_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("srv:{$serverId}"));
             return;
         }
 
@@ -147,8 +173,7 @@ class CallbackHandlers {
             $serverId = (int)($parts[1] ?? 0);
             $page = max(1, (int)($parts[2] ?? 1));
             $filter = $parts[3] ?? 'all';
-            tg_answer_callback($id);
-            self::renderUsersList($chatId, $messageId, $serverId, $page, $filter);
+            self::renderUsersList($chatId, $messageId, $serverId, $page, $filter, $id);
             return;
         }
 
@@ -157,6 +182,7 @@ class CallbackHandlers {
             $parts = explode(':', $data, 3);
             $serverId = (int)($parts[1] ?? 0);
             $username = $parts[2] ?? '';
+            Storage::clearState($userId);
             tg_answer_callback($id);
             self::renderUserCard($chatId, $messageId, $serverId, $username);
             return;
@@ -188,13 +214,20 @@ class CallbackHandlers {
             $admin = $parts[2] ?? '';
             $state = Storage::getState($userId);
             $username = $state['data']['username'] ?? '';
-            if ($username) {
-                $server = Storage::getServer($serverId);
-                PanelManager::setOwner($server, $username, $admin);
-                Storage::clearState($userId);
-                tg_answer_callback($id, "Owner changed to {$admin}!", true);
-                self::renderUserCard($chatId, $messageId, $serverId, $username);
+            $server = Storage::getServer($serverId);
+            if (
+                !$server
+                || ($state['step'] ?? '') !== 'user_mod_owner'
+                || (int)($state['data']['server_id'] ?? 0) !== $serverId
+                || $username === ''
+            ) {
+                tg_answer_callback($id, "❌ Not Found.", true);
+                return;
             }
+            $ok = PanelManager::setOwner($server, $username, $admin);
+            Storage::clearState($userId);
+            tg_answer_callback($id);
+            tg_edit_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
             return;
         }
 
@@ -205,7 +238,12 @@ class CallbackHandlers {
             $tmplId = (int)($parts[2] ?? 0);
             $tmpl = Storage::getTemplate($tmplId);
             $state = Storage::getState($userId);
-            if ($tmpl && !empty($state['data']['username'])) {
+            if (
+                $tmpl
+                && ($state['step'] ?? '') === 'user_mod_charge'
+                && (int)($state['data']['server_id'] ?? 0) === $serverId
+                && !empty($state['data']['username'])
+            ) {
                 $state['data']['data_limit'] = (float)$tmpl['data_limit'];
                 $state['data']['date_limit'] = (int)$tmpl['date_limit'];
                 $state['data']['date_type'] = $tmpl['date_type'] ?? (($tmpl['date_limit'] > 0) ? 'fixed' : 'unlimited');
@@ -216,9 +254,11 @@ class CallbackHandlers {
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "🧪 <b>Recharge with {$tmpl['remark']}</b>\n• Limit: <code>{$dlText}</code>\n• Duration: <code>{$dtText}</code>\n\nPlease select recharge mode:",
+                    "Are your sure?",
                     Keyboards::chargeConfirmOptions($serverId, $state['data']['username'], (float)$tmpl['data_limit'], (int)$tmpl['date_limit'])
                 );
+            } else {
+                tg_answer_callback($id, "❌ Not Found.", true);
             }
             return;
         }
@@ -232,7 +272,13 @@ class CallbackHandlers {
             $additive = ($mode === 'additive');
             $server = Storage::getServer($serverId);
             $state = Storage::getState($userId);
-            if ($server && !empty($state['data']['username'])) {
+            if (
+                $server
+                && ($state['step'] ?? '') === 'charge_confirm_reset'
+                && (int)($state['data']['server_id'] ?? 0) === $serverId
+                && !empty($state['data']['username'])
+                && in_array($mode, ['normal', 'reset', 'additive'], true)
+            ) {
                 $username = $state['data']['username'];
                 $dataLimit = (float)($state['data']['data_limit'] ?? 0);
                 $dateLimit = (int)($state['data']['date_limit'] ?? 0);
@@ -240,8 +286,10 @@ class CallbackHandlers {
                 Storage::clearState($userId);
 
                 $updated = PanelManager::chargeUser($server, $username, $dataLimit, $dateLimit, $resetUsage, $additive, $dateType);
-                tg_answer_callback($id, $updated ? "Recharged successfully!" : "Failed to recharge.", !$updated);
-                self::renderUserCard($chatId, $messageId, $serverId, $username);
+                tg_answer_callback($id);
+                tg_edit_message($chatId, $messageId, $updated ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
+            } else {
+                tg_answer_callback($id, "❌ Not Found.", true);
             }
             return;
         }
@@ -266,27 +314,18 @@ class CallbackHandlers {
                 return;
             }
 
+            $ok = false;
             if ($action === 'tgl') {
                 $user = PanelManager::getUser($server, $username);
-                $newStatus = empty($user['is_active']);
-                $ok = PanelManager::setStatus($server, $username, $newStatus);
-                tg_answer_callback($id, $ok ? "Status updated!" : "Failed to update status.");
-            } elseif ($action === 'rst') {
-                $ok = PanelManager::resetUsage($server, $username);
-                tg_answer_callback($id, $ok ? "Traffic reset!" : "Failed to reset traffic.");
-            } elseif ($action === 'rvk') {
+                $ok = $user && PanelManager::setStatus($server, $username, !$user['is_active']);
+            } elseif ($action === 'rst') $ok = PanelManager::resetUsage($server, $username);
+            elseif ($action === 'rvk') {
                 $updated = PanelManager::revokeSub($server, $username);
-                if ($updated && !empty($updated['subscription_url'])) {
-                    QrGenerator::sendQrPhoto(
-                        $chatId,
-                        $updated['subscription_url'],
-                        "⛓️ <b>New Subscription URL:</b> <code>{$username}</code>\n\n<code>{$updated['subscription_url']}</code>"
-                    );
-                }
-                tg_answer_callback($id, $updated ? "Subscription link revoked!" : "Failed to revoke link.");
+                $ok = $updated !== null;
+                if ($updated) QrGenerator::sendQrPhoto($chatId, $updated['subscription_url'], Formatter::userInfo($server, $updated));
             }
-
-            self::renderUserCard($chatId, $messageId, $serverId, $username);
+            tg_answer_callback($id);
+            tg_edit_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
             return;
         }
 
@@ -297,19 +336,20 @@ class CallbackHandlers {
             $username = $parts[2] ?? '';
             $type = $parts[3] ?? 'fixed';
             $server = Storage::getServer($serverId);
+            if (!$server) { tg_answer_callback($id, "❌ Not Found.", true); return; }
 
             if ($type === 'unlimited') {
-                tg_answer_callback($id, "Setting to unlimited...");
+                tg_answer_callback($id);
                 $ok = PanelManager::updateDateLimit($server, $username, 0, 'unlimited');
-                tg_answer_callback($id, $ok ? "Set to unlimited!" : "Failed.", !$ok);
-                self::renderUserCard($chatId, $messageId, $serverId, $username);
+                Storage::clearState($userId);
+                tg_edit_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
             } elseif ($type === 'onhold') {
                 Storage::setState($userId, 'user_mod_datelimit_onhold', ['server_id' => $serverId, 'username' => $username]);
                 tg_answer_callback($id);
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "🚀 <b>After First Use Expiration:</b> <code>{$username}</code>\n\nPlease send the duration in days after user's first connection (e.g. <code>30</code>):",
+                    "Enter DateLimit: [0-9]",
                     Keyboards::cancel("usr:{$serverId}:{$username}")
                 );
             } else {
@@ -318,33 +358,42 @@ class CallbackHandlers {
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "📅 <b>Fixed Expiration:</b> <code>{$username}</code>\n\nPlease send the duration in days from now (e.g. <code>30</code>):",
+                    "Enter DateLimit: [0-9]",
                     Keyboards::cancel("usr:{$serverId}:{$username}")
                 );
             }
             return;
         }
 
-        // User modify configs: cfg_tgl:<id>:<username>:<serviceId>
-        if (str_starts_with($data, 'cfg_tgl:')) {
+        if (str_starts_with($data, 'cfg_pick:')) {
             $parts = explode(':', $data, 4);
-            $serverId = (int)($parts[1] ?? 0);
-            $username = $parts[2] ?? '';
-            $svcId = $parts[3] ?? '';
+            $operation = $parts[1] ?? '';
+            $serverId = (int)($parts[2] ?? 0);
             $state = Storage::getState($userId);
-            $currentIds = $state['data']['current_services'] ?? [];
-            if (in_array($svcId, $currentIds) || in_array((int)$svcId, $currentIds)) {
-                $currentIds = array_values(array_filter($currentIds, fn($id) => (string)$id !== (string)$svcId));
-            } else {
-                $currentIds[] = is_numeric($svcId) ? (int)$svcId : $svcId;
+            if (($state['step'] ?? '') !== 'user_mod_configs' || (int)($state['data']['server_id'] ?? 0) !== $serverId) {
+                tg_answer_callback($id, "❌ Not Found.", true);
+                return;
+            }
+            $server = Storage::getServer($serverId);
+            if (!$server) { tg_answer_callback($id, "❌ Not Found.", true); return; }
+            $services = PanelManager::getServices($server);
+            $currentIds = $state['data']['current_services'];
+            $valid = array_map('strval', array_column($services, 'id'));
+            $selected = rawurldecode($parts[3] ?? '');
+            if ($operation === 'all') $currentIds = array_column($services, 'id');
+            elseif ($operation === 'none') $currentIds = [];
+            elseif ($operation === 'tgl' && in_array($selected, $valid, true)) {
+                if (in_array($selected, array_map('strval', $currentIds), true)) {
+                    $currentIds = array_values(array_filter($currentIds, fn($v) => (string)$v !== $selected));
+                } else $currentIds[] = $selected;
             }
             $state['data']['current_services'] = $currentIds;
             Storage::setState($userId, 'user_mod_configs', $state['data']);
-            $server = Storage::getServer($serverId);
-            $services = PanelManager::getServices($server);
+            $username = $state['data']['username'];
             tg_answer_callback($id);
-            $kb = Keyboards::configSelector($serverId, $services, $currentIds, "cfg_pick_all:{$username}", "cfg_save:{$serverId}:{$username}", "usr:{$serverId}:{$username}");
-            tg_edit_message($chatId, $messageId, "📂 <b>Manage Configs for</b> <code>{$username}</code>:\nToggle configs to enable or disable:", $kb);
+            tg_edit_message($chatId, $messageId, "Select Configs:", Keyboards::configSelector(
+                $serverId, $services, $currentIds, 'cfg_pick', "cfg_save:{$serverId}:{$username}", "usr:{$serverId}:{$username}"
+            ));
             return;
         }
 
@@ -354,27 +403,36 @@ class CallbackHandlers {
             $username = $parts[2] ?? '';
             $server = Storage::getServer($serverId);
             $state = Storage::getState($userId);
-            $newIds = $state['data']['current_services'] ?? [];
-            Storage::clearState($userId);
-            if (empty($newIds)) {
-                tg_answer_callback($id, "At least one config must be selected.", true);
+            if (
+                !$server
+                || ($state['step'] ?? '') !== 'user_mod_configs'
+                || (int)($state['data']['server_id'] ?? 0) !== $serverId
+                || ($state['data']['username'] ?? '') !== $username
+            ) {
+                tg_answer_callback($id, "❌ Not Found.", true);
                 return;
             }
+            $newIds = $state['data']['current_services'] ?? [];
+            if (empty($newIds)) {
+                tg_answer_callback($id, "❌ Not Found Any Config.", true);
+                return;
+            }
+            Storage::clearState($userId);
             $ok = PanelManager::updateUserConfigs($server, $username, $newIds);
-            tg_answer_callback($id, $ok ? "Configs updated!" : "Failed to update configs.", !$ok);
-            self::renderUserCard($chatId, $messageId, $serverId, $username);
+            tg_answer_callback($id);
+            tg_edit_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
             return;
         }
 
         // Server Actions Menu: act_menu:<id>
         if (str_starts_with($data, 'act_menu:')) {
-            $serverId = (int)substr($data, 9);
+            $serverId = (int)substr($data, strlen('act_menu:'));
             $server = Storage::getServer($serverId);
             tg_answer_callback($id);
             tg_edit_message(
                 $chatId,
                 $messageId,
-                "⚡ <b>Server Batch Actions</b>\n\nChoose an automated action to perform across users:",
+                "Select items",
                 Keyboards::actionsMenu($serverId, $server['type'] ?? 'marzban')
             );
             return;
@@ -401,7 +459,7 @@ class CallbackHandlers {
                 tg_answer_callback($id);
                 $title = ($action === 'del_exp') ? "Delete Expired Users" : "Delete Limited Users";
                 $kb = Keyboards::adminsSelector($serverId, $admins, "confirm_act:{$action}", true);
-                tg_edit_message($chatId, $messageId, "🗑️ <b>{$title}</b>\n\nSelect which admin's users to delete:", $kb);
+                tg_edit_message($chatId, $messageId, "Select admin:", $kb);
                 return;
             }
 
@@ -410,7 +468,7 @@ class CallbackHandlers {
                 // Unlike Delete Expired / Delete Limited, this action never offers an
                 // "ALL admins" wildcard - a specific admin must always be chosen.
                 $kb = Keyboards::adminsSelector($serverId, $admins, "confirm_act:del_all", false);
-                tg_edit_message($chatId, $messageId, "🗑️ <b>Delete All Admin Users</b>\n\nSelect which admin's users to delete:", $kb);
+                tg_edit_message($chatId, $messageId, "Select admin:", $kb);
                 return;
             }
 
@@ -418,14 +476,14 @@ class CallbackHandlers {
                 tg_answer_callback($id);
                 $title = ($action === 'act_adm') ? "Activate Admin Users" : "Disable Admin Users";
                 $kb = Keyboards::adminsSelector($serverId, $admins, "confirm_act:{$action}", false);
-                tg_edit_message($chatId, $messageId, "👥 <b>{$title}</b>\n\nSelect target admin:", $kb);
+                tg_edit_message($chatId, $messageId, "Select admin:", $kb);
                 return;
             }
 
             if ($action === 'xfer_adm') {
                 tg_answer_callback($id);
                 $kb = Keyboards::adminsSelector($serverId, $admins, "xfer_from", false);
-                tg_edit_message($chatId, $messageId, "💱 <b>Transfer Users</b> (Step 1/2)\n\nSelect source admin (FROM):", $kb);
+                tg_edit_message($chatId, $messageId, "Select from admin:", $kb);
                 return;
             }
 
@@ -433,7 +491,7 @@ class CallbackHandlers {
                 tg_answer_callback($id);
                 $title = ($action === 'add_cfg') ? "Add Config to Users" : "Remove Config from Users";
                 $kb = Keyboards::adminsSelector($serverId, $admins, "cfg_adm:{$action}", true);
-                tg_edit_message($chatId, $messageId, "📂 <b>{$title}</b>\n\nSelect target admin:", $kb);
+                tg_edit_message($chatId, $messageId, "Select admin:", $kb);
                 return;
             }
         }
@@ -465,38 +523,48 @@ class CallbackHandlers {
             $services = PanelManager::getServices($server);
             tg_answer_callback($id);
             if (empty($services)) {
-                tg_edit_message($chatId, $messageId, "❌ No configs found on this server.", Keyboards::serverMenu($serverId));
+                tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::cancel("srv:{$serverId}"));
                 return;
             }
             $rows = [];
             foreach ($services as $svc) {
                 $name = $svc['name'] ?? ($svc['remark'] ?? ('Service #' . $svc['id']));
-                $rows[] = [['text' => $name, 'callback_data' => "cfg_pick:{$serverId}:" . $svc['id']]];
+                $rows[] = [['text' => $name, 'callback_data' => "bulk_cfg:{$serverId}:" . rawurlencode((string)$svc['id'])]];
             }
-            $rows[] = [['text' => '« Back', 'callback_data' => "act_menu:{$serverId}"]];
+            $rows[] = [['text' => '🏛️ Home', 'callback_data' => 'home']];
+            $rows[] = [['text' => '◀️ Back', 'callback_data' => "srv:{$serverId}"]];
             $actionLabel = ($action === 'add_cfg') ? 'Add to Users' : 'Remove from Users';
-            tg_edit_message($chatId, $messageId, "📂 Select config to {$actionLabel}:", ['inline_keyboard' => $rows]);
+            tg_edit_message($chatId, $messageId, "Select items", ['inline_keyboard' => $rows]);
             return;
         }
 
-        // Config bulk action executed: cfg_pick:<id>:<service_id>
-        if (str_starts_with($data, 'cfg_pick:')) {
+        // Config bulk action executed: bulk_cfg:<id>:<service_id>
+        if (str_starts_with($data, 'bulk_cfg:')) {
             $parts = explode(':', $data, 3);
             $serverId = (int)($parts[1] ?? 0);
-            $serviceId = (int)($parts[2] ?? 0);
+            $serviceId = rawurldecode($parts[2] ?? '');
             $server = Storage::getServer($serverId);
             $state = Storage::getState($userId);
+            if (
+                !$server
+                || ($state['step'] ?? '') !== 'cfg_action_pick'
+                || (int)($state['data']['server_id'] ?? 0) !== $serverId
+                || !in_array($state['data']['action'] ?? '', ['add_cfg', 'del_cfg'], true)
+            ) {
+                tg_answer_callback($id, "❌ Not Found.", true);
+                return;
+            }
             $action = $state['data']['action'] ?? '';
             $admin = $state['data']['admin'] ?? 'ALL';
             Storage::clearState($userId);
             tg_answer_callback($id, "Processing config action...");
-            tg_edit_message($chatId, $messageId, "⏳ Applying config changes for admin <code>{$admin}</code>...");
+            tg_edit_message($chatId, $messageId, "⏳");
             $r = PanelManager::applyConfigToUsers($server, $serviceId, $action === 'add_cfg', $admin);
             tg_edit_message(
                 $chatId,
                 $messageId,
                 "Action Finished: {$r['success']}/{$r['total']}",
-                Keyboards::serverMenu($serverId)
+                Keyboards::cancel("srv:{$serverId}")
             );
             return;
         }
@@ -508,9 +576,10 @@ class CallbackHandlers {
             $serverId = (int)($parts[2] ?? 0);
             $admin = $parts[3] ?? 'ALL';
             $server = Storage::getServer($serverId);
+            if (!$server) { tg_answer_callback($id, "❌ Not Found.", true); return; }
 
             tg_answer_callback($id, "Processing batch action...");
-            tg_edit_message($chatId, $messageId, "⏳ Executing action, please wait...");
+            tg_edit_message($chatId, $messageId, "⏳");
 
             if ($action === 'del_exp') {
                 $r = PanelManager::deleteExpiredUsers($server, $admin);
@@ -518,7 +587,7 @@ class CallbackHandlers {
                     $chatId,
                     $messageId,
                     "Action Finished: {$r['success']}/{$r['total']}",
-                    Keyboards::serverMenu($serverId)
+                    Keyboards::cancel("srv:{$serverId}")
                 );
             } elseif ($action === 'del_lim') {
                 $r = PanelManager::deleteLimitedUsers($server, $admin);
@@ -526,7 +595,7 @@ class CallbackHandlers {
                     $chatId,
                     $messageId,
                     "Action Finished: {$r['success']}/{$r['total']}",
-                    Keyboards::serverMenu($serverId)
+                    Keyboards::cancel("srv:{$serverId}")
                 );
             } elseif ($action === 'del_all') {
                 $r = PanelManager::deleteAllAdminUsers($server, $admin);
@@ -534,7 +603,7 @@ class CallbackHandlers {
                     $chatId,
                     $messageId,
                     "Action Finished: {$r['success']}/{$r['total']}",
-                    Keyboards::serverMenu($serverId)
+                    Keyboards::cancel("srv:{$serverId}")
                 );
             } elseif ($action === 'act_adm') {
                 $ok = PanelManager::activateAdminUsers($server, $admin);
@@ -542,7 +611,7 @@ class CallbackHandlers {
                     $chatId,
                     $messageId,
                     $ok ? "✅ Success." : "❌ Failed",
-                    Keyboards::serverMenu($serverId)
+                    Keyboards::cancel("srv:{$serverId}")
                 );
             } elseif ($action === 'dis_adm') {
                 $ok = PanelManager::disableAdminUsers($server, $admin);
@@ -550,7 +619,7 @@ class CallbackHandlers {
                     $chatId,
                     $messageId,
                     $ok ? "✅ Success." : "❌ Failed",
-                    Keyboards::serverMenu($serverId)
+                    Keyboards::cancel("srv:{$serverId}")
                 );
             }
             return;
@@ -583,7 +652,7 @@ class CallbackHandlers {
             tg_edit_message(
                 $chatId,
                 $messageId,
-                "💱 <b>Transfer Users</b> (Step 2/2)\n\nFrom: <code>{$fromAdmin}</code>\nSelect destination admin (TO):",
+                "Select to admin:",
                 $kb
             );
             return;
@@ -595,6 +664,10 @@ class CallbackHandlers {
             $serverId = (int)($parts[1] ?? 0);
             $toAdmin = $parts[2] ?? '';
             $state = Storage::getState($userId);
+            if (($state['step'] ?? '') !== 'xfer_target' || (int)($state['data']['server_id'] ?? 0) !== $serverId) {
+                tg_answer_callback($id, "❌ Not Found.", true);
+                return;
+            }
             $fromAdmin = $state['data']['from_admin'] ?? '';
             $state['data']['to_admin'] = $toAdmin;
             Storage::setState($userId, 'xfer_confirm', $state['data']);
@@ -604,7 +677,7 @@ class CallbackHandlers {
             tg_edit_message(
                 $chatId,
                 $messageId,
-                "⚠️ <b>Confirm Transfer</b>\n\nTransfer all users from <code>{$fromAdmin}</code> to <code>{$toAdmin}</code>?",
+                "Are your sure?",
                 $kb
             );
             return;
@@ -612,29 +685,33 @@ class CallbackHandlers {
 
         // Execute Transfer: xfer_ok:<id>
         if (str_starts_with($data, 'xfer_ok:')) {
-            $serverId = (int)substr($data, 8);
+            $serverId = (int)substr($data, strlen('xfer_ok:'));
             $server = Storage::getServer($serverId);
             $state = Storage::getState($userId);
+            if (!$server || ($state['step'] ?? '') !== 'xfer_confirm' || (int)($state['data']['server_id'] ?? 0) !== $serverId) {
+                tg_answer_callback($id, "❌ Not Found.", true);
+                return;
+            }
             $fromAdmin = $state['data']['from_admin'] ?? '';
             $toAdmin = $state['data']['to_admin'] ?? '';
             Storage::clearState($userId);
 
             tg_answer_callback($id, "Transferring users...");
-            tg_edit_message($chatId, $messageId, "⏳ Transferring users, please wait...");
+            tg_edit_message($chatId, $messageId, "⏳");
 
             $r = PanelManager::transferUsers($server, $fromAdmin, $toAdmin);
             tg_edit_message(
                 $chatId,
                 $messageId,
                 "Action Finished: {$r['success']}/{$r['total']}",
-                Keyboards::serverMenu($serverId)
+                Keyboards::cancel("srv:{$serverId}")
             );
             return;
         }
 
         // Server Statistics: stats:<id>
         if (str_starts_with($data, 'stats:')) {
-            $serverId = (int)substr($data, 6);
+            $serverId = (int)substr($data, strlen('stats:'));
             $server = Storage::getServer($serverId);
             if (!$server) {
                 tg_answer_callback($id, "❌ Not Found.", true);
@@ -645,7 +722,7 @@ class CallbackHandlers {
             tg_edit_message($chatId, $messageId, "⏳");
             $stats = PanelManager::getServerStats($server);
             $card = Formatter::statsCard($server, $stats);
-            tg_edit_message($chatId, $messageId, $card, Keyboards::serverMenu($serverId));
+            tg_edit_message($chatId, $messageId, $card, Keyboards::cancel("srv:{$serverId}"));
             return;
         }
 
@@ -658,11 +735,11 @@ class CallbackHandlers {
 
         // View Template: tmpl_view:<id>
         if (str_starts_with($data, 'tmpl_view:')) {
-            $tmplId = (int)substr($data, 10);
+            $tmplId = (int)substr($data, strlen('tmpl_view:'));
             $tmpl = Storage::getTemplate($tmplId);
             if (!$tmpl) {
                 tg_answer_callback($id, "❌ Not Found.", true);
-                tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::cancel('tmpls'));
+                tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::cancel());
                 return;
             }
             tg_answer_callback($id);
@@ -673,7 +750,7 @@ class CallbackHandlers {
 
         // Confirm before toggling Template is_active: tmpl_tgl_ask:<id>
         if (str_starts_with($data, 'tmpl_tgl_ask:')) {
-            $tmplId = (int)substr($data, 13);
+            $tmplId = (int)substr($data, strlen('tmpl_tgl_ask:'));
             tg_answer_callback($id);
             tg_edit_message($chatId, $messageId, "Are your sure?", Keyboards::confirm("tmpl_tgl_act:{$tmplId}", "tmpl_view:{$tmplId}"));
             return;
@@ -681,28 +758,28 @@ class CallbackHandlers {
 
         // Toggle Template is_active: tmpl_tgl_act:<id>
         if (str_starts_with($data, 'tmpl_tgl_act:')) {
-            $tmplId = (int)substr($data, 13);
+            $tmplId = (int)substr($data, strlen('tmpl_tgl_act:'));
             $tmpl = Storage::getTemplate($tmplId);
             if (!$tmpl) {
                 tg_answer_callback($id, "❌ Not Found.", true);
-                tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::cancel('tmpls'));
+                tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::cancel());
                 return;
             }
-            $tmpl['is_active'] = empty($tmpl['is_active']) ? 1 : 0;
+            $tmpl['is_active'] = ($tmpl['is_active'] ?? true) ? 0 : 1;
             Storage::saveTemplate($tmpl);
             tg_answer_callback($id, "✅ Success.");
-            tg_edit_message($chatId, $messageId, Formatter::templateCard($tmpl), Keyboards::templateActions($tmplId, !empty($tmpl['is_active'])));
+            tg_edit_message($chatId, $messageId, "✅ Success.", Keyboards::cancel());
             return;
         }
 
         // Delete Template prompt: tmpl_del_ask:<id>
         if (str_starts_with($data, 'tmpl_del_ask:')) {
-            $tmplId = (int)substr($data, 13);
+            $tmplId = (int)substr($data, strlen('tmpl_del_ask:'));
             tg_answer_callback($id);
             tg_edit_message(
                 $chatId,
                 $messageId,
-                "⚠️ Are you sure you want to delete this template?",
+                "Are your sure?",
                 Keyboards::confirm("tmpl_del:{$tmplId}", "tmpl_view:{$tmplId}")
             );
             return;
@@ -710,44 +787,44 @@ class CallbackHandlers {
 
         // Delete Template confirmed: tmpl_del:<id>
         if (str_starts_with($data, 'tmpl_del:')) {
-            $tmplId = (int)substr($data, 9);
-            Storage::deleteTemplate($tmplId);
-            tg_answer_callback($id, "Template deleted.", true);
-            self::renderTemplates($chatId, $messageId);
+            $tmplId = (int)substr($data, strlen('tmpl_del:'));
+            $ok = Storage::deleteTemplate($tmplId);
+            tg_answer_callback($id);
+            tg_edit_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel());
             return;
         }
 
         // Edit Template Remark: tmpl_edit_remark:<id>
         if (str_starts_with($data, 'tmpl_edit_remark:')) {
-            $tmplId = (int)substr($data, 17);
+            $tmplId = (int)substr($data, strlen('tmpl_edit_remark:'));
             Storage::setState($userId, 'tmpl_edit_remark', ['tmpl_id' => $tmplId]);
             tg_answer_callback($id);
             tg_edit_message(
                 $chatId,
                 $messageId,
-                "✏️ <b>Edit Template Remark</b>\n\nPlease send the new remark for this template:",
-                Keyboards::cancel("tmpl_view:{$tmplId}")
+                "Enter remark: [a-z]",
+                Keyboards::cancel()
             );
             return;
         }
 
         // Edit Template Data Limit: tmpl_edit_data:<id>
         if (str_starts_with($data, 'tmpl_edit_data:')) {
-            $tmplId = (int)substr($data, 15);
+            $tmplId = (int)substr($data, strlen('tmpl_edit_data:'));
             Storage::setState($userId, 'tmpl_edit_data', ['tmpl_id' => $tmplId]);
             tg_answer_callback($id);
             tg_edit_message(
                 $chatId,
                 $messageId,
-                "📊 <b>Edit Data Limit</b>\n\nPlease send the new data limit in GB (e.g. <code>50</code>, or <code>0</code> for unlimited):",
-                Keyboards::cancel("tmpl_view:{$tmplId}")
+                "Enter DataLimit: [0-9]\n0 for unlimited",
+                Keyboards::cancel()
             );
             return;
         }
 
         // Edit Template Date Limit: tmpl_edit_date:<id> - shows the date-type selector first
         if (str_starts_with($data, 'tmpl_edit_date:')) {
-            $tmplId = (int)substr($data, 15);
+            $tmplId = (int)substr($data, strlen('tmpl_edit_date:'));
             tg_answer_callback($id);
             tg_edit_message(
                 $chatId,
@@ -760,7 +837,7 @@ class CallbackHandlers {
 
         // Template date-type chosen during ADD: tmpl_add_dt:<type>
         if (str_starts_with($data, 'tmpl_add_dt:')) {
-            $type = substr($data, 12);
+            $type = substr($data, strlen('tmpl_add_dt:'));
             $state = Storage::getState($userId);
             if (empty($state['data']['remark'])) {
                 tg_answer_callback($id, "Session expired, please retry.", true);
@@ -773,10 +850,10 @@ class CallbackHandlers {
                 $tmplData['date_limit'] = 0;
                 Storage::clearState($userId);
                 Storage::saveTemplate($tmplData);
-                tg_edit_message($chatId, $messageId, "✅ Success.", Keyboards::templatesMenu(Storage::getTemplates()));
+                tg_edit_message($chatId, $messageId, "✅ Success.", Keyboards::cancel());
             } else {
                 Storage::setState($userId, 'tmpl_add_date', $tmplData);
-                tg_edit_message($chatId, $messageId, "Enter DateLimit: [0-9]", Keyboards::cancel('tmpls'));
+                tg_edit_message($chatId, $messageId, "Enter DateLimit: [0-9]", Keyboards::cancel());
             }
             return;
         }
@@ -796,14 +873,14 @@ class CallbackHandlers {
                 $tmpl['date_type'] = 'unlimited';
                 $tmpl['date_limit'] = 0;
                 Storage::saveTemplate($tmpl);
-                tg_edit_message($chatId, $messageId, Formatter::templateCard($tmpl), Keyboards::templateActions($tmplId, !empty($tmpl['is_active'])));
+                tg_edit_message($chatId, $messageId, "✅ Success.", Keyboards::cancel());
             } else {
                 Storage::setState($userId, 'tmpl_edit_date', ['tmpl_id' => $tmplId, 'date_type' => $type]);
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "⏱️ <b>Edit Date Limit</b>\n\nPlease send the new duration in days (e.g. <code>30</code>):",
-                    Keyboards::cancel("tmpl_view:{$tmplId}")
+                    "Enter DateLimit: [0-9]",
+                    Keyboards::cancel()
                 );
             }
             return;
@@ -816,44 +893,69 @@ class CallbackHandlers {
             tg_edit_message(
                 $chatId,
                 $messageId,
-                "📋 <b>Add Template</b> (Step 1/3)\n\nPlease send a friendly remark (e.g. <code>30 Days 100GB</code>):",
-                Keyboards::cancel('tmpls')
+                "Enter remark: [a-z]",
+                Keyboards::cancel()
             );
             return;
         }
 
         // Search user: srch_usr:<id>
         if (str_starts_with($data, 'srch_usr:')) {
-            $serverId = (int)substr($data, 9);
+            $serverId = (int)substr($data, strlen('srch_usr:'));
             Storage::setState($userId, 'search_user', ['server_id' => $serverId]);
             tg_answer_callback($id);
             tg_edit_message(
                 $chatId,
                 $messageId,
-                "🔍 <b>Search User</b>\n\nPlease enter the exact or partial username to search:",
+                "Enter Username:",
                 Keyboards::cancel("srv:{$serverId}")
             );
             return;
         }
 
+        // Creation buttons are valid only for the current wizard and server.
+        $creationSteps = [
+            'new_usr_adm' => 'create_user_admin',
+            'new_usr_json' => 'create_user_name',
+            'rnd_usr' => 'create_user_name',
+            'use_tmpl' => 'create_user_template',
+            'use_tmpl_custom' => 'create_user_template',
+            'usr_cfg' => 'create_user_configs',
+            'usr_cfg_done' => 'create_user_configs',
+            'crt_dt_type' => 'create_user_date_type',
+        ];
+        $creationParts = explode(':', $data);
+        $creationPrefix = $creationParts[0];
+        if (isset($creationSteps[$creationPrefix])) {
+            $creationServer = (int)($creationParts[$creationPrefix === 'usr_cfg' ? 2 : 1] ?? 0);
+            $creationState = Storage::getState($userId);
+            if (($creationState['step'] ?? '') !== $creationSteps[$creationPrefix]
+                || (int)($creationState['data']['server_id'] ?? 0) !== $creationServer
+                || !Storage::getServer($creationServer)) {
+                tg_answer_callback($id, "Session expired, please retry.", true);
+                return;
+            }
+        }
+
         // Create user: new_usr:<id>
         if (str_starts_with($data, 'new_usr:')) {
-            $serverId = (int)substr($data, 8);
+            $serverId = (int)substr($data, strlen('new_usr:'));
             $server = Storage::getServer($serverId);
             if (!$server) {
                 tg_answer_callback($id, "Server not found.", true);
                 return;
             }
+            Storage::setState($userId, 'create_user_admin', ['server_id' => $serverId]);
             $admins = PanelManager::getAdmins($server);
-            if (count($admins) > 1) {
+            if (count($admins) > 0) {
                 tg_answer_callback($id);
                 $kb = Keyboards::adminsSelector($serverId, $admins, 'new_usr_adm', false, "srv:{$serverId}");
-                tg_edit_message($chatId, $messageId, "👤 <b>Select Admin Owner:</b>", $kb);
+                tg_edit_message($chatId, $messageId, "Select admin:", $kb);
                 return;
             }
 
-            $admin = !empty($admins[0]) ? $admins[0] : '';
-            self::renderUserCreatePrompt($chatId, $messageId, $serverId, $userId, $admin, $id);
+            tg_answer_callback($id);
+            tg_edit_message($chatId, $messageId, '❌ Not Found.', Keyboards::cancel("srv:{$serverId}"));
             return;
         }
 
@@ -868,7 +970,7 @@ class CallbackHandlers {
 
         // JSON import button clicked: new_usr_json:<id>
         if (str_starts_with($data, 'new_usr_json:')) {
-            $serverId = (int)substr($data, 13);
+            $serverId = (int)substr($data, strlen('new_usr_json:'));
             $state = Storage::getState($userId) ?: ['data' => []];
             $admin = $state['data']['admin'] ?? '';
             Storage::setState($userId, 'create_user_json', ['server_id' => $serverId, 'admin' => $admin]);
@@ -876,7 +978,7 @@ class CallbackHandlers {
             tg_edit_message(
                 $chatId,
                 $messageId,
-                "📁 <b>Create With JSON</b>\n\nEnter Json file: [*.json]\nPlease upload a <code>.json</code> document containing a user list:\n<code>[{\"username\": \"client_01\", \"datalimit\": 30, \"datelimit\": 30, \"datetypes\": \"now\"}]</code>",
+                "Enter Json file: [*.json]",
                 Keyboards::cancel("srv:{$serverId}")
             );
             return;
@@ -884,7 +986,7 @@ class CallbackHandlers {
 
         // Random username generated: rnd_usr:<id>
         if (str_starts_with($data, 'rnd_usr:')) {
-            $serverId = (int)substr($data, 8);
+            $serverId = (int)substr($data, strlen('rnd_usr:'));
             $randomName = substr(bin2hex(random_bytes(3)), 0, 6);
             $state = Storage::getState($userId) ?: ['data' => []];
             $stateData = array_merge($state['data'] ?? [], [
@@ -897,7 +999,7 @@ class CallbackHandlers {
             tg_edit_message(
                 $chatId,
                 $messageId,
-                "👥 <b>User Count</b>\n\nHow many accounts do you want to create? (Send <code>1</code> for single user, or <code>2</code>-<code>50</code> for batch):",
+                "Enter count: [0-9]",
                 Keyboards::cancel("srv:{$serverId}")
             );
             return;
@@ -923,7 +1025,7 @@ class CallbackHandlers {
 
         // Single user custom create start: use_tmpl_custom:<id>
         if (str_starts_with($data, 'use_tmpl_custom:')) {
-            $serverId = (int)substr($data, 16);
+            $serverId = (int)substr($data, strlen('use_tmpl_custom:'));
             $state = Storage::getState($userId);
             if (!empty($state['data']['username'])) {
                 Storage::setState($userId, 'create_user_data', $state['data']);
@@ -931,7 +1033,7 @@ class CallbackHandlers {
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "📊 Send the <b>Data Limit in GB</b> (e.g. <code>50</code>, or <code>0</code> for unlimited):",
+                    "Enter DataLimit: [0-9]\n0 for unlimited",
                     Keyboards::cancel("srv:{$serverId}")
                 );
             }
@@ -945,10 +1047,16 @@ class CallbackHandlers {
             $cfgTag = rawurldecode($parts[3] ?? '');
             $state = Storage::getState($userId);
             $selected = $state['data']['selected_configs'] ?? [];
-            if (in_array($cfgTag, $selected) || in_array((int)$cfgTag, $selected)) {
+            $server = Storage::getServer($serverId);
+            $configs = PanelManager::getServices($server);
+            if (!in_array($cfgTag, array_map('strval', array_column($configs, 'id')), true)) {
+                tg_answer_callback($id, '❌ Not Found.', true);
+                return;
+            }
+            if (in_array($cfgTag, array_map('strval', $selected), true)) {
                 $selected = array_values(array_filter($selected, fn($s) => (string)$s !== (string)$cfgTag));
             } else {
-                $selected[] = is_numeric($cfgTag) ? (int)$cfgTag : $cfgTag;
+                $selected[] = $server['type'] === 'marzneshin' ? (int)$cfgTag : $cfgTag;
             }
             $state['data']['selected_configs'] = $selected;
             Storage::setState($userId, 'create_user_configs', $state['data']);
@@ -963,13 +1071,14 @@ class CallbackHandlers {
                 "usr_cfg_done:{$serverId}",
                 "srv:{$serverId}"
             );
-            tg_edit_message($chatId, $messageId, "📂 <b>Select Configs / Inbounds:</b>\nToggle protocols for the new user:", $kb);
+            tg_edit_message($chatId, $messageId, "Select Configs:", $kb);
             return;
         }
 
         if (str_starts_with($data, 'usr_cfg:all:')) {
-            $serverId = (int)substr($data, 12);
+            $serverId = (int)substr($data, strlen('usr_cfg:all:'));
             $server = Storage::getServer($serverId);
+            if (!$server) { tg_answer_callback($id, "❌ Not Found.", true); return; }
             $configs = PanelManager::getServices($server);
             $selected = array_column($configs, 'id');
             $state = Storage::getState($userId);
@@ -984,13 +1093,14 @@ class CallbackHandlers {
                 "usr_cfg_done:{$serverId}",
                 "srv:{$serverId}"
             );
-            tg_edit_message($chatId, $messageId, "📂 <b>Select Configs / Inbounds:</b>\nToggle protocols for the new user:", $kb);
+            tg_edit_message($chatId, $messageId, "Select Configs:", $kb);
             return;
         }
 
         if (str_starts_with($data, 'usr_cfg:none:')) {
-            $serverId = (int)substr($data, 13);
+            $serverId = (int)substr($data, strlen('usr_cfg:none:'));
             $server = Storage::getServer($serverId);
+            if (!$server) { tg_answer_callback($id, "❌ Not Found.", true); return; }
             $configs = PanelManager::getServices($server);
             $state = Storage::getState($userId);
             $state['data']['selected_configs'] = [];
@@ -1004,18 +1114,18 @@ class CallbackHandlers {
                 "usr_cfg_done:{$serverId}",
                 "srv:{$serverId}"
             );
-            tg_edit_message($chatId, $messageId, "📂 <b>Select Configs / Inbounds:</b>\nToggle protocols for the new user:", $kb);
+            tg_edit_message($chatId, $messageId, "Select Configs:", $kb);
             return;
         }
 
         if (str_starts_with($data, 'usr_cfg_done:')) {
-            $serverId = (int)substr($data, 13);
+            $serverId = (int)substr($data, strlen('usr_cfg_done:'));
             $state = Storage::getState($userId);
             if (empty($state['data'])) {
                 tg_answer_callback($id, "Session expired, please retry.", true);
                 return;
             }
-            if (empty($state['data']['uploaded_json']) && empty($state['data']['selected_configs'])) {
+            if (empty($state['data']['selected_configs'])) {
                 tg_answer_callback($id, "❌ Not Found Any Config.", true);
                 return;
             }
@@ -1025,9 +1135,9 @@ class CallbackHandlers {
 
         // Custom date type chosen during create flow: crt_dt_type:<id>:<type>
         if (str_starts_with($data, 'crt_dt_type:')) {
-            $parts = explode(':', $data, 3);
+            $parts = explode(':', $data, 4);
             $serverId = (int)($parts[1] ?? 0);
-            $type = $parts[2] ?? 'fixed';
+            $type = $parts[3] ?? ($parts[2] ?? 'fixed');
             $state = Storage::getState($userId);
             if (empty($state['data']['username'])) {
                 tg_answer_callback($id, "Session expired, please retry.", true);
@@ -1043,7 +1153,7 @@ class CallbackHandlers {
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "🚀 <b>After First Use Duration:</b>\nSend duration in days (e.g. <code>30</code>):",
+                    "Enter DateLimit: [0-9]",
                     Keyboards::cancel("srv:{$serverId}")
                 );
             } else {
@@ -1052,7 +1162,7 @@ class CallbackHandlers {
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "📅 <b>Fixed Expiration Duration:</b>\nSend duration in days from now (e.g. <code>30</code>):",
+                    "Enter DateLimit: [0-9]",
                     Keyboards::cancel("srv:{$serverId}")
                 );
             }
@@ -1087,7 +1197,7 @@ class CallbackHandlers {
             tg_edit_message(
                 $chatId,
                 $messageId,
-                "➕ <b>Add New Server</b> (Step 1/5)\n\nPlease send a friendly remark/name for this server (e.g. <code>Main Marzban</code>):",
+                "Enter remark: [a-z]",
                 Keyboards::cancel('home')
             );
             return;
@@ -1098,7 +1208,8 @@ class CallbackHandlers {
 
     private static function renderHome(int|string $chatId, int $messageId): void {
         $servers = Storage::getServers();
-        $text = "🤖 <b>HolderBot Main Menu</b>\n\nSelect a server to manage:";
+        $text = "Welcome to HolderBot 🤖 [<code>" . HOLDERBOT_VERSION . "</code> by @ErfJabs]\n";
+        $text .= "<b><a href='https://t.me/pingihostbot'>نصب پنل و انجام تانل به صورت کامل خودکار!</a></b>";
         $kb = Keyboards::home($servers);
         tg_edit_message($chatId, $messageId, $text, $kb);
     }
@@ -1106,11 +1217,11 @@ class CallbackHandlers {
     private static function renderServerMenu(int|string $chatId, int $messageId, int $serverId): void {
         $server = Storage::getServer($serverId);
         if (!$server) {
-            tg_edit_message($chatId, $messageId, "❌ Server not found.", Keyboards::home(Storage::getServers()));
+            tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::home(Storage::getServers()));
             return;
         }
 
-        $text = Formatter::serverCard($server);
+        $text = "Select a Button";
         $kb = Keyboards::serverMenu($serverId);
         tg_edit_message($chatId, $messageId, $text, $kb);
     }
@@ -1118,7 +1229,7 @@ class CallbackHandlers {
     private static function renderServerSettings(int|string $chatId, int $messageId, int $serverId): void {
         $server = Storage::getServer($serverId);
         if (!$server) {
-            tg_edit_message($chatId, $messageId, "❌ Server not found.", Keyboards::home(Storage::getServers()));
+            tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::home(Storage::getServers()));
             return;
         }
 
@@ -1132,28 +1243,26 @@ class CallbackHandlers {
         int $messageId,
         int $serverId,
         int $page,
-        string $filter = 'all'
+        string $filter = 'all',
+        ?string $callbackId = null
     ): void {
         $server = Storage::getServer($serverId);
         if (!$server) {
-            tg_edit_message($chatId, $messageId, "❌ Server not found.", Keyboards::home(Storage::getServers()));
+            tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::home(Storage::getServers()));
             return;
         }
 
         $limit = 10;
         $statusParam = ($filter !== 'all') ? $filter : null;
-        $users = PanelManager::getUsers($server, $page, $limit + 1, null, $statusParam);
-        $hasMore = count($users) > $limit;
-        if ($hasMore) {
-            array_pop($users);
-        }
+        $users = PanelManager::getUsers($server, $page, $limit, null, $statusParam);
+        $hasMore = count($users) === $limit;
 
-        $filterBadge = strtoupper($filter);
-        if (empty($users)) {
-            $text = "👥 <b>Users List [{$filterBadge}]</b> - <code>{$server['remark']}</code>\n\nNo users found matching this filter.";
-        } else {
-            $text = "👥 <b>Users [{$filterBadge}]</b> - <code>{$server['remark']}</code> (Page {$page}):\n<i>Tap a user to manage:</i>";
+        if (!$users) {
+            if ($callbackId) tg_answer_callback($callbackId, "❌ Not Found.", true);
+            return;
         }
+        if ($callbackId) tg_answer_callback($callbackId);
+        $text = "Select a item or create a new:";
 
         $kb = Keyboards::usersList($serverId, $users, $page, $hasMore, $filter);
         tg_edit_message($chatId, $messageId, $text, $kb);
@@ -1162,7 +1271,7 @@ class CallbackHandlers {
     private static function renderUserCard(int|string $chatId, int $messageId, int $serverId, string $username): void {
         $server = Storage::getServer($serverId);
         if (!$server) {
-            tg_edit_message($chatId, $messageId, "❌ Server not found.", Keyboards::home(Storage::getServers()));
+            tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::home(Storage::getServers()));
             return;
         }
 
@@ -1171,7 +1280,7 @@ class CallbackHandlers {
             tg_edit_message(
                 $chatId,
                 $messageId,
-                "❌ User <code>" . htmlspecialchars($username) . "</code> was not found on server.",
+                "❌ Not Found.",
                 Keyboards::serverMenu($serverId)
             );
             return;
@@ -1203,7 +1312,7 @@ class CallbackHandlers {
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "⚠️ <b>Confirm Status Toggle</b>\n\nAre you sure you want to change active status for user <code>" . htmlspecialchars($username) . "</code>?",
+                    "Are your sure?" . htmlspecialchars($username) . "</code>?",
                     Keyboards::confirm("act_confirm:tgl:{$serverId}:{$username}:yes", "act_confirm:tgl:{$serverId}:{$username}:no")
                 );
                 break;
@@ -1217,10 +1326,11 @@ class CallbackHandlers {
                 Storage::setState($userId, 'user_mod_charge', ['server_id' => $serverId, 'username' => $username]);
                 tg_answer_callback($callbackId);
                 $kb = Keyboards::templateSelector($serverId, $templates, 'chg_tmpl', false);
+                $kb['inline_keyboard'][count($kb['inline_keyboard']) - 1][0]['callback_data'] = "usr:{$serverId}:{$username}";
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "🧪 <b>Recharge User:</b> <code>{$username}</code>\n\nSelect a template:",
+                    "Select items",
                     $kb
                 );
                 break;
@@ -1231,7 +1341,7 @@ class CallbackHandlers {
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "📊 <b>Edit Data Limit:</b> <code>{$username}</code>\n\nPlease send the new total limit in GB (e.g. <code>60</code>, or <code>0</code> for unlimited):",
+                    "Enter DataLimit: [0-9]\n0 for unlimited",
                     Keyboards::cancel("usr:{$serverId}:{$username}")
                 );
                 break;
@@ -1241,7 +1351,7 @@ class CallbackHandlers {
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "⏱️ <b>Edit Expiration:</b> <code>{$username}</code>\n\nPlease select the expiry strategy:",
+                    "Select a Button",
                     Keyboards::dateTypeSelector($serverId, $username)
                 );
                 break;
@@ -1253,7 +1363,7 @@ class CallbackHandlers {
                     tg_answer_callback($callbackId, "No configs/services found on this server.", true);
                     return;
                 }
-                $currentServices = $user['service_ids'] ?? [];
+                $currentServices = array_column($services, 'id');
                 Storage::setState($userId, 'user_mod_configs', [
                     'server_id'        => $serverId,
                     'username'         => $username,
@@ -1264,11 +1374,11 @@ class CallbackHandlers {
                     $serverId,
                     $services,
                     $currentServices,
-                    "cfg_tgl:{$serverId}:{$username}",
+                    'cfg_pick',
                     "cfg_save:{$serverId}:{$username}",
                     "usr:{$serverId}:{$username}"
                 );
-                tg_edit_message($chatId, $messageId, "📂 <b>Manage Configs for</b> <code>{$username}</code>:\nToggle configs to enable or disable:", $kb);
+                tg_edit_message($chatId, $messageId, "Select Configs:", $kb);
                 break;
 
             case 'nt': // Modify Note
@@ -1277,7 +1387,7 @@ class CallbackHandlers {
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "🗒️ <b>Edit Note:</b> <code>{$username}</code>\n\nEnter note text:",
+                    "Enter note text:",
                     Keyboards::cancel("usr:{$serverId}:{$username}")
                 );
                 break;
@@ -1286,11 +1396,11 @@ class CallbackHandlers {
                 $admins = PanelManager::getAdmins($server);
                 Storage::setState($userId, 'user_mod_owner', ['server_id' => $serverId, 'username' => $username]);
                 tg_answer_callback($callbackId);
-                $kb = Keyboards::adminsSelector($serverId, $admins, 'set_own', false);
+                $kb = Keyboards::adminsSelector($serverId, $admins, 'set_own', false, "usr:{$serverId}:{$username}");
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "👤 <b>Change Owner:</b> <code>{$username}</code>\n\nSelect the new admin:",
+                    "Select admin:",
                     $kb
                 );
                 break;
@@ -1300,7 +1410,7 @@ class CallbackHandlers {
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "⚠️ <b>Confirm Reset Usage</b>\n\nAre you sure you want to reset traffic usage for <code>" . htmlspecialchars($username) . "</code> to 0?",
+                    "Are your sure?" . htmlspecialchars($username) . "</code> to 0?",
                     Keyboards::confirm("act_confirm:rst:{$serverId}:{$username}:yes", "act_confirm:rst:{$serverId}:{$username}:no")
                 );
                 break;
@@ -1310,7 +1420,7 @@ class CallbackHandlers {
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "⚠️ <b>Confirm Revoke Subscription</b>\n\nRevoking will generate a new subscription link for <code>" . htmlspecialchars($username) . "</code>. Old links will stop working. Continue?",
+                    "Are your sure?" . htmlspecialchars($username) . "</code>. Old links will stop working. Continue?",
                     Keyboards::confirm("act_confirm:rvk:{$serverId}:{$username}:yes", "act_confirm:rvk:{$serverId}:{$username}:no")
                 );
                 break;
@@ -1325,7 +1435,7 @@ class CallbackHandlers {
                 QrGenerator::sendQrPhoto(
                     $chatId,
                     $user['subscription_url'],
-                    "🖼️ QR Code for <code>" . htmlspecialchars($username) . "</code>\n\n<code>{$user['subscription_url']}</code>"
+                    Formatter::userInfo($server, $user)
                 );
                 break;
 
@@ -1335,7 +1445,7 @@ class CallbackHandlers {
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "⚠️ <b>Delete User Confirmation</b>\n\nAre you sure you want to permanently remove user <code>" . htmlspecialchars($username) . "</code> from <b>{$server['remark']}</b>?",
+                    "Are your sure?" . htmlspecialchars($username) . "</code> from <b>{$server['remark']}</b>?",
                     $confirmKb
                 );
                 break;
@@ -1355,14 +1465,17 @@ class CallbackHandlers {
         tg_edit_message(
             $chatId,
             $messageId,
-            "➕ <b>Create New User</b>\n\nPlease send the username for the new account (e.g. <code>client_01</code>), generate a random one, or import from JSON:",
+            "Enter remark: [a-z]",
             [
                 'inline_keyboard' => [
                     [
-                        ['text' => '🎲 Random Username', 'callback_data' => "rnd_usr:{$serverId}"],
-                        ['text' => '📁 Create With Json', 'callback_data' => "new_usr_json:{$serverId}"],
+                        ['text' => 'Random Username', 'callback_data' => "rnd_usr:{$serverId}"],
                     ],
-                    [['text' => '❌ Cancel', 'callback_data' => "srv:{$serverId}"]],
+                    [
+                        ['text' => 'Create With Json', 'callback_data' => "new_usr_json:{$serverId}"],
+                    ],
+                    [['text' => '🏛️ Home', 'callback_data' => 'home']],
+                    [['text' => '◀️ Back', 'callback_data' => "srv:{$serverId}"]],
                 ]
             ]
         );
@@ -1377,13 +1490,17 @@ class CallbackHandlers {
         string $callbackId
     ): void {
         $server = Storage::getServer($serverId);
+        if (!$server) {
+            tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::cancel());
+            return;
+        }
         $configs = PanelManager::getServices($server);
 
         if (empty($configs)) {
             // Matches the original bot: creation is blocked entirely (not
             // silently attempted with zero configs) when the server has none.
             Storage::clearState($userId);
-            tg_answer_callback($callbackId, "❌ Not Found Any Config.", true);
+            if ($messageId > 0) tg_answer_callback($callbackId, "❌ Not Found Any Config.", true);
             tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::cancel("srv:{$serverId}"));
             return;
         }
@@ -1392,7 +1509,7 @@ class CallbackHandlers {
         $stateData['selected_configs'] = $allConfigIds;
         Storage::setState($userId, 'create_user_configs', $stateData);
 
-        tg_answer_callback($callbackId);
+        if ($messageId > 0) tg_answer_callback($callbackId);
         $kb = Keyboards::configSelector(
             $serverId,
             $configs,
@@ -1401,7 +1518,7 @@ class CallbackHandlers {
             "usr_cfg_done:{$serverId}",
             "srv:{$serverId}"
         );
-        tg_edit_message($chatId, $messageId, "📂 <b>Select Configs / Inbounds:</b>\nToggle protocols for the new user:", $kb);
+        tg_edit_message($chatId, $messageId, "Select Configs:", $kb);
     }
 
     public static function executeUserCreation(
@@ -1420,7 +1537,7 @@ class CallbackHandlers {
 
         Storage::clearState($userId);
         tg_answer_callback($callbackId, "Creating user(s)...");
-        tg_edit_message($chatId, $messageId, "⏳ Creating user(s) on <b>{$server['remark']}</b>...");
+        tg_edit_message($chatId, $messageId, "⏳");
 
         $admin = !empty($stateData['admin']) ? $stateData['admin'] : null;
         $selectedConfigs = $stateData['selected_configs'] ?? [];
@@ -1442,14 +1559,14 @@ class CallbackHandlers {
                 if ($created) {
                     $success++;
                     if (!empty($created['subscription_url'])) {
-                        QrGenerator::sendQrPhoto($chatId, $created['subscription_url'], Formatter::userCard($server, $created));
+                        QrGenerator::sendQrPhoto($chatId, $created['subscription_url'], Formatter::userInfo($server, $created));
                     }
                 } else {
                     $failed++;
-                    tg_send_message($chatId, "❌ Failed to create user <code>{$uName}</code>.");
+                    tg_send_message($chatId, "❌ Failed to create " . Formatter::escape($uName) . ".");
                 }
             }
-            tg_send_message($chatId, "✅ <b>JSON Import Complete!</b>\nCreated: <code>{$success}</code>\nFailed: <code>{$failed}</code>", Keyboards::serverMenu($serverId));
+            tg_send_message($chatId, "Let's back...", Keyboards::cancel("srv:{$serverId}"));
             return;
         }
 
@@ -1467,20 +1584,14 @@ class CallbackHandlers {
             if ($created) {
                 $createdList[] = $created;
                 if (!empty($created['subscription_url'])) {
-                    QrGenerator::sendQrPhoto($chatId, $created['subscription_url'], "🎉 <b>User Created!</b>\n\n" . Formatter::userCard($server, $created));
+                    QrGenerator::sendQrPhoto($chatId, $created['subscription_url'], Formatter::userInfo($server, $created));
                 }
             } else {
-                tg_send_message($chatId, "❌ Failed to create user <code>" . htmlspecialchars($uname) . "</code>.");
+                tg_send_message($chatId, "❌ Failed to create " . Formatter::escape($uname) . ".");
             }
         }
 
-        if (empty($createdList)) {
-            $err = PanelManager::getLastError($server);
-            $errText = $err ? "\n<b>Reason:</b> <code>" . htmlspecialchars($err) . "</code>" : '';
-            tg_send_message($chatId, "❌ <b>Error:</b> Failed to create user(s) on panel.{$errText}", Keyboards::serverMenu($serverId));
-        } else {
-            tg_send_message($chatId, "✅ Successfully created <code>" . count($createdList) . "</code> user(s) on <b>{$server['remark']}</b>.", Keyboards::serverMenu($serverId));
-        }
+        tg_send_message($chatId, "Let's back...", Keyboards::cancel("srv:{$serverId}"));
     }
 
     private static function executeUserDelete(
@@ -1497,18 +1608,13 @@ class CallbackHandlers {
         }
 
         $ok = PanelManager::deleteUser($server, $username);
-        if ($ok) {
-            tg_answer_callback($callbackId, "User deleted successfully!", true);
-            self::renderUsersList($chatId, $messageId, $serverId, 1);
-        } else {
-            tg_answer_callback($callbackId, "Failed to delete user.", true);
-            self::renderUserCard($chatId, $messageId, $serverId, $username);
-        }
+        tg_answer_callback($callbackId);
+        tg_edit_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("srv:{$serverId}"));
     }
 
     private static function renderTemplates(int|string $chatId, int $messageId): void {
         $templates = Storage::getTemplates();
-        $text = "📋 <b>Templates Management</b>\n\nSelect a template to view or delete, or add a new one:";
+        $text = "Select a item or create a new:";
         $kb = Keyboards::templatesMenu($templates);
         tg_edit_message($chatId, $messageId, $text, $kb);
     }
