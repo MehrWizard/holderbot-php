@@ -24,6 +24,15 @@ class StateHandlers {
             case 'create_user_name':
                 return self::handleCreateUserName($chatId, $userId, $text, $data);
 
+            case 'create_user_count':
+                return self::handleCreateUserCount($chatId, $userId, $text, $data);
+
+            case 'create_user_suffix':
+                return self::handleCreateUserSuffix($chatId, $userId, $text, $data);
+
+            case 'create_user_json':
+                return self::handleCreateUserJson($chatId, $userId, $message, $data);
+
             case 'create_user_data':
                 return self::handleCreateUserData($chatId, $userId, $text, $data);
 
@@ -36,6 +45,9 @@ class StateHandlers {
 
             case 'user_mod_datelimit':
                 return self::handleUserModDateLimit($chatId, $userId, $text, $data);
+
+            case 'user_mod_datelimit_onhold':
+                return self::handleUserModDateLimitOnhold($chatId, $userId, $text, $data);
 
             case 'user_mod_note':
                 return self::handleUserModNote($chatId, $userId, $text, $data);
@@ -54,7 +66,7 @@ class StateHandlers {
             case 'bulk_prefix':
                 return self::handleBulkPrefix($chatId, $userId, $text, $data);
 
-            // Template creation
+            // Template creation & editing
             case 'tmpl_add_remark':
                 return self::handleTmplAddRemark($chatId, $userId, $text);
 
@@ -63,6 +75,22 @@ class StateHandlers {
 
             case 'tmpl_add_date':
                 return self::handleTmplAddDate($chatId, $userId, $text, $data);
+
+            case 'tmpl_edit_remark':
+                return self::handleTmplEditRemark($chatId, $userId, $text, $data);
+
+            case 'tmpl_edit_data':
+                return self::handleTmplEditData($chatId, $userId, $text, $data);
+
+            case 'tmpl_edit_date':
+                return self::handleTmplEditDate($chatId, $userId, $text, $data);
+
+            // Server modification
+            case 'srv_edit_remark':
+                return self::handleSrvEditRemark($chatId, $userId, $text, $data);
+
+            case 'srv_edit_creds':
+                return self::handleSrvEditCreds($chatId, $userId, $text, $data);
 
             // Server creation
             case 'add_server_remark':
@@ -154,14 +182,113 @@ class StateHandlers {
         }
 
         $data['username'] = $cleanUsername;
+        Storage::setState($userId, 'create_user_count', $data);
+
+        tg_send_message(
+            $chatId,
+            "👥 <b>User Count</b>\n\nHow many accounts do you want to create? (Send <code>1</code> for single user, or <code>2</code>-<code>50</code> for batch):",
+            Keyboards::cancel("srv:{$serverId}")
+        );
+        return true;
+    }
+
+    private static function handleCreateUserCount(int|string $chatId, int $userId, string $input, array $data): bool {
+        $serverId = (int)($data['server_id'] ?? 0);
+        if (!is_numeric($input) || (int)$input < 1 || (int)$input > 50) {
+            tg_send_message($chatId, "⚠️ Please enter a valid number between 1 and 50:", Keyboards::cancel("srv:{$serverId}"));
+            return true;
+        }
+
+        $count = (int)$input;
+        $data['count'] = $count;
+
+        if ($count > 1) {
+            Storage::setState($userId, 'create_user_suffix', $data);
+            tg_send_message(
+                $chatId,
+                "🔢 <b>Starting Suffix</b>\n\nEnter the starting number suffix (e.g. <code>1</code> to create {$data['username']}1, {$data['username']}2...):",
+                Keyboards::cancel("srv:{$serverId}")
+            );
+            return true;
+        }
+
+        // Single user
+        $templates = Storage::getActiveTemplates();
+        if (!empty($templates)) {
+            Storage::setState($userId, 'create_user_template', $data);
+            $text = "👤 Selected username: <code>{$data['username']}</code>\n\nChoose a template or choose custom limits:";
+            $kb = Keyboards::templateSelector($serverId, $templates);
+            tg_send_message($chatId, $text, $kb);
+            return true;
+        }
+
         Storage::setState($userId, 'create_user_data', $data);
+        tg_send_message(
+            $chatId,
+            "📊 Send the <b>Data Limit in GB</b> (e.g. <code>50</code>, or <code>0</code> for unlimited):",
+            Keyboards::cancel("srv:{$serverId}")
+        );
+        return true;
+    }
 
-        $templates = Storage::getTemplates();
-        $text = "👤 Selected username: <code>{$cleanUsername}</code>\n\n";
-        $text .= "Choose a predefined template or send the <b>Data Limit in GB</b> (e.g. <code>30</code>, or <code>0</code> for unlimited):";
+    private static function handleCreateUserSuffix(int|string $chatId, int $userId, string $input, array $data): bool {
+        $serverId = (int)($data['server_id'] ?? 0);
+        if (!is_numeric($input) || (int)$input < 0) {
+            tg_send_message($chatId, "⚠️ Please enter a valid starting number (e.g. <code>1</code>):", Keyboards::cancel("srv:{$serverId}"));
+            return true;
+        }
 
-        $kb = Keyboards::templateSelector($serverId, $templates);
-        tg_send_message($chatId, $text, $kb);
+        $data['usersuffix'] = (int)$input;
+        $templates = Storage::getActiveTemplates();
+        if (!empty($templates)) {
+            Storage::setState($userId, 'create_user_template', $data);
+            $text = "👥 Creating <code>{$data['count']}</code> users starting from <code>{$data['username']}{$data['usersuffix']}</code>.\n\nChoose a template or select custom limits:";
+            $kb = Keyboards::templateSelector($serverId, $templates);
+            tg_send_message($chatId, $text, $kb);
+            return true;
+        }
+
+        Storage::setState($userId, 'create_user_data', $data);
+        tg_send_message(
+            $chatId,
+            "📊 Send the <b>Data Limit in GB</b> (e.g. <code>50</code>, or <code>0</code> for unlimited):",
+            Keyboards::cancel("srv:{$serverId}")
+        );
+        return true;
+    }
+
+    private static function handleCreateUserJson(int|string $chatId, int $userId, array $message, array $data): bool {
+        $serverId = (int)($data['server_id'] ?? 0);
+        $doc = $message['document'] ?? null;
+        if (!$doc) {
+            tg_send_message($chatId, "❌ Invalid, Just send doc [*.json]:", Keyboards::cancel("srv:{$serverId}"));
+            return true;
+        }
+
+        $fileName = strtolower($doc['file_name'] ?? '');
+        if (!str_ends_with($fileName, '.json')) {
+            tg_send_message($chatId, "❌ Invalid, Just use [*.json]:", Keyboards::cancel("srv:{$serverId}"));
+            return true;
+        }
+
+        $content = tg_download_file($doc['file_id']);
+        if (!$content) {
+            tg_send_message($chatId, "❌ Could not download document from Telegram.", Keyboards::cancel("srv:{$serverId}"));
+            return true;
+        }
+
+        $parsed = json_decode($content, true);
+        if (!is_array($parsed) || empty($parsed)) {
+            tg_send_message($chatId, "❌ Invalid json.", Keyboards::cancel("srv:{$serverId}"));
+            return true;
+        }
+
+        $data['uploaded_json'] = $parsed;
+        $count = count($parsed);
+        tg_send_message($chatId, "✅ Found <code>{$count}</code> users in JSON document.");
+
+        require_once __DIR__ . '/callbacks.php';
+        CallbackHandlers::renderConfigSelection($chatId, 0, $serverId, $userId, $data, 'json_ready');
         return true;
     }
 
@@ -177,12 +304,14 @@ class StateHandlers {
         }
 
         $data['data_limit'] = (float)$input;
-        Storage::setState($userId, 'create_user_expire', $data);
+        Storage::setState($userId, 'create_user_date_type', $data);
 
+        $uName = $data['username'] ?? 'user';
+        $kb = Keyboards::dateTypeSelector($serverId, $uName, 'crt_dt_type');
         tg_send_message(
             $chatId,
-            "📊 Data Limit: <b>" . ($data['data_limit'] > 0 ? "{$data['data_limit']} GB" : "Unlimited") . "</b>\n\nNow send the <b>Expiration Duration in Days</b> (e.g. <code>30</code>, or <code>0</code> for unlimited):",
-            Keyboards::cancel("srv:{$serverId}")
+            "📊 Data Limit: <b>" . ($data['data_limit'] > 0 ? "{$data['data_limit']} GB" : "Unlimited") . "</b>\n\nSelect Expiry Strategy:",
+            $kb
         );
         return true;
     }
@@ -200,30 +329,13 @@ class StateHandlers {
             return true;
         }
 
-        $expireDays = (int)$input;
-        $username = $data['username'];
-        $dataLimit = (float)$data['data_limit'];
-
-        Storage::clearState($userId);
-
-        tg_send_message($chatId, "⏳ Creating user <code>{$username}</code> on <b>{$server['remark']}</b>...");
-
-        $created = PanelManager::createUser($server, $username, $dataLimit, $expireDays);
-
-        if ($created) {
-            $card = "🎉 <b>User Created Successfully!</b>\n\n" . Formatter::userCard($server, $created);
-            $kb = Keyboards::userActions($serverId, $created['username'], true, 'active');
-            tg_send_message($chatId, $card, $kb);
-        } else {
-            $err = PanelManager::getLastError($server);
-            $errText = $err ? "\n<b>Reason:</b> <code>" . htmlspecialchars($err) . "</code>" : '';
-            tg_send_message(
-                $chatId,
-                "❌ <b>Error:</b> Failed to create user <code>{$username}</code> on panel.{$errText}",
-                Keyboards::serverMenu($serverId)
-            );
+        $data['date_limit'] = (int)$input;
+        if (empty($data['date_type'])) {
+            $data['date_type'] = ($data['date_limit'] > 0) ? 'fixed' : 'unlimited';
         }
 
+        require_once __DIR__ . '/callbacks.php';
+        CallbackHandlers::renderConfigSelection($chatId, 0, $serverId, $userId, $data, 'expire_ready');
         return true;
     }
 
@@ -276,6 +388,11 @@ class StateHandlers {
         $username = $data['username'] ?? '';
         $server = Storage::getServer($serverId);
 
+        if (mb_strlen($note) > 500) {
+            tg_send_message($chatId, "⚠️ Note cannot exceed 500 characters. Please try again:", Keyboards::cancel("usr:{$serverId}:{$username}"));
+            return true;
+        }
+
         $cleanNote = ($note === '-') ? '' : $note;
 
         Storage::clearState($userId);
@@ -320,17 +437,17 @@ class StateHandlers {
         $data['date_limit'] = (int)$input;
         Storage::setState($userId, 'charge_confirm_reset', $data);
 
-        $kb = [
-            'inline_keyboard' => [
-                [
-                    ['text' => '🔁 Yes, Reset Usage', 'callback_data' => "chg_rst_opt:{$serverId}:1"],
-                    ['text' => 'Keep Usage', 'callback_data' => "chg_rst_opt:{$serverId}:0"],
-                ],
-                [['text' => '❌ Cancel', 'callback_data' => "usr:{$serverId}:{$username}"]],
-            ]
-        ];
+        $dl = (float)($data['data_limit'] ?? 0);
+        $dt = (int)$data['date_limit'];
+        $dlText = ($dl > 0) ? "{$dl}GB" : 'Unlimited';
+        $dtText = ($dt > 0) ? "{$dt} days" : 'Unlimited';
+        $kb = Keyboards::chargeConfirmOptions($serverId, $username, $dl, $dt);
 
-        tg_send_message($chatId, "Do you want to reset used traffic to 0?", $kb);
+        tg_send_message(
+            $chatId,
+            "🧪 <b>Custom Recharge</b>\n\n📊 Data: <code>{$dlText}</code>\n⏱️ Days: <code>{$dtText}</code>\n\nSelect recharge mode:",
+            $kb
+        );
         return true;
     }
 
@@ -397,20 +514,20 @@ class StateHandlers {
     }
 
     private static function handleTmplAddData(int|string $chatId, int $userId, string $input, array $data): bool {
-        if (!is_numeric($input) || (int)$input <= 0) {
-            tg_send_message($chatId, "⚠️ Enter a valid positive number of GB:", Keyboards::cancel('tmpls'));
+        if (!is_numeric($input) || (int)$input < 0) {
+            tg_send_message($chatId, "⚠️ Enter a valid number of GB (0 = unlimited):", Keyboards::cancel('tmpls'));
             return true;
         }
 
         $data['data_limit'] = (int)$input;
         Storage::setState($userId, 'tmpl_add_date', $data);
-        tg_send_message($chatId, "⏱️ Enter Expiration in Days (e.g. <code>30</code>):", Keyboards::cancel('tmpls'));
+        tg_send_message($chatId, "⏱️ Enter Expiration in Days (e.g. <code>30</code>, or <code>0</code> for unlimited):", Keyboards::cancel('tmpls'));
         return true;
     }
 
     private static function handleTmplAddDate(int|string $chatId, int $userId, string $input, array $data): bool {
-        if (!is_numeric($input) || (int)$input <= 0) {
-            tg_send_message($chatId, "⚠️ Enter a valid positive number of days:", Keyboards::cancel('tmpls'));
+        if (!is_numeric($input) || (int)$input < 0) {
+            tg_send_message($chatId, "⚠️ Enter a valid number of days (0 = unlimited):", Keyboards::cancel('tmpls'));
             return true;
         }
 
@@ -522,6 +639,135 @@ class StateHandlers {
             );
         }
 
+        return true;
+    }
+
+    private static function handleTmplEditRemark(int|string $chatId, int $userId, string $remark, array $data): bool {
+        $tmplId = (int)($data['tmpl_id'] ?? 0);
+        $tmpl = Storage::getTemplate($tmplId);
+        if (!$tmpl) {
+            Storage::clearState($userId);
+            tg_send_message($chatId, "❌ Template not found.");
+            return true;
+        }
+        if (strlen(trim($remark)) < 2) {
+            tg_send_message($chatId, "⚠️ Remark is too short. Please try again:", Keyboards::cancel("tmpl_view:{$tmplId}"));
+            return true;
+        }
+        $tmpl['remark'] = trim($remark);
+        Storage::saveTemplate($tmpl);
+        Storage::clearState($userId);
+        tg_send_message($chatId, "✅ Template remark updated to: <code>" . htmlspecialchars($tmpl['remark']) . "</code>",
+            Keyboards::templateActions($tmplId, !empty($tmpl['is_active'])));
+        return true;
+    }
+
+    private static function handleTmplEditData(int|string $chatId, int $userId, string $input, array $data): bool {
+        $tmplId = (int)($data['tmpl_id'] ?? 0);
+        $tmpl = Storage::getTemplate($tmplId);
+        if (!$tmpl) {
+            Storage::clearState($userId);
+            tg_send_message($chatId, "❌ Template not found.");
+            return true;
+        }
+        if (!is_numeric($input) || (int)$input < 0) {
+            tg_send_message($chatId, "⚠️ Please enter a valid number (0 = unlimited):", Keyboards::cancel("tmpl_view:{$tmplId}"));
+            return true;
+        }
+        $tmpl['data_limit'] = (int)$input;
+        Storage::saveTemplate($tmpl);
+        Storage::clearState($userId);
+        $dlText = ($tmpl['data_limit'] > 0) ? "{$tmpl['data_limit']}GB" : 'Unlimited';
+        tg_send_message($chatId, "✅ Data limit updated to: <code>{$dlText}</code>",
+            Keyboards::templateActions($tmplId, !empty($tmpl['is_active'])));
+        return true;
+    }
+
+    private static function handleTmplEditDate(int|string $chatId, int $userId, string $input, array $data): bool {
+        $tmplId = (int)($data['tmpl_id'] ?? 0);
+        $tmpl = Storage::getTemplate($tmplId);
+        if (!$tmpl) {
+            Storage::clearState($userId);
+            tg_send_message($chatId, "❌ Template not found.");
+            return true;
+        }
+        if (!is_numeric($input) || (int)$input < 0) {
+            tg_send_message($chatId, "⚠️ Please enter a valid number of days (0 = unlimited):", Keyboards::cancel("tmpl_view:{$tmplId}"));
+            return true;
+        }
+        $tmpl['date_limit'] = (int)$input;
+        Storage::saveTemplate($tmpl);
+        Storage::clearState($userId);
+        $dtText = ($tmpl['date_limit'] > 0) ? "{$tmpl['date_limit']} days" : 'Unlimited';
+        tg_send_message($chatId, "✅ Date limit updated to: <code>{$dtText}</code>",
+            Keyboards::templateActions($tmplId, !empty($tmpl['is_active'])));
+        return true;
+    }
+
+    private static function handleSrvEditRemark(int|string $chatId, int $userId, string $remark, array $data): bool {
+        $serverId = (int)($data['server_id'] ?? 0);
+        $server = Storage::getServer($serverId);
+        if (!$server) {
+            Storage::clearState($userId);
+            tg_send_message($chatId, "❌ Server not found.");
+            return true;
+        }
+        if (strlen(trim($remark)) < 2) {
+            tg_send_message($chatId, "⚠️ Remark too short. Please try again:", Keyboards::cancel("srv_cfg:{$serverId}"));
+            return true;
+        }
+        $server['remark'] = trim($remark);
+        Storage::saveServer($server);
+        Storage::clearState($userId);
+        tg_send_message($chatId, "✅ Server remark updated to: <code>" . htmlspecialchars($server['remark']) . "</code>",
+            Keyboards::serverSettings($server));
+        return true;
+    }
+
+    private static function handleSrvEditCreds(int|string $chatId, int $userId, string $input, array $data): bool {
+        $serverId = (int)($data['server_id'] ?? 0);
+        $server = Storage::getServer($serverId);
+        if (!$server) {
+            Storage::clearState($userId);
+            tg_send_message($chatId, "❌ Server not found.");
+            return true;
+        }
+        $parts = preg_split('/\s+/', trim($input), 3);
+        if (count($parts) < 3) {
+            tg_send_message($chatId,
+                "⚠️ Invalid format. Please send:\n<code>admin_username admin_password https://panel.url:port</code>",
+                Keyboards::cancel("srv_cfg:{$serverId}")
+            );
+            return true;
+        }
+        $server['username'] = $parts[0];
+        $server['password'] = $parts[1];
+        $server['base_url'] = rtrim($parts[2], '/');
+        // Clear cached token to force re-auth with new credentials
+        $server['cached_token'] = null;
+        $server['token_expires_at'] = null;
+        Storage::saveServer($server);
+        Storage::clearState($userId);
+        tg_send_message($chatId, "✅ Server credentials updated. Token will be refreshed on next use.",
+            Keyboards::serverSettings($server));
+        return true;
+    }
+
+    private static function handleUserModDateLimitOnhold(int|string $chatId, int $userId, string $input, array $data): bool {
+        $serverId = (int)($data['server_id'] ?? 0);
+        $username = $data['username'] ?? '';
+        $server = Storage::getServer($serverId);
+        if (!is_numeric($input) || (int)$input <= 0) {
+            tg_send_message($chatId, "⚠️ Please send a valid positive number of days:",
+                Keyboards::cancel("usr:{$serverId}:{$username}"));
+            return true;
+        }
+        Storage::clearState($userId);
+        $ok = PanelManager::updateDateLimit($server, $username, (int)$input, 'onhold');
+        tg_send_message($chatId,
+            $ok ? "✅ Expiry set to <b>" . (int)$input . " days after first use</b>." : "❌ Failed to update expiry.",
+            Keyboards::cancel("usr:{$serverId}:{$username}")
+        );
         return true;
     }
 }

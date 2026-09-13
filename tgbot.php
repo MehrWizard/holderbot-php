@@ -194,3 +194,18 @@ function tg_answer_inline_query(
     }
     return tgbot('answerInlineQuery', $params);
 }
+
+/**
+ * Download a file from Telegram by file_id.
+ */
+function tg_download_file(string $fileId): ?string {
+    global $config;
+    $res = tgbot('getFile', ['file_id' => $fileId]);
+    if (empty($res['result']['file_path'])) {
+        return null;
+    }
+    $token = $config['bot_token'] ?? '';
+    $fileUrl = "https://api.telegram.org/file/bot{$token}/" . $res['result']['file_path'];
+    $content = @file_get_contents($fileUrl);
+    return $content !== false ? $content : null;
+}

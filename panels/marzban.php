@@ -8,6 +8,12 @@
 declare(strict_types=1);
 
 class MarzbanClient {
+    public static string $lastError = '';
+
+    public static function getLastError(): string {
+        return self::$lastError;
+    }
+
     /**
      * Send HTTP request to Marzban API.
      */
@@ -154,13 +160,6 @@ class MarzbanClient {
     }
 
     /**
-    public static string $lastError = '';
-
-    public static function getLastError(): string {
-        return self::$lastError;
-    }
-
-    /**
      * Create a new user.
      */
     public static function createUser(
@@ -170,7 +169,9 @@ class MarzbanClient {
         ?int $expireTimestamp,
         array $inbounds = [],
         array $proxies = [],
-        ?string $note = null
+        ?string $note = null,
+        string $status = 'active',
+        ?int $onHoldExpireDuration = null
     ): ?array {
         // In Marzban, a user must have at least one proxy/inbound protocol configured.
         // If not specified, automatically fetch all available inbounds from the panel.
@@ -182,11 +183,10 @@ class MarzbanClient {
                 foreach ($allInbounds as $proto => $list) {
                     $proxies[$proto] = new stdClass();
                     $inbounds[$proto] = [];
-                    if (is_array($list)) {
-                        foreach ($list as $item) {
-                            if (!empty($item['tag'])) {
-                                $inbounds[$proto][] = $item['tag'];
-                            }
+                    $items = isset($list['tag']) ? [$list] : (is_array($list) ? $list : []);
+                    foreach ($items as $item) {
+                        if (is_array($item) && !empty($item['tag'])) {
+                            $inbounds[$proto][] = $item['tag'];
                         }
                     }
                 }
@@ -196,11 +196,20 @@ class MarzbanClient {
         $payload = [
             'username' => $username,
             'data_limit' => $dataLimitBytes,
-            'expire' => $expireTimestamp ?: 0,
             'inbounds' => !empty($inbounds) ? $inbounds : new stdClass(),
             'proxies' => !empty($proxies) ? $proxies : new stdClass(),
-            'status' => 'active',
+            'status' => $status,
         ];
+
+        if ($status === 'on_hold') {
+            $payload['expire'] = null;
+            if ($onHoldExpireDuration !== null && $onHoldExpireDuration > 0) {
+                $payload['on_hold_expire_duration'] = $onHoldExpireDuration;
+            }
+        } else {
+            $payload['expire'] = ($expireTimestamp && $expireTimestamp > 0) ? $expireTimestamp : null;
+        }
+
         if ($note !== null && $note !== '') {
             $payload['note'] = $note;
         }

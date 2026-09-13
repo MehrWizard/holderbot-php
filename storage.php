@@ -130,6 +130,7 @@ class Storage {
                     is_active TINYINT(1) DEFAULT 1,
                     node_monitoring TINYINT(1) DEFAULT 0,
                     node_restart TINYINT(1) DEFAULT 0,
+                    expired_stats TINYINT(1) DEFAULT 0,
                     cached_token TEXT NULL,
                     token_expires_at INT NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -138,7 +139,8 @@ class Storage {
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     remark VARCHAR(64) NOT NULL,
                     data_limit INT NOT NULL,
-                    date_limit INT NOT NULL
+                    date_limit INT NOT NULL,
+                    is_active TINYINT(1) DEFAULT 1
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
                 CREATE TABLE IF NOT EXISTS bot_states (
@@ -154,6 +156,10 @@ class Storage {
                     expires_at INT NOT NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             ");
+
+            // Auto-migrate newly added columns if upgrading an existing database
+            try { self::$pdo->exec("ALTER TABLE servers ADD COLUMN expired_stats TINYINT(1) DEFAULT 0"); } catch (Throwable) {}
+            try { self::$pdo->exec("ALTER TABLE templates ADD COLUMN is_active TINYINT(1) DEFAULT 1"); } catch (Throwable) {}
         } catch (Throwable $e) {
             error_log("Storage MySQL initialization error: " . $e->getMessage());
             self::$pdo = null;
@@ -189,13 +195,14 @@ class Storage {
             if (!empty($server['id'])) {
                 $stmt = self::$pdo->prepare("
                     UPDATE servers SET remark = ?, type = ?, base_url = ?, username = ?, password = ?,
-                    is_active = ?, node_monitoring = ?, node_restart = ?, cached_token = ?, token_expires_at = ?
+                    is_active = ?, node_monitoring = ?, node_restart = ?, expired_stats = ?, cached_token = ?, token_expires_at = ?
                     WHERE id = ?
                 ");
                 $stmt->execute([
                     $server['remark'], $server['type'], rtrim($server['base_url'], '/'),
                     $server['username'], $server['password'], (int)($server['is_active'] ?? 1),
                     (int)($server['node_monitoring'] ?? 0), (int)($server['node_restart'] ?? 0),
+                    (int)($server['expired_stats'] ?? 0),
                     $server['cached_token'] ?? null, $server['token_expires_at'] ?? null,
                     $server['id']
                 ]);
@@ -203,13 +210,14 @@ class Storage {
             }
 
             $stmt = self::$pdo->prepare("
-                INSERT INTO servers (remark, type, base_url, username, password, is_active, node_monitoring, node_restart)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO servers (remark, type, base_url, username, password, is_active, node_monitoring, node_restart, expired_stats)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
             $stmt->execute([
                 $server['remark'], $server['type'], rtrim($server['base_url'], '/'),
                 $server['username'], $server['password'], (int)($server['is_active'] ?? 1),
-                (int)($server['node_monitoring'] ?? 0), (int)($server['node_restart'] ?? 0)
+                (int)($server['node_monitoring'] ?? 0), (int)($server['node_restart'] ?? 0),
+                (int)($server['expired_stats'] ?? 0)
             ]);
             return (int)self::$pdo->lastInsertId();
         }
@@ -234,6 +242,10 @@ class Storage {
             }
         }
         $server['id'] = $maxId + 1;
+        $server['is_active'] = (int)($server['is_active'] ?? 1);
+        $server['node_monitoring'] = (int)($server['node_monitoring'] ?? 0);
+        $server['node_restart'] = (int)($server['node_restart'] ?? 0);
+        $server['expired_stats'] = (int)($server['expired_stats'] ?? 0);
         $servers[] = $server;
         $data['servers'] = $servers;
         self::writeJson($data);
@@ -265,6 +277,11 @@ class Storage {
         return $data['templates'] ?? [];
     }
 
+    public static function getActiveTemplates(): array {
+        $templates = self::getTemplates();
+        return array_values(array_filter($templates, fn($t) => !isset($t['is_active']) || !empty($t['is_active'])));
+    }
+
     public static function getTemplate(int $id): ?array {
         $templates = self::getTemplates();
         foreach ($templates as $t) {
@@ -279,15 +296,26 @@ class Storage {
         if (self::$pdo) {
             if (!empty($template['id'])) {
                 $stmt = self::$pdo->prepare("
-                    UPDATE templates SET remark = ?, data_limit = ?, date_limit = ? WHERE id = ?
+                    UPDATE templates SET remark = ?, data_limit = ?, date_limit = ?, is_active = ? WHERE id = ?
                 ");
-                $stmt->execute([$template['remark'], $template['data_limit'], $template['date_limit'], $template['id']]);
+                $stmt->execute([
+                    $template['remark'],
+                    $template['data_limit'],
+                    $template['date_limit'],
+                    (int)($template['is_active'] ?? 1),
+                    $template['id']
+                ]);
                 return (int)$template['id'];
             }
             $stmt = self::$pdo->prepare("
-                INSERT INTO templates (remark, data_limit, date_limit) VALUES (?, ?, ?)
+                INSERT INTO templates (remark, data_limit, date_limit, is_active) VALUES (?, ?, ?, ?)
             ");
-            $stmt->execute([$template['remark'], $template['data_limit'], $template['date_limit']]);
+            $stmt->execute([
+                $template['remark'],
+                $template['data_limit'],
+                $template['date_limit'],
+                (int)($template['is_active'] ?? 1)
+            ]);
             return (int)self::$pdo->lastInsertId();
         }
 
@@ -311,6 +339,7 @@ class Storage {
             }
         }
         $template['id'] = $maxId + 1;
+        $template['is_active'] = (int)($template['is_active'] ?? 1);
         $templates[] = $template;
         $data['templates'] = $templates;
         self::writeJson($data);

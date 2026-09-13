@@ -101,14 +101,21 @@ class CommandHandlers {
         }
 
         $user = PanelManager::getUser($server, $username);
-        if (!$user) {
-            tg_send_message($chatId, "❌ User <code>" . htmlspecialchars($username) . "</code> not found on <b>{$server['remark']}</b>.");
+        if ($user) {
+            $card = Formatter::userCard($server, $user);
+            $kb = Keyboards::userActions($server['id'], $user['username'], $user['is_active'], $user['status']);
+            tg_send_message($chatId, $card, $kb);
             return true;
         }
 
-        $card = Formatter::userCard($server, $user);
-        $kb = Keyboards::userActions($server['id'], $user['username'], $user['is_active'], $user['status']);
-        tg_send_message($chatId, $card, $kb);
+        $results = PanelManager::getUsers($server, 1, 10, $username);
+        if (!empty($results)) {
+            $kb = Keyboards::usersList($server['id'], $results, 1, false);
+            tg_send_message($chatId, "🔍 Search results for <code>" . htmlspecialchars($username) . "</code>:", $kb);
+            return true;
+        }
+
+        tg_send_message($chatId, "❌ User <code>" . htmlspecialchars($username) . "</code> not found on <b>{$server['remark']}</b>.");
         return true;
     }
 }

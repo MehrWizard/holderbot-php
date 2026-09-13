@@ -77,20 +77,81 @@ class PanelManager {
         string $username,
         float|int $dataLimitGb,
         int $expireDays,
-        ?string $note = null
+        ?string $note = null,
+        array $selectedConfigs = [],
+        string $dateType = 'fixed',
+        ?string $admin = null
     ): ?array {
         $type = strtolower($server['type'] ?? 'marzban');
         $bytes = ($dataLimitGb > 0) ? (int)round($dataLimitGb * 1024 * 1024 * 1024) : 0;
-        $expireTimestamp = ($expireDays > 0) ? (time() + ($expireDays * 86400)) : null;
+
+        $expireTimestamp = null;
+        if ($dateType === 'unlimited') {
+            $expireTimestamp = 0;
+        } elseif ($dateType === 'onhold') {
+            $expireTimestamp = 0;
+        } elseif ($expireDays > 0) {
+            $expireTimestamp = time() + ($expireDays * 86400);
+        }
 
         if ($type === 'marzneshin') {
-            $resp = MarzneshinClient::createUser($server, $username, $bytes, $expireTimestamp, [], $note);
+            $strategy = ($dateType === 'unlimited') ? 'never' : (($dateType === 'onhold') ? 'start_on_first_use' : ($expireTimestamp ? 'fixed_date' : 'never'));
+            $expireDate = ($strategy === 'fixed_date' && $expireTimestamp) ? gmdate('Y-m-d\TH:i:s\Z', $expireTimestamp) : null;
+            $usageDuration = ($strategy === 'start_on_first_use') ? ($expireDays * 86400) : null;
+            $serviceIds = !empty($selectedConfigs) ? array_map('intval', $selectedConfigs) : [];
+
+            if (empty($serviceIds)) {
+                $services = MarzneshinClient::getServices($server);
+                if (!empty($services)) {
+                    $serviceIds = array_column($services, 'id');
+                }
+            }
+
+            $payload = [
+                'username' => $username,
+                'data_limit' => $bytes,
+                'service_ids' => $serviceIds,
+                'expire_strategy' => $strategy,
+                'expire_date' => $expireDate,
+                'usage_duration' => $usageDuration,
+            ];
+            if ($note !== null && $note !== '') {
+                $payload['note'] = $note;
+            }
+            $resp = MarzneshinClient::request($server, 'POST', '/api/users', $payload);
         } else {
-            $resp = MarzbanClient::createUser($server, $username, $bytes, $expireTimestamp, [], [], $note);
+            // Marzban
+            $inbounds = [];
+            $proxies = [];
+            if (!empty($selectedConfigs)) {
+                $allInbounds = MarzbanClient::getInbounds($server);
+                if (is_array($allInbounds)) {
+                    foreach ($allInbounds as $proto => $list) {
+                        $items = isset($list['tag']) ? [$list] : (is_array($list) ? $list : []);
+                        foreach ($items as $item) {
+                            if (is_array($item) && !empty($item['tag']) && in_array($item['tag'], $selectedConfigs)) {
+                                if (!isset($proxies[$proto])) {
+                                    $proxies[$proto] = new stdClass();
+                                    $inbounds[$proto] = [];
+                                }
+                                $inbounds[$proto][] = $item['tag'];
+                            }
+                        }
+                    }
+                }
+            }
+
+            $status = ($dateType === 'onhold') ? 'on_hold' : 'active';
+            $onHoldDuration = ($dateType === 'onhold') ? ($expireDays * 86400) : null;
+            $resp = MarzbanClient::createUser($server, $username, $bytes, $expireTimestamp, $inbounds, $proxies, $note, $status, $onHoldDuration);
         }
 
         if (!$resp || empty($resp['username'])) {
             return null;
+        }
+
+        if (!empty($admin)) {
+            self::setOwner($server, $resp['username'], $admin);
         }
 
         return self::normalizeUser($server, $resp);
@@ -172,7 +233,8 @@ class PanelManager {
         string $username,
         float|int $dataLimitGb,
         int $expireDays,
-        bool $resetUsage = false
+        bool $resetUsage = false,
+        bool $additive = false
     ): ?array {
         $user = self::getUser($server, $username);
         if (!$user) {
@@ -180,7 +242,12 @@ class PanelManager {
         }
 
         $type = strtolower($server['type'] ?? 'marzban');
-        $bytes = ($dataLimitGb > 0) ? (int)round($dataLimitGb * 1024 * 1024 * 1024) : 0;
+        $addedBytes = ($dataLimitGb > 0) ? (int)round($dataLimitGb * 1024 * 1024 * 1024) : 0;
+        if ($additive) {
+            $bytes = $addedBytes + (int)($user['data_limit_bytes'] ?? 0);
+        } else {
+            $bytes = $addedBytes;
+        }
 
         // Calculate new expiration: if current user not expired, extend from current expire; otherwise from now
         $now = time();
@@ -213,6 +280,38 @@ class PanelManager {
         }
 
         return self::getUser($server, $username);
+    }
+
+    /**
+     * Update only the date limit / expire strategy for a user.
+     * $type: 'fixed' (days from now), 'unlimited' (remove expiry), 'onhold' (after first use)
+     */
+    public static function updateDateLimit(array $server, string $username, int $days, string $type = 'fixed'): bool {
+        $serverType = strtolower($server['type'] ?? 'marzban');
+
+        if ($serverType === 'marzneshin') {
+            if ($type === 'unlimited') {
+                $payload = ['expire_strategy' => 'never', 'expire_date' => null, 'usage_duration' => null];
+            } elseif ($type === 'onhold') {
+                $payload = ['expire_strategy' => 'start_on_first_use', 'usage_duration' => $days * 86400, 'expire_date' => null];
+            } else {
+                $expireDate = ($days > 0) ? gmdate('Y-m-d\TH:i:s\Z', time() + $days * 86400) : null;
+                $payload = ['expire_strategy' => ($days > 0 ? 'fixed_date' : 'never'), 'expire_date' => $expireDate, 'usage_duration' => null];
+            }
+            $resp = MarzneshinClient::modifyUser($server, $username, $payload);
+        } else {
+            // Marzban
+            if ($type === 'unlimited') {
+                $payload = ['expire' => 0];
+            } elseif ($type === 'onhold') {
+                $payload = ['status' => 'on_hold', 'on_hold_expire_duration' => $days * 86400];
+            } else {
+                $payload = ['expire' => ($days > 0 ? time() + $days * 86400 : 0)];
+            }
+            $resp = MarzbanClient::modifyUser($server, $username, $payload);
+        }
+
+        return $resp !== null;
     }
 
     /**
@@ -374,31 +473,211 @@ class PanelManager {
                     $count++;
                 }
             }
+            if (count($users) < 50) break;
             $page++;
         }
         return $count;
     }
 
     /**
-     * Fetch comprehensive server statistics.
+     * Delete all users belonging to an admin.
+     */
+    public static function deleteAllAdminUsers(array $server, string $admin): int {
+        $count = 0;
+        $page = 1;
+        while (true) {
+            $users = self::getUsers($server, $page, 50, null, null, $admin === 'ALL' ? null : $admin);
+            if (empty($users)) {
+                break;
+            }
+            foreach ($users as $u) {
+                if (self::deleteUser($server, $u['username'])) {
+                    $count++;
+                }
+            }
+            if (count($users) < 50) break;
+            $page++;
+        }
+        return $count;
+    }
+
+    /**
+     * Get available services/configs from the panel.
+     */
+    public static function getServices(array $server): array {
+        $type = strtolower($server['type'] ?? 'marzban');
+        if ($type === 'marzneshin') {
+            $services = MarzneshinClient::getServices($server);
+            return is_array($services) ? $services : [];
+        } else {
+            $allInbounds = MarzbanClient::getInbounds($server);
+            if (!is_array($allInbounds)) return [];
+            $result = [];
+            foreach ($allInbounds as $proto => $list) {
+                $items = isset($list['tag']) ? [$list] : (is_array($list) ? $list : []);
+                foreach ($items as $item) {
+                    if (is_array($item) && !empty($item['tag'])) {
+                        $result[] = [
+                            'id' => $item['tag'],
+                            'name' => $item['tag'],
+                            'remark' => $item['tag'],
+                            'protocol' => $proto,
+                        ];
+                    }
+                }
+            }
+            return $result;
+        }
+    }
+
+    /**
+     * Update user configs/inbounds.
+     */
+    public static function updateUserConfigs(array $server, string $username, array $serviceIds): bool {
+        $type = strtolower($server['type'] ?? 'marzban');
+        if ($type === 'marzneshin') {
+            $resp = MarzneshinClient::modifyUser($server, $username, [
+                'username' => $username,
+                'service_ids' => array_values(array_map('intval', $serviceIds)),
+            ]);
+            return $resp !== null;
+        } else {
+            $allInbounds = MarzbanClient::getInbounds($server);
+            $proxies = [];
+            $inbounds = [];
+            if (is_array($allInbounds)) {
+                foreach ($allInbounds as $proto => $list) {
+                    $items = isset($list['tag']) ? [$list] : (is_array($list) ? $list : []);
+                    foreach ($items as $item) {
+                        if (is_array($item) && !empty($item['tag']) && in_array($item['tag'], $serviceIds)) {
+                            if (!isset($proxies[$proto])) {
+                                $proxies[$proto] = new stdClass();
+                                $inbounds[$proto] = [];
+                            }
+                            $inbounds[$proto][] = $item['tag'];
+                        }
+                    }
+                }
+            }
+            if (empty($proxies)) return false;
+            $resp = MarzbanClient::modifyUser($server, $username, [
+                'proxies' => $proxies,
+                'inbounds' => $inbounds,
+            ]);
+            return $resp !== null;
+        }
+    }
+
+    /**
+     * Add or remove a config across users of an admin.
+     */
+    public static function applyConfigToUsers(array $server, $serviceId, bool $add, string $admin = 'ALL'): int {
+        $type = strtolower($server['type'] ?? 'marzban');
+        $success = 0;
+        $page = 1;
+        while (true) {
+            $users = self::getUsers($server, $page, 50, null, null, $admin === 'ALL' ? null : $admin);
+            if (empty($users)) break;
+            foreach ($users as $user) {
+                if ($type === 'marzneshin') {
+                    $ids = $user['service_ids'] ?? [];
+                    if ($add && !in_array((int)$serviceId, $ids)) {
+                        $ids[] = (int)$serviceId;
+                    } elseif (!$add && in_array((int)$serviceId, $ids)) {
+                        $ids = array_values(array_filter($ids, fn($id) => (int)$id !== (int)$serviceId));
+                    } else {
+                        continue;
+                    }
+                    $resp = MarzneshinClient::modifyUser($server, $user['username'], [
+                        'username' => $user['username'],
+                        'service_ids' => $ids,
+                    ]);
+                    if ($resp) $success++;
+                }
+            }
+            if (count($users) < 50) break;
+            $page++;
+        }
+        return $success;
+    }
+
+    /**
+     * Fetch comprehensive server statistics with complete parity to Python HolderBot.
      */
     public static function getServerStats(array $server): array {
-        $users = self::getUsers($server, 1, 500); // sample first 500 users for metrics
-        $total = count($users);
+        $total = 0;
         $active = 0;
         $disabled = 0;
         $expired = 0;
         $limited = 0;
+        $data1 = 0;
+        $data10 = 0;
         $onlineDay = 0;
+        $onlineWeek = 0;
+        $onlineMonth = 0;
+        $updateDay = 0;
+        $updateWeek = 0;
+        $updateMonth = 0;
         $totalTraffic = 0;
+        $todayExpired = [];
 
         $now = time();
-        foreach ($users as $u) {
-            if ($u['status'] === 'active') $active++;
-            if ($u['status'] === 'disabled') $disabled++;
-            if ($u['status'] === 'expired') $expired++;
-            if ($u['status'] === 'limited') $limited++;
-            $totalTraffic += $u['used_traffic_bytes'];
+        $page = 1;
+
+        while ($page <= 10) { // paginate up to 500 users for responsive dashboard
+            $users = self::getUsers($server, $page, 50);
+            if (empty($users)) break;
+
+            foreach ($users as $u) {
+                $total++;
+                if ($u['is_active']) {
+                    $active++;
+                } else {
+                    $disabled++;
+                }
+                if ($u['status'] === 'expired') $expired++;
+                if ($u['status'] === 'limited') $limited++;
+
+                $totalTraffic += $u['used_traffic_bytes'];
+
+                // Remaining data percent
+                if (!empty($u['data_limit_bytes']) && $u['data_limit_bytes'] > 0) {
+                    $pctRemaining = (1.0 - ($u['used_traffic_bytes'] / $u['data_limit_bytes'])) * 100.0;
+                    if ($pctRemaining <= 1.0) $data1++;
+                    if ($pctRemaining <= 10.0) $data10++;
+                }
+
+                // Online hour windows
+                if (!empty($u['online_at'])) {
+                    $hoursAgo = ($now - $u['online_at']) / 3600.0;
+                    if ($hoursAgo >= 0) {
+                        if ($hoursAgo < 24) $onlineDay++;
+                        if ($hoursAgo < (24 * 7)) $onlineWeek++;
+                        if ($hoursAgo < (24 * 31)) $onlineMonth++;
+                    }
+                }
+
+                // Sub update hour windows
+                if (!empty($u['sub_updated_at'])) {
+                    $hoursAgo = ($now - $u['sub_updated_at']) / 3600.0;
+                    if ($hoursAgo >= 0) {
+                        if ($hoursAgo < 24) $updateDay++;
+                        if ($hoursAgo < (24 * 7)) $updateWeek++;
+                        if ($hoursAgo < (24 * 31)) $updateMonth++;
+                    }
+                }
+
+                // Expired in 24 hours
+                if (!empty($u['expire_timestamp'])) {
+                    $hoursToExpire = ($u['expire_timestamp'] - $now) / 3600.0;
+                    if ($hoursToExpire >= 0 && $hoursToExpire <= 24) {
+                        $todayExpired[] = "<code>{$u['username']}</code>";
+                    }
+                }
+            }
+
+            if (count($users) < 50) break;
+            $page++;
         }
 
         $type = strtolower($server['type'] ?? 'marzban');
@@ -410,6 +689,15 @@ class PanelManager {
             'disabled_users'=> $disabled,
             'expired_users' => $expired,
             'limited_users' => $limited,
+            'data_1'        => $data1,
+            'data_10'       => $data10,
+            'online_day'    => $onlineDay,
+            'online_week'   => $onlineWeek,
+            'online_month'  => $onlineMonth,
+            'update_day'    => $updateDay,
+            'update_week'   => $updateWeek,
+            'update_month'  => $updateMonth,
+            'today_expired' => array_slice($todayExpired, 0, 10),
             'total_traffic' => $totalTraffic,
             'system'        => $system,
         ];
@@ -463,6 +751,9 @@ class PanelManager {
                 $subUrl = $baseUrl . $subUrl;
             }
 
+            $onlineAt = !empty($raw['last_online']) ? strtotime($raw['last_online']) : (!empty($raw['online_at']) ? strtotime($raw['online_at']) : null);
+            $subUpdatedAt = !empty($raw['sub_updated_at']) ? strtotime($raw['sub_updated_at']) : null;
+
             return [
                 'username'          => $raw['username'],
                 'status'            => $status,
@@ -473,6 +764,10 @@ class PanelManager {
                 'subscription_url'  => $subUrl,
                 'note'              => $raw['note'] ?? '',
                 'created_at'        => !empty($raw['created_at']) ? strtotime($raw['created_at']) : null,
+                'online_at'         => $onlineAt,
+                'sub_updated_at'    => $subUpdatedAt,
+                'owner_username'    => $raw['admin_username'] ?? ($raw['admin'] ?? ''),
+                'service_ids'       => $raw['service_ids'] ?? [],
                 'raw'               => $raw,
             ];
         }
@@ -485,6 +780,19 @@ class PanelManager {
             $subUrl = $baseUrl . $subUrl;
         }
 
+        $onlineAt = !empty($raw['online_at']) ? strtotime($raw['online_at']) : null;
+        $subUpdatedAt = !empty($raw['sub_updated_at']) ? strtotime($raw['sub_updated_at']) : null;
+
+        // Inbounds / service_ids for Marzban: extract inbound tags
+        $inboundTags = [];
+        if (!empty($raw['inbounds']) && is_array($raw['inbounds'])) {
+            foreach ($raw['inbounds'] as $proto => $tags) {
+                if (is_array($tags)) {
+                    foreach ($tags as $t) $inboundTags[] = $t;
+                }
+            }
+        }
+
         return [
             'username'          => $raw['username'],
             'status'            => $status,
@@ -495,6 +803,10 @@ class PanelManager {
             'subscription_url'  => $subUrl,
             'note'              => $raw['note'] ?? '',
             'created_at'        => !empty($raw['created_at']) ? strtotime($raw['created_at']) : null,
+            'online_at'         => $onlineAt,
+            'sub_updated_at'    => $subUpdatedAt,
+            'owner_username'    => $raw['admin'] ?? ($raw['owner'] ?? ''),
+            'service_ids'       => $inboundTags,
             'raw'               => $raw,
         ];
     }

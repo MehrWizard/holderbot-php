@@ -143,15 +143,24 @@ class Formatter {
      */
     public static function statsCard(array $server, array $stats): string {
         $remark = htmlspecialchars($server['remark']);
-        $totalTraffic = self::bytes($stats['total_traffic']);
+        $totalTraffic = self::bytes($stats['total_traffic'] ?? 0);
 
         $text = "📊 <b>Statistics Dashboard - {$remark}</b>\n\n";
-        $text .= "👥 <b>Total Users:</b> <code>{$stats['total_users']}</code>\n";
-        $text .= "🟢 <b>Active:</b> <code>{$stats['active_users']}</code>\n";
-        $text .= "🔴 <b>Disabled:</b> <code>{$stats['disabled_users']}</code>\n";
-        $text .= "⏱️ <b>Expired:</b> <code>{$stats['expired_users']}</code>\n";
-        $text .= "🚫 <b>Limited:</b> <code>{$stats['limited_users']}</code>\n";
+        $text .= "📊 <b>Total:</b> <code>{$stats['total_users']}</code>\n";
+        $text .= "✅ <b>Enable:</b> <code>{$stats['active_users']}</code>\n";
+        $text .= "🚫 <b>Disable:</b> <code>{$stats['disabled_users']}</code>\n";
+        $text .= "⏳ <b>Expired:</b> <code>{$stats['expired_users']}</code>\n";
+        $text .= "⚠️ <b>Limited:</b> <code>{$stats['limited_users']}</code>\n";
+        $text .= "📉 <b>Remaining 1% Data Usage:</b> <code>" . ($stats['data_1'] ?? 0) . "</code>\n";
+        $text .= "📊 <b>Remaining 10% Data Usage:</b> <code>" . ($stats['data_10'] ?? 0) . "</code>\n";
+        $text .= "🕐 <b>Last Day Sub-Updated/Online:</b> <code>" . ($stats['update_day'] ?? 0) . "</code>/<code>" . ($stats['online_day'] ?? 0) . "</code>\n";
+        $text .= "📆 <b>Last Week Sub-Updated/Online:</b> <code>" . ($stats['update_week'] ?? 0) . "</code>/<code>" . ($stats['online_week'] ?? 0) . "</code>\n";
+        $text .= "📅 <b>Last Month Sub-Updated/Online:</b> <code>" . ($stats['update_month'] ?? 0) . "</code>/<code>" . ($stats['online_month'] ?? 0) . "</code>\n";
         $text .= "📈 <b>Total Traffic Used:</b> <code>{$totalTraffic}</code>\n";
+
+        if (!empty($stats['today_expired'])) {
+            $text .= "\n⚰️ <b>Expired in 24 Hours:</b> " . implode(', ', $stats['today_expired']) . "\n";
+        }
 
         if (!empty($stats['system'])) {
             $sys = $stats['system'];

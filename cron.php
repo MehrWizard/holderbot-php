@@ -54,9 +54,11 @@ foreach ($servers as $server) {
 
         if (!$isOk) {
             $nodeRemark = $node['remark'] ?? ($node['name'] ?? 'Node #' . ($node['id'] ?? ''));
+            $nodeAddress = $node['address'] ?? ($node['ip'] ?? '');
             $failedNodes[] = [
                 'id' => $node['id'] ?? 0,
                 'remark' => $nodeRemark,
+                'address' => $nodeAddress,
                 'status' => $status,
                 'message' => $node['message'] ?? 'Node disconnected',
             ];
@@ -75,6 +77,9 @@ foreach ($servers as $server) {
         foreach ($failedNodes as $fn) {
             $alertText .= "➖➖➖➖➖\n";
             $alertText .= "• <b>Node:</b> <code>" . htmlspecialchars($fn['remark']) . "</code>\n";
+            if (!empty($fn['address'])) {
+                $alertText .= "• <b>Address:</b> <code>" . htmlspecialchars($fn['address']) . "</code>\n";
+            }
             $alertText .= "• <b>Status:</b> <code>" . htmlspecialchars($fn['status']) . "</code>\n";
             $alertText .= "• <b>Details:</b> <code>" . htmlspecialchars($fn['message']) . "</code>\n";
             if (!empty($server['node_restart'])) {
@@ -105,7 +110,7 @@ if ($forceExpired || !$lastExpiredCheck || ($now - (int)$lastExpiredCheck) >= 86
     $botUsername = $botInfo['result']['username'] ?? '';
 
     foreach ($servers as $server) {
-        if (empty($server['is_active'])) {
+        if (empty($server['is_active']) || empty($server['expired_stats'])) {
             continue;
         }
 

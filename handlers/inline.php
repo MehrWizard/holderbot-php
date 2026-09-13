@@ -61,7 +61,7 @@ class InlineHandlers {
         // Query search keyword
         $search = count($parts) > 1 ? implode(' ', array_slice($parts, 1)) : null;
 
-        $users = PanelManager::getUsers($server, 1, 30, $search);
+        $users = PanelManager::getUsers($server, 1, 50, $search);
         if (empty($users)) {
             tg_answer_inline_query(
                 $id,
@@ -86,12 +86,14 @@ class InlineHandlers {
 
             $used = Formatter::bytes($u['used_traffic_bytes']);
             $limit = ($u['data_limit_bytes'] > 0) ? Formatter::bytes($u['data_limit_bytes']) : 'Unlimited';
+            $owner = !empty($u['owner_username']) ? " (@{$u['owner_username']})" : '';
 
             $results[] = [
                 'type' => 'article',
                 'id' => 'usr_' . $serverId . '_' . $u['username'],
-                'title' => "{$statusEmoji} {$u['username']}",
+                'title' => "{$statusEmoji} {$u['username']}{$owner}",
                 'description' => "Usage: {$used} / {$limit} | Status: {$u['status']}",
+                'thumb_url' => 'https://raw.githubusercontent.com/erfjab/holderbot/main/holderbot.png',
                 'input_message_content' => [
                     'message_text' => $card,
                     'parse_mode' => 'HTML',
