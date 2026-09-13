@@ -63,11 +63,18 @@ class MarzbanClient {
         curl_close($ch);
 
         if ($response === false) {
+            self::$lastError = "Connection error: " . $err;
             error_log("MarzbanClient cURL error ({$url}): {$err}");
             return null;
         }
 
         if ($httpCode >= 400) {
+            $errData = json_decode($response, true);
+            $msg = $errData['detail'] ?? "HTTP {$httpCode}: {$response}";
+            if (is_array($msg)) {
+                $msg = json_encode($msg, JSON_UNESCAPED_UNICODE);
+            }
+            self::$lastError = (string)$msg;
             error_log("MarzbanClient HTTP {$httpCode} ({$url}): {$response}");
             return null;
         }
@@ -147,6 +154,13 @@ class MarzbanClient {
     }
 
     /**
+    public static string $lastError = '';
+
+    public static function getLastError(): string {
+        return self::$lastError;
+    }
+
+    /**
      * Create a new user.
      */
     public static function createUser(
@@ -158,15 +172,36 @@ class MarzbanClient {
         array $proxies = [],
         ?string $note = null
     ): ?array {
+        // In Marzban, a user must have at least one proxy/inbound protocol configured.
+        // If not specified, automatically fetch all available inbounds from the panel.
+        if (empty($inbounds) && empty($proxies)) {
+            $allInbounds = self::getInbounds($server);
+            if (is_array($allInbounds)) {
+                $proxies = [];
+                $inbounds = [];
+                foreach ($allInbounds as $proto => $list) {
+                    $proxies[$proto] = new stdClass();
+                    $inbounds[$proto] = [];
+                    if (is_array($list)) {
+                        foreach ($list as $item) {
+                            if (!empty($item['tag'])) {
+                                $inbounds[$proto][] = $item['tag'];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         $payload = [
             'username' => $username,
             'data_limit' => $dataLimitBytes,
-            'expire' => $expireTimestamp,
+            'expire' => $expireTimestamp ?: 0,
             'inbounds' => !empty($inbounds) ? $inbounds : new stdClass(),
             'proxies' => !empty($proxies) ? $proxies : new stdClass(),
             'status' => 'active',
         ];
-        if ($note !== null) {
+        if ($note !== null && $note !== '') {
             $payload['note'] = $note;
         }
         return self::request($server, 'POST', '/api/user', $payload);

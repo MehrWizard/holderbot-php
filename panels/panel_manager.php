@@ -12,6 +12,16 @@ require_once __DIR__ . '/marzneshin.php';
 
 class PanelManager {
     /**
+     * Get the last error from panel client.
+     */
+    public static function getLastError(array $server): string {
+        $type = strtolower($server['type'] ?? 'marzban');
+        return ($type === 'marzneshin')
+            ? MarzneshinClient::getLastError()
+            : MarzbanClient::getLastError();
+    }
+
+    /**
      * Get a single user.
      */
     public static function getUser(array $server, string $username): ?array {

@@ -215,9 +215,11 @@ class StateHandlers {
             $kb = Keyboards::userActions($serverId, $created['username'], true, 'active');
             tg_send_message($chatId, $card, $kb);
         } else {
+            $err = PanelManager::getLastError($server);
+            $errText = $err ? "\n<b>Reason:</b> <code>" . htmlspecialchars($err) . "</code>" : '';
             tg_send_message(
                 $chatId,
-                "❌ <b>Error:</b> Failed to create user <code>{$username}</code> on panel.",
+                "❌ <b>Error:</b> Failed to create user <code>{$username}</code> on panel.{$errText}",
                 Keyboards::serverMenu($serverId)
             );
         }

@@ -836,11 +836,13 @@ class CallbackHandlers {
             $kb = Keyboards::userActions($serverId, $created['username'], true, 'active');
             tg_edit_message($chatId, $messageId, $card, $kb);
         } else {
+            $err = PanelManager::getLastError($server);
+            $errText = $err ? "\n<b>Reason:</b> <code>" . htmlspecialchars($err) . "</code>" : '';
             tg_answer_callback($callbackId, "Failed to create user.", true);
             tg_edit_message(
                 $chatId,
                 $messageId,
-                "❌ <b>Error:</b> Could not create user <code>" . htmlspecialchars($username) . "</code> on server.",
+                "❌ <b>Error:</b> Could not create user <code>" . htmlspecialchars($username) . "</code> on server.{$errText}",
                 Keyboards::serverMenu($serverId)
             );
         }

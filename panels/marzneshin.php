@@ -8,6 +8,12 @@
 declare(strict_types=1);
 
 class MarzneshinClient {
+    public static string $lastError = '';
+
+    public static function getLastError(): string {
+        return self::$lastError;
+    }
+
     /**
      * Send HTTP request to Marzneshin API.
      */
@@ -63,11 +69,18 @@ class MarzneshinClient {
         curl_close($ch);
 
         if ($response === false) {
+            self::$lastError = "Connection error: " . $err;
             error_log("MarzneshinClient cURL error ({$url}): {$err}");
             return null;
         }
 
         if ($httpCode >= 400) {
+            $errData = json_decode($response, true);
+            $msg = $errData['detail'] ?? "HTTP {$httpCode}: {$response}";
+            if (is_array($msg)) {
+                $msg = json_encode($msg, JSON_UNESCAPED_UNICODE);
+            }
+            self::$lastError = (string)$msg;
             error_log("MarzneshinClient HTTP {$httpCode} ({$url}): {$response}");
             return null;
         }
