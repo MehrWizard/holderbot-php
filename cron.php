@@ -36,7 +36,9 @@ echo "[" . date('Y-m-d H:i:s') . "] Starting HolderBot background health checks.
 // Task 1: Node Monitoring & Auto-Restart
 // =============================================================================
 foreach ($servers as $server) {
-    if (empty($server['is_active']) || empty($server['node_monitoring'])) {
+    // Gated on node_monitoring only - the original bot's monitoring job has no
+    // is_active check at all.
+    if (empty($server['node_monitoring'])) {
         continue;
     }
 
@@ -50,7 +52,7 @@ foreach ($servers as $server) {
     $failedNodes = [];
     foreach ($nodes as $node) {
         $status = strtolower($node['status'] ?? 'unknown');
-        $isOk = in_array($status, ['connected', 'healthy', 'active', 'ok']);
+        $isOk = PanelManager::isNodeOk($node);
 
         if (!$isOk) {
             $nodeRemark = $node['remark'] ?? ($node['name'] ?? 'Node #' . ($node['id'] ?? ''));
@@ -96,48 +98,63 @@ foreach ($servers as $server) {
 // =============================================================================
 // Task 2: Daily Expired Users Summary
 // =============================================================================
-$lastExpiredCheck = Storage::cacheGet('last_expired_check_time');
+// Fires once per calendar day, at or after 06:00 local time (matching the
+// original bot's fixed daily 06:00 trigger as closely as a cron-driven,
+// no-persistent-process script can) - or immediately if forced.
+$lastExpiredRunDate = Storage::cacheGet('last_expired_check_date');
 $now = time();
+$today = date('Y-m-d', $now);
+$hour = (int)date('G', $now);
 
-// Run once every 24 hours (or if forced via ?task=expired or --expired)
 $forceExpired = (isset($argv[1]) && $argv[1] === '--expired') || (isset($_GET['task']) && $_GET['task'] === 'expired');
 
-if ($forceExpired || !$lastExpiredCheck || ($now - (int)$lastExpiredCheck) >= 86400) {
+if ($forceExpired || ($hour >= 6 && $lastExpiredRunDate !== $today)) {
     echo "Running daily expiring users report...\n";
-    Storage::cacheSet('last_expired_check_time', $now, 86400 * 2);
+    Storage::cacheSet('last_expired_check_date', $today, 86400 * 2);
 
     $botInfo = tgbot('getMe');
     $botUsername = $botInfo['result']['username'] ?? '';
 
     foreach ($servers as $server) {
-        if (empty($server['is_active']) || empty($server['expired_stats'])) {
+        // Gated on reachability (isOnline), not the admin-set is_active flag -
+        // matches the original bot's server.is_online gate for this task.
+        if (!PanelManager::isOnline($server) || empty($server['expired_stats'])) {
             continue;
         }
 
-        $users = PanelManager::getUsers($server, 1, 100, null, 'expired');
-        if (empty($users)) {
-            continue;
-        }
-
+        $size = PanelManager::pageSize($server);
+        $page = 1;
+        $total = 0;
         $todayExpired = [];
-        foreach ($users as $u) {
-            $exp = $u['expire_timestamp'] ?? 0;
-            // Expired in last 24h or expiring today
-            if ($exp > 0 && abs($now - $exp) <= 86400) {
-                $link = !empty($botUsername)
-                    ? "<a href='https://t.me/{$botUsername}?start=user_{$server['id']}_{$u['username']}'><code>{$u['username']}</code></a>"
-                    : "<code>{$u['username']}</code>";
-                $todayExpired[] = $link;
+        while (true) {
+            $users = PanelManager::getUsers($server, $page, $size);
+            if (empty($users)) break;
+            foreach ($users as $u) {
+                $total++;
+                $exp = $u['expire_timestamp'] ?? 0;
+                // Scheduled to expire today: NOT YET expired, due within 24h -
+                // matches Python's last_expired_hour (hours remaining, None if
+                // already past due).
+                $hoursUntilExpiry = $exp > 0 ? ($exp - $now) / 3600.0 : -1;
+                if ($hoursUntilExpiry > 0 && $hoursUntilExpiry < 24) {
+                    $todayExpired[] = !empty($botUsername)
+                        ? "<a href='https://t.me/{$botUsername}?start=user_{$server['id']}_{$u['username']}'><code>{$u['username']}</code></a>"
+                        : "<code>{$u['username']}</code>";
+                }
             }
+            if (count($users) < $size) break;
+            $page++;
         }
 
-        if (!empty($todayExpired)) {
-            $text = "📊 <b>Users Expired / Expiring Today:</b> <code>" . htmlspecialchars($server['remark']) . "</code>\n\n";
-            $text .= "Accounts (" . count($todayExpired) . "):\n" . implode(', ', $todayExpired);
+        // Sent unconditionally (even with zero matches), matching the original
+        // bot's daily heartbeat behavior.
+        $count = count($todayExpired);
+        $expiredList = $count > 0 ? implode(', ', $todayExpired) : '<code>None</code>';
+        $text = "📊 <b>Users scheduled to expire today in " . htmlspecialchars(ucwords($server['remark'])) . " server:</b>\n";
+        $text .= "⚰️ <b>List of users[{$count}/{$total}]:</b> {$expiredList}";
 
-            foreach ($admins as $adminId) {
-                tg_send_message($adminId, $text);
-            }
+        foreach ($admins as $adminId) {
+            tg_send_message($adminId, $text);
         }
     }
 }

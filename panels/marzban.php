@@ -23,14 +23,17 @@ class MarzbanClient {
         string $endpoint,
         mixed $payload = null,
         bool $requiresAuth = true,
-        bool $asFormUrlencoded = false
+        bool $asFormUrlencoded = false,
+        ?string $bearerOverride = null
     ): ?array {
         $baseUrl = rtrim($server['base_url'], '/');
         $url = $baseUrl . $endpoint;
 
         $headers = ['Accept: application/json'];
 
-        if ($requiresAuth) {
+        if ($bearerOverride !== null) {
+            $headers[] = "Authorization: Bearer {$bearerOverride}";
+        } elseif ($requiresAuth) {
             $token = self::getToken($server);
             if (!$token) {
                 error_log("MarzbanClient: Failed to obtain valid token for server [{$server['remark']}]");
@@ -55,7 +58,7 @@ class MarzbanClient {
                 $options[CURLOPT_POSTFIELDS] = http_build_query($payload);
                 $headers[] = 'Content-Type: application/x-www-form-urlencoded';
             } else {
-                $options[CURLOPT_POSTFIELDS] = is_string($payload) ? $payload : json_encode($payload);
+                $options[CURLOPT_POSTFIELDS] = is_string($payload) ? $payload : json_encode(self::stripNulls($payload));
                 $headers[] = 'Content-Type: application/json';
             }
         }
@@ -89,8 +92,26 @@ class MarzbanClient {
         return is_array($decoded) ? $decoded : ['raw' => $response, 'code' => $httpCode];
     }
 
+    /** Recursively remove null values so they are omitted from the JSON body entirely. */
+    private static function stripNulls(mixed $value): mixed {
+        if (!is_array($value)) {
+            return $value;
+        }
+        $out = [];
+        foreach ($value as $k => $v) {
+            if ($v === null) {
+                continue;
+            }
+            $out[$k] = self::stripNulls($v);
+        }
+        return $out;
+    }
+
     /**
-     * Get or refresh admin authentication token.
+     * Get or refresh admin authentication token. Only a sudo admin account is
+     * accepted - a non-sudo credential is rejected outright, matching the
+     * original bot, which refuses to onboard (or keep using) a non-sudo panel
+     * account.
      */
     public static function getToken(array &$server): ?string {
         $cacheKey = "marzban_token_" . ($server['id'] ?? md5($server['base_url']));
@@ -112,13 +133,31 @@ class MarzbanClient {
             asFormUrlencoded: true
         );
 
-        if (!empty($resp['access_token'])) {
-            $token = $resp['access_token'];
-            Storage::cacheSet($cacheKey, $token, 7 * 3600);
-            return $token;
+        if (empty($resp['access_token'])) {
+            return null;
+        }
+        $token = $resp['access_token'];
+
+        // Verify sudo privilege via GET /api/admin using the freshly obtained token
+        // (passed directly to avoid re-entering getToken()).
+        $adminInfo = self::request(
+            $server,
+            'GET',
+            '/api/admin',
+            null,
+            requiresAuth: false,
+            asFormUrlencoded: false,
+            bearerOverride: $token
+        );
+        if (empty($adminInfo['is_sudo'])) {
+            self::$lastError = 'Admin account is not a sudo admin.';
+            error_log("MarzbanClient: rejecting non-sudo credentials for server [{$server['remark']}]");
+            return null;
         }
 
-        return null;
+        Storage::cacheSet($cacheKey, $token, 7 * 3600);
+        Storage::cacheSet("online_" . ($server['id'] ?? md5($server['base_url'])), time(), 86400);
+        return $token;
     }
 
     /**
@@ -311,12 +350,5 @@ class MarzbanClient {
     public static function restartNode(array $server, int $nodeId): bool {
         $resp = self::request($server, 'POST', "/api/node/{$nodeId}/reconnect");
         return $resp !== null;
-    }
-
-    /**
-     * Get panel system statistics.
-     */
-    public static function getSystemStats(array $server): ?array {
-        return self::request($server, 'GET', '/api/system');
     }
 }

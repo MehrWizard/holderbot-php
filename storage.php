@@ -44,12 +44,14 @@ class Storage {
                         'remark' => 'Standard 30D / 50GB',
                         'data_limit' => 50,
                         'date_limit' => 30,
+                        'date_type' => 'fixed',
                     ],
                     [
                         'id' => 2,
                         'remark' => 'Heavy 30D / 100GB',
                         'data_limit' => 100,
                         'date_limit' => 30,
+                        'date_type' => 'fixed',
                     ],
                 ],
                 'states' => [],
@@ -140,6 +142,7 @@ class Storage {
                     remark VARCHAR(64) NOT NULL,
                     data_limit INT NOT NULL,
                     date_limit INT NOT NULL,
+                    date_type VARCHAR(16) NOT NULL DEFAULT 'fixed',
                     is_active TINYINT(1) DEFAULT 1
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -160,6 +163,7 @@ class Storage {
             // Auto-migrate newly added columns if upgrading an existing database
             try { self::$pdo->exec("ALTER TABLE servers ADD COLUMN expired_stats TINYINT(1) DEFAULT 0"); } catch (Throwable) {}
             try { self::$pdo->exec("ALTER TABLE templates ADD COLUMN is_active TINYINT(1) DEFAULT 1"); } catch (Throwable) {}
+            try { self::$pdo->exec("ALTER TABLE templates ADD COLUMN date_type VARCHAR(16) NOT NULL DEFAULT 'fixed'"); } catch (Throwable) {}
         } catch (Throwable $e) {
             error_log("Storage MySQL initialization error: " . $e->getMessage());
             self::$pdo = null;
@@ -296,24 +300,26 @@ class Storage {
         if (self::$pdo) {
             if (!empty($template['id'])) {
                 $stmt = self::$pdo->prepare("
-                    UPDATE templates SET remark = ?, data_limit = ?, date_limit = ?, is_active = ? WHERE id = ?
+                    UPDATE templates SET remark = ?, data_limit = ?, date_limit = ?, date_type = ?, is_active = ? WHERE id = ?
                 ");
                 $stmt->execute([
                     $template['remark'],
                     $template['data_limit'],
                     $template['date_limit'],
+                    $template['date_type'] ?? 'fixed',
                     (int)($template['is_active'] ?? 1),
                     $template['id']
                 ]);
                 return (int)$template['id'];
             }
             $stmt = self::$pdo->prepare("
-                INSERT INTO templates (remark, data_limit, date_limit, is_active) VALUES (?, ?, ?, ?)
+                INSERT INTO templates (remark, data_limit, date_limit, date_type, is_active) VALUES (?, ?, ?, ?, ?)
             ");
             $stmt->execute([
                 $template['remark'],
                 $template['data_limit'],
                 $template['date_limit'],
+                $template['date_type'] ?? 'fixed',
                 (int)($template['is_active'] ?? 1)
             ]);
             return (int)self::$pdo->lastInsertId();
@@ -340,6 +346,7 @@ class Storage {
         }
         $template['id'] = $maxId + 1;
         $template['is_active'] = (int)($template['is_active'] ?? 1);
+        $template['date_type'] = $template['date_type'] ?? 'fixed';
         $templates[] = $template;
         $data['templates'] = $templates;
         self::writeJson($data);

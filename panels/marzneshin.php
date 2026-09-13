@@ -55,7 +55,7 @@ class MarzneshinClient {
                 $options[CURLOPT_POSTFIELDS] = http_build_query($payload);
                 $headers[] = 'Content-Type: application/x-www-form-urlencoded';
             } else {
-                $options[CURLOPT_POSTFIELDS] = is_string($payload) ? $payload : json_encode($payload);
+                $options[CURLOPT_POSTFIELDS] = is_string($payload) ? $payload : json_encode(self::stripNulls($payload));
                 $headers[] = 'Content-Type: application/json';
             }
         }
@@ -89,8 +89,26 @@ class MarzneshinClient {
         return is_array($decoded) ? $decoded : ['raw' => $response, 'code' => $httpCode];
     }
 
+    /** Recursively remove null values so they are omitted from the JSON body entirely. */
+    private static function stripNulls(mixed $value): mixed {
+        if (!is_array($value)) {
+            return $value;
+        }
+        $out = [];
+        foreach ($value as $k => $v) {
+            if ($v === null) {
+                continue;
+            }
+            $out[$k] = self::stripNulls($v);
+        }
+        return $out;
+    }
+
     /**
-     * Get or refresh admin authentication token.
+     * Get or refresh admin authentication token. Only a sudo admin account is
+     * accepted - a non-sudo credential is rejected outright, matching the
+     * original bot, which refuses to onboard (or keep using) a non-sudo panel
+     * account.
      */
     public static function getToken(array &$server): ?string {
         $cacheKey = "marzneshin_token_" . ($server['id'] ?? md5($server['base_url']));
@@ -112,13 +130,20 @@ class MarzneshinClient {
             asFormUrlencoded: true
         );
 
-        if (!empty($resp['access_token'])) {
-            $token = $resp['access_token'];
-            Storage::cacheSet($cacheKey, $token, 7 * 3600);
-            return $token;
+        if (empty($resp['access_token'])) {
+            return null;
         }
 
-        return null;
+        if (empty($resp['is_sudo'])) {
+            self::$lastError = 'Admin account is not a sudo admin.';
+            error_log("MarzneshinClient: rejecting non-sudo credentials for server [{$server['remark']}]");
+            return null;
+        }
+
+        $token = $resp['access_token'];
+        Storage::cacheSet($cacheKey, $token, 7 * 3600);
+        Storage::cacheSet("online_" . ($server['id'] ?? md5($server['base_url'])), time(), 86400);
+        return $token;
     }
 
     /**
