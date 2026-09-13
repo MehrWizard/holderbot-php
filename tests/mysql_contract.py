@@ -21,15 +21,14 @@ with tempfile.TemporaryDirectory(prefix='holderbot-mysql-') as tmp:
             except OSError: time.sleep(.1)
         else: raise RuntimeError('Temporary database did not start')
         php = r'''
-$config=['storage_type'=>'mysql','storage_path'=>$argv[2].'/fallback.json','mysql'=>['host'=>'127.0.0.1','port'=>(int)$argv[3],'database'=>$argv[4],'username'=>'root','password'=>'']];
+$config=['storage_type'=>'mysql','mysql'=>['host'=>'127.0.0.1','port'=>(int)$argv[2],'database'=>$argv[3],'username'=>'root','password'=>'']];
 require $argv[1].'/storage.php';
 Storage::init();
 Storage::setChatContext(99);
 Storage::setState(42, 'new_state', ['server_id'=>1]);
 if ((Storage::getState(42)['step'] ?? '') !== 'new_state') throw new RuntimeException('State write failed');
 Storage::setChatContext(42);
-if ($argv[4]!=='fresh' && (Storage::getState(42)['step'] ?? '') !== 'legacy') throw new RuntimeException('Legacy state lost');
-if (file_exists($argv[2].'/fallback.json')) throw new RuntimeException('Unexpected JSON fallback');
+if ($argv[3]!=='fresh' && (Storage::getState(42)['step'] ?? '') !== 'legacy') throw new RuntimeException('Legacy state lost');
 '''
         sql = 'CREATE DATABASE fresh; CREATE DATABASE legacy; CREATE DATABASE partial;'
         for name in ['legacy', 'partial']:
@@ -37,7 +36,7 @@ if (file_exists($argv[2].'/fallback.json')) throw new RuntimeException('Unexpect
         sql += 'ALTER TABLE partial.bot_states ADD COLUMN chat_id BIGINT NOT NULL DEFAULT 0;'
         subprocess.run(['mariadb','--no-defaults','--socket='+tmp+'/db.sock','-u','root','-e',sql],check=True)
         for name in ['fresh','legacy','partial']:
-            workers = [subprocess.Popen(['php','-d','extension=pdo_mysql','-r',php,str(root),tmp,str(port),name], stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(4)]
+            workers = [subprocess.Popen(['php','-d','extension=pdo_mysql','-r',php,str(root),str(port),name], stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(4)]
             for worker in workers:
                 out, err = worker.communicate(timeout=45)
                 assert worker.returncode == 0, err.decode()

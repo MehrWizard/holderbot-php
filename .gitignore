@@ -1,14 +1,7 @@
 # User configuration (contains private tokens)
 config.php
 
-# Persistent data and logs
-data/*.json
-!data/.htaccess
+# Logs
 *.log
 .DS_Store
-
-data/*.lock
 __pycache__/
-
-# Local persistent job spool
-data/queue/

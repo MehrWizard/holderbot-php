@@ -39,23 +39,13 @@ return [
     'messages' => [],
     'keyboards' => [],
 
-    // Optional absolute JSON storage path; useful outside public_html.
-    'storage_path' => __DIR__ . '/data/storage.json',
-
-    // Local queue spool for both JSON and MySQL. Prefer a path outside the web root.
-    'queue_path' => __DIR__ . '/data/queue',
-    'queue_budget_seconds' => 15,
-    'queue_steps' => 10,
-    'queue_retention_days' => 7,
-
     // -------------------------------------------------------------------------
     // Storage Engine Settings
     // -------------------------------------------------------------------------
-    // 'json'  => Zero setup, stores state & servers in data/storage.json (Default)
-    // 'mysql' => Use MySQL/MariaDB database (Standard for cPanel)
-    'storage_type' => 'json',
+    // MySQL/MariaDB is required. The application never writes local state files.
+    'storage_type' => 'mysql',
 
-    // MySQL connection settings (only used if storage_type is 'mysql')
+    // MySQL connection settings
     'mysql' => [
         'host'     => '127.0.0.1',
         'port'     => 3306,
@@ -64,6 +54,11 @@ return [
         'password' => 'secret_password',
         'charset'  => 'utf8mb4',
     ],
+
+    // Queue execution limits. Queue records and payloads are stored in MySQL.
+    'queue_budget_seconds' => 15,
+    'queue_steps' => 10,
+    'queue_retention_days' => 7,
 
     // -------------------------------------------------------------------------
     // Pre-configured Servers (Optional)

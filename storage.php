@@ -2,102 +2,30 @@
 /**
  * HolderBot PHP - Zero-Dependency Storage Layer
  *
- * Supports JSON file storage (default, zero setup) and MySQL (PDO).
+ * MySQL-only storage. JSON is used only for structured MySQL column values and
+ * HTTP protocol payloads; no application state is written to local files.
  */
 
 declare(strict_types=1);
 
 class Storage {
     private static ?PDO $pdo = null;
-    private static string $jsonFile = __DIR__ . '/data/storage.json';
-
+    public static function db(): PDO {
+        if (self::$pdo === null) throw new RuntimeException('MySQL storage is not initialized');
+        return self::$pdo;
+    }
     private static int|string|null $chatContext = null;
     public static function setChatContext(int|string|null $chatId): void { self::$chatContext = $chatId; }
-    private static function stateKey(int $userId): string {
-        $chatId = self::$chatContext ?? $userId;
-        return (string)$chatId === (string)$userId ? (string)$userId : $userId . ':' . $chatId;
-    }
     private static function stateChat(int $userId): int|string { return self::$chatContext ?? $userId; }
-
-    private static bool $jsonLocked = false;
-    private static function jsonMutation(Closure $operation): mixed {
-        if (!is_dir(dirname(self::$jsonFile))) mkdir(dirname(self::$jsonFile), 0755, true);
-        $lock = fopen(self::$jsonFile . '.lock', 'c');
-        if (!$lock || !flock($lock, LOCK_EX)) throw new RuntimeException('Unable to lock storage');
-        self::$jsonLocked = true;
-        try { return $operation(); }
-        finally { self::$jsonLocked = false; flock($lock, LOCK_UN); fclose($lock); }
-    }
 
     /**
      * Initialize storage and auto-migrate if needed.
      */
     public static function init(): void {
         global $config;
-        self::$jsonFile = $config['storage_path'] ?? self::$jsonFile;
-        $type = $config['storage_type'] ?? 'json';
-
-        if ($type === 'mysql' && extension_loaded('pdo_mysql')) {
-            self::initMysql();
-        } else {
-            self::initJson();
-        }
-    }
-
-    // =========================================================================
-    // JSON File Storage Implementation
-    // =========================================================================
-
-    private static function initJson(): void {
-        if (!self::$jsonLocked) { self::jsonMutation(fn() => self::initJson()); return; }
-        if (!file_exists(dirname(self::$jsonFile))) {
-            mkdir(dirname(self::$jsonFile), 0755, true);
-        }
-
-        if (!file_exists(self::$jsonFile)) {
-            global $config;
-            $initialData = [
-                'servers' => $config['servers'] ?? [],
-                'templates' => [],
-                'states' => [],
-                'cache' => [],
-            ];
-            self::writeJson($initialData);
-        }
-    }
-
-    private static function readJson(): array {
-        if (!file_exists(self::$jsonFile)) {
-            self::initJson();
-        }
-        $fp = fopen(self::$jsonFile, 'rb');
-        if (!$fp) {
-            return ['servers' => [], 'templates' => [], 'states' => [], 'cache' => []];
-        }
-        flock($fp, LOCK_SH);
-        $content = stream_get_contents($fp);
-        flock($fp, LOCK_UN);
-        fclose($fp);
-
-        $data = json_decode($content ?: '{}', true);
-        return is_array($data) ? $data : ['servers' => [], 'templates' => [], 'states' => [], 'cache' => []];
-    }
-
-    private static function writeJson(array $data): bool {
-        $fp = fopen(self::$jsonFile, 'c+b');
-        if (!$fp) {
-            return false;
-        }
-        if (flock($fp, LOCK_EX)) {
-            ftruncate($fp, 0);
-            fwrite($fp, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-            fflush($fp);
-            flock($fp, LOCK_UN);
-            fclose($fp);
-            return true;
-        }
-        fclose($fp);
-        return false;
+        if (($config['storage_type'] ?? 'mysql') !== 'mysql') throw new RuntimeException('MySQL storage is required; JSON storage is disabled');
+        if (!extension_loaded('pdo_mysql')) throw new RuntimeException('PDO MySQL extension is required');
+        self::initMysql();
     }
 
     // =========================================================================
@@ -171,6 +99,32 @@ class Storage {
                         cache_value TEXT NOT NULL,
                         expires_at INT NOT NULL
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+                    CREATE TABLE IF NOT EXISTS bot_queue (
+                        id CHAR(32) PRIMARY KEY,
+                        kind VARCHAR(32) NOT NULL,
+                        server_id INT NOT NULL DEFAULT 0,
+                        server_fingerprint CHAR(64) NOT NULL,
+                        chat_id BIGINT NOT NULL,
+                        user_id BIGINT NOT NULL,
+                        submission_key CHAR(64) NOT NULL,
+                        status VARCHAR(20) NOT NULL,
+                        payload JSON NOT NULL,
+                        cursor_pos INT NOT NULL DEFAULT 0,
+                        total INT NOT NULL DEFAULT 0,
+                        success_count INT NOT NULL DEFAULT 0,
+                        unconfirmed_count INT NOT NULL DEFAULT 0,
+                        skipped_count INT NOT NULL DEFAULT 0,
+                        error_text VARCHAR(1000) NULL,
+                        next_run INT NOT NULL DEFAULT 0,
+                        active_phase VARCHAR(32) NULL,
+                        notification_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY queue_submission (submission_key),
+                        KEY queue_runnable (status, next_run, created_at),
+                        KEY queue_owner (chat_id, user_id, created_at)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                 ");
 
                 $stateColumns = self::$pdo->query('SHOW COLUMNS FROM bot_states')->fetchAll(PDO::FETCH_COLUMN);
@@ -196,6 +150,35 @@ class Storage {
                 try { self::$pdo->exec("ALTER TABLE servers ADD COLUMN expired_stats TINYINT(1) DEFAULT 0"); } catch (Throwable) {}
                 try { self::$pdo->exec("ALTER TABLE templates ADD COLUMN is_active TINYINT(1) DEFAULT 1"); } catch (Throwable) {}
                 try { self::$pdo->exec("ALTER TABLE templates ADD COLUMN date_type VARCHAR(16) NOT NULL DEFAULT 'fixed'"); } catch (Throwable) {}
+
+                // Seed optional servers from config.php once. Credentials remain
+                // under operator control and are persisted in MySQL for runtime use.
+                foreach (($config['servers'] ?? []) as $configuredServer) {
+                    if (!is_array($configuredServer) || empty($configuredServer['remark']) || empty($configuredServer['base_url'])) continue;
+                    $serverId = (int)($configuredServer['id'] ?? 0);
+                    if ($serverId > 0) {
+                        $check = self::$pdo->prepare('SELECT id FROM servers WHERE id=?');
+                        $check->execute([$serverId]);
+                        if ($check->fetchColumn()) {
+                            $update = self::$pdo->prepare('UPDATE servers SET remark=?,type=?,base_url=?,username=?,password=?,is_active=?,node_monitoring=?,node_restart=?,expired_stats=? WHERE id=?');
+                            $update->execute([
+                                $configuredServer['remark'], $configuredServer['type'] ?? 'marzban', rtrim((string)$configuredServer['base_url'], '/'),
+                                $configuredServer['username'] ?? '', $configuredServer['password'] ?? '', (int)($configuredServer['is_active'] ?? 1),
+                                (int)($configuredServer['node_monitoring'] ?? 0), (int)($configuredServer['node_restart'] ?? 0), (int)($configuredServer['expired_stats'] ?? 0), $serverId
+                            ]);
+                            continue;
+                        }
+                    }
+                    $check = self::$pdo->prepare('SELECT id FROM servers WHERE base_url=? AND username=?');
+                    $check->execute([rtrim((string)$configuredServer['base_url'], '/'), (string)($configuredServer['username'] ?? '')]);
+                    if ($check->fetchColumn()) continue;
+                    $insert = self::$pdo->prepare('INSERT INTO servers (remark,type,base_url,username,password,is_active,node_monitoring,node_restart,expired_stats) VALUES (?,?,?,?,?,?,?,?,?)');
+                    $insert->execute([
+                        $configuredServer['remark'], $configuredServer['type'] ?? 'marzban', rtrim((string)$configuredServer['base_url'], '/'),
+                        $configuredServer['username'] ?? '', $configuredServer['password'] ?? '', (int)($configuredServer['is_active'] ?? 1),
+                        (int)($configuredServer['node_monitoring'] ?? 0), (int)($configuredServer['node_restart'] ?? 0), (int)($configuredServer['expired_stats'] ?? 0)
+                    ]);
+                }
             } finally {
                 $releaseStatement = self::$pdo->prepare('SELECT RELEASE_LOCK(?)');
                 $releaseStatement->execute([$schemaLock]);
@@ -203,7 +186,7 @@ class Storage {
         } catch (Throwable $e) {
             error_log("Storage MySQL initialization error: " . $e->getMessage());
             self::$pdo = null;
-            self::initJson();
+            throw new RuntimeException('MySQL storage initialization failed', 0, $e);
         }
     }
 
@@ -212,12 +195,8 @@ class Storage {
     // =========================================================================
 
     public static function getServers(): array {
-        if (self::$pdo) {
-            $stmt = self::$pdo->query("SELECT * FROM servers ORDER BY id ASC");
-            return $stmt->fetchAll() ?: [];
-        }
-        $data = self::readJson();
-        return $data['servers'] ?? [];
+        $stmt = self::db()->query("SELECT * FROM servers ORDER BY id ASC");
+        return $stmt->fetchAll() ?: [];
     }
 
     public static function getServer(int $id): ?array {
@@ -231,11 +210,7 @@ class Storage {
     }
 
     public static function saveServer(array $server): int {
-        if (!self::$pdo && !self::$jsonLocked) { return self::jsonMutation(fn() => self::saveServer($server)); }
-        $server['updated_at'] = !empty($server['id']) ? gmdate('Y-m-d H:i:s') : null;
-        if (empty($server['id'])) $server['created_at'] = gmdate('Y-m-d H:i:s');
-        if (self::$pdo) {
-            if (!empty($server['id'])) {
+        if (!empty($server['id'])) {
                 $stmt = self::$pdo->prepare("
                     UPDATE servers SET remark = ?, type = ?, base_url = ?, username = ?, password = ?,
                     is_active = ?, node_monitoring = ?, node_restart = ?, expired_stats = ?, cached_token = ?, token_expires_at = ?
@@ -250,7 +225,7 @@ class Storage {
                     $server['id']
                 ]);
                 return (int)$server['id'];
-            }
+        }
 
             $stmt = self::$pdo->prepare("
                 INSERT INTO servers (remark, type, base_url, username, password, is_active, node_monitoring, node_restart, expired_stats)
@@ -263,49 +238,11 @@ class Storage {
                 (int)($server['expired_stats'] ?? 0)
             ]);
             return (int)self::$pdo->lastInsertId();
-        }
-
-        $data = self::readJson();
-        $servers = $data['servers'] ?? [];
-        if (!empty($server['id'])) {
-            foreach ($servers as $k => $s) {
-                if ((int)$s['id'] === (int)$server['id']) {
-                    $servers[$k] = array_merge($s, $server);
-                    $data['servers'] = $servers;
-                    self::writeJson($data);
-                    return (int)$server['id'];
-                }
-            }
-        }
-
-        $maxId = 0;
-        foreach ($servers as $s) {
-            if ((int)$s['id'] > $maxId) {
-                $maxId = (int)$s['id'];
-            }
-        }
-        $server['id'] = $maxId + 1;
-        $server['is_active'] = (int)($server['is_active'] ?? 1);
-        $server['node_monitoring'] = (int)($server['node_monitoring'] ?? 0);
-        $server['node_restart'] = (int)($server['node_restart'] ?? 0);
-        $server['expired_stats'] = (int)($server['expired_stats'] ?? 0);
-        $servers[] = $server;
-        $data['servers'] = $servers;
-        self::writeJson($data);
-        return $server['id'];
     }
 
     public static function deleteServer(int $id): bool {
-        if (!self::$pdo && !self::$jsonLocked) { return self::jsonMutation(fn() => self::deleteServer($id)); }
-        if (self::$pdo) {
-            $stmt = self::$pdo->prepare("DELETE FROM servers WHERE id = ?");
-            return $stmt->execute([$id]);
-        }
-
-        $data = self::readJson();
-        $servers = $data['servers'] ?? [];
-        $data['servers'] = array_values(array_filter($servers, fn($s) => (int)$s['id'] !== $id));
-        return self::writeJson($data);
+        $stmt = self::db()->prepare("DELETE FROM servers WHERE id = ?");
+        return $stmt->execute([$id]);
     }
 
     // =========================================================================
@@ -313,12 +250,8 @@ class Storage {
     // =========================================================================
 
     public static function getTemplates(): array {
-        if (self::$pdo) {
-            $stmt = self::$pdo->query("SELECT * FROM templates ORDER BY id ASC");
-            return $stmt->fetchAll() ?: [];
-        }
-        $data = self::readJson();
-        return $data['templates'] ?? [];
+        $stmt = self::db()->query("SELECT * FROM templates ORDER BY id ASC");
+        return $stmt->fetchAll() ?: [];
     }
 
     public static function getActiveTemplates(): array {
@@ -337,11 +270,7 @@ class Storage {
     }
 
     public static function saveTemplate(array $template): int {
-        if (!self::$pdo && !self::$jsonLocked) { return self::jsonMutation(fn() => self::saveTemplate($template)); }
-        $template['updated_at'] = !empty($template['id']) ? gmdate('Y-m-d H:i:s') : null;
-        if (empty($template['id'])) $template['created_at'] = gmdate('Y-m-d H:i:s');
-        if (self::$pdo) {
-            if (!empty($template['id'])) {
+        if (!empty($template['id'])) {
                 $stmt = self::$pdo->prepare("
                     UPDATE templates SET remark = ?, data_limit = ?, date_limit = ?, date_type = ?, is_active = ? WHERE id = ?
                 ");
@@ -354,7 +283,7 @@ class Storage {
                     $template['id']
                 ]);
                 return (int)$template['id'];
-            }
+        }
             $stmt = self::$pdo->prepare("
                 INSERT INTO templates (remark, data_limit, date_limit, date_type, is_active) VALUES (?, ?, ?, ?, ?)
             ");
@@ -366,47 +295,11 @@ class Storage {
                 (int)($template['is_active'] ?? 1)
             ]);
             return (int)self::$pdo->lastInsertId();
-        }
-
-        $data = self::readJson();
-        $templates = $data['templates'] ?? [];
-        if (!empty($template['id'])) {
-            foreach ($templates as $k => $t) {
-                if ((int)$t['id'] === (int)$template['id']) {
-                    $templates[$k] = array_merge($t, $template);
-                    $data['templates'] = $templates;
-                    self::writeJson($data);
-                    return (int)$template['id'];
-                }
-            }
-        }
-
-        $maxId = 0;
-        foreach ($templates as $t) {
-            if ((int)$t['id'] > $maxId) {
-                $maxId = (int)$t['id'];
-            }
-        }
-        $template['id'] = $maxId + 1;
-        $template['is_active'] = (int)($template['is_active'] ?? 1);
-        $template['date_type'] = $template['date_type'] ?? 'fixed';
-        $templates[] = $template;
-        $data['templates'] = $templates;
-        self::writeJson($data);
-        return $template['id'];
     }
 
     public static function deleteTemplate(int $id): bool {
-        if (!self::$pdo && !self::$jsonLocked) { return self::jsonMutation(fn() => self::deleteTemplate($id)); }
-        if (self::$pdo) {
-            $stmt = self::$pdo->prepare("DELETE FROM templates WHERE id = ?");
-            return $stmt->execute([$id]);
-        }
-
-        $data = self::readJson();
-        $templates = $data['templates'] ?? [];
-        $data['templates'] = array_values(array_filter($templates, fn($t) => (int)$t['id'] !== $id));
-        return self::writeJson($data);
+        $stmt = self::db()->prepare("DELETE FROM templates WHERE id = ?");
+        return $stmt->execute([$id]);
     }
 
     // =========================================================================
@@ -414,55 +307,19 @@ class Storage {
     // =========================================================================
 
     public static function getState(int $userId): ?array {
-        if (self::$pdo) {
-            $stmt = self::$pdo->prepare("SELECT * FROM bot_states WHERE user_id = ? AND chat_id = ?");
-            $stmt->execute([$userId, self::stateChat($userId)]);
-            $row = $stmt->fetch();
-            if ($row) {
-                return [
-                    'step' => $row['step'],
-                    'data' => json_decode($row['data'] ?: '[]', true),
-                ];
-            }
-            return null;
-        }
-
-        $data = self::readJson();
-        return $data['states'][self::stateKey($userId)] ?? null;
+        $stmt = self::db()->prepare("SELECT * FROM bot_states WHERE user_id = ? AND chat_id = ?");
+        $stmt->execute([$userId, self::stateChat($userId)]);
+        $row = $stmt->fetch();
+        return $row ? ['step' => $row['step'], 'data' => json_decode($row['data'] ?: '[]', true)] : null;
     }
 
     public static function setState(int $userId, string $step, array $stateData = []): void {
-        if (!self::$pdo && !self::$jsonLocked) { self::jsonMutation(fn() => self::setState($userId, $step, $stateData)); return; }
-        if (self::$pdo) {
-            $stmt = self::$pdo->prepare("
-                INSERT INTO bot_states (user_id, chat_id, step, data, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE step = VALUES(step), data = VALUES(data), updated_at = VALUES(updated_at)
-            ");
-            $stmt->execute([$userId, self::stateChat($userId), $step, json_encode($stateData), time()]);
-            return;
-        }
-
-        $data = self::readJson();
-        $data['states'][self::stateKey($userId)] = [
-            'step' => $step,
-            'data' => $stateData,
-            'updated_at' => time(),
-        ];
-        self::writeJson($data);
+        $stmt = self::db()->prepare("INSERT INTO bot_states (user_id, chat_id, step, data, updated_at) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE step=VALUES(step), data=VALUES(data), updated_at=VALUES(updated_at)");
+        $stmt->execute([$userId, self::stateChat($userId), $step, json_encode($stateData, JSON_THROW_ON_ERROR), time()]);
     }
 
     public static function clearState(int $userId): void {
-        if (!self::$pdo && !self::$jsonLocked) { self::jsonMutation(fn() => self::clearState($userId)); return; }
-        if (self::$pdo) {
-            $stmt = self::$pdo->prepare("DELETE FROM bot_states WHERE user_id = ? AND chat_id = ?");
-            $stmt->execute([$userId, self::stateChat($userId)]);
-            return;
-        }
-
-        $data = self::readJson();
-        unset($data['states'][self::stateKey($userId)]);
-        self::writeJson($data);
+        self::db()->prepare("DELETE FROM bot_states WHERE user_id = ? AND chat_id = ?")->execute([$userId, self::stateChat($userId)]);
     }
 
     // =========================================================================
@@ -470,41 +327,13 @@ class Storage {
     // =========================================================================
 
     public static function cacheGet(string $key): mixed {
-        if (self::$pdo) {
-            $stmt = self::$pdo->prepare("SELECT cache_value, expires_at FROM bot_cache WHERE cache_key = ?");
-            $stmt->execute([$key]);
-            $row = $stmt->fetch();
-            if ($row && (int)$row['expires_at'] > time()) {
-                return json_decode($row['cache_value'], true);
-            }
-            return null;
-        }
-
-        $data = self::readJson();
-        $item = $data['cache'][$key] ?? null;
-        if ($item && ($item['expires_at'] ?? 0) > time()) {
-            return $item['value'];
-        }
-        return null;
+        $stmt = self::db()->prepare("SELECT cache_value, expires_at FROM bot_cache WHERE cache_key = ?");
+        $stmt->execute([$key]); $row = $stmt->fetch();
+        return ($row && (int)$row['expires_at'] > time()) ? json_decode($row['cache_value'], true) : null;
     }
 
     public static function cacheSet(string $key, mixed $value, int $ttlSeconds = 3600): void {
-        if (!self::$pdo && !self::$jsonLocked) { self::jsonMutation(fn() => self::cacheSet($key, $value, $ttlSeconds)); return; }
-        if (self::$pdo) {
-            $stmt = self::$pdo->prepare("
-                INSERT INTO bot_cache (cache_key, cache_value, expires_at)
-                VALUES (?, ?, ?)
-                ON DUPLICATE KEY UPDATE cache_value = VALUES(cache_value), expires_at = VALUES(expires_at)
-            ");
-            $stmt->execute([$key, json_encode($value), time() + $ttlSeconds]);
-            return;
-        }
-
-        $data = self::readJson();
-        $data['cache'][$key] = [
-            'value' => $value,
-            'expires_at' => time() + $ttlSeconds,
-        ];
-        self::writeJson($data);
+        $stmt = self::db()->prepare("INSERT INTO bot_cache (cache_key, cache_value, expires_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE cache_value=VALUES(cache_value), expires_at=VALUES(expires_at)");
+        $stmt->execute([$key, json_encode($value, JSON_THROW_ON_ERROR), time() + $ttlSeconds]);
     }
 }

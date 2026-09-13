@@ -167,11 +167,11 @@ function tg_delete_message(int|string $chatId, int $messageId): ?array {
 }
 
 /**
- * Send a photo by URL or file path.
+ * Send a photo by URL, file path, or an in-memory CURLStringFile.
  */
 function tg_send_photo(
     int|string $chatId,
-    string $photo,
+    mixed $photo,
     string $caption = '',
     ?array $replyMarkup = null,
     string $parseMode = 'HTML'
@@ -185,7 +185,7 @@ function tg_send_photo(
         $params['reply_markup'] = tg_pack_keyboard($replyMarkup);
     }
 
-    if (file_exists($photo)) {
+    if (is_string($photo) && file_exists($photo)) {
         $params['photo'] = new CURLFile($photo);
     } else {
         $params['photo'] = $photo;

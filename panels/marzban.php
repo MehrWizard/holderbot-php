@@ -52,8 +52,8 @@ class MarzbanClient {
             CURLOPT_CUSTOMREQUEST => strtoupper($method),
             CURLOPT_TIMEOUT_MS => RequestBudget::milliseconds(5),
             CURLOPT_CONNECTTIMEOUT_MS => RequestBudget::milliseconds(5),
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => false,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
         ];
 
         if ($payload !== null) {

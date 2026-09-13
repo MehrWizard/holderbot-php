@@ -1,317 +1,184 @@
 <?php
 declare(strict_types=1);
+
 require_once __DIR__ . '/request_budget.php';
-require_once __DIR__ . '/queue_index.php';
-require_once __DIR__ . '/queue_workloads.php';
 
-class QueueCapacityException extends RuntimeException {}
-
-/** Local durable spool shared by JSON and MySQL installations on one host. */
-class BatchQueue {
-    use QueueIndex, QueueWorkloads;
+/** Persistent batch queue backed by MySQL. Credentials are loaded at run time. */
+final class BatchQueue
+{
     public const PAGE_SIZE = 50;
     public const MAX_TARGETS = 10000;
-    private const TERMINAL = ['completed', 'failed', 'cancelled'];
 
-    public static function directory(): string {
-        global $config;
-        $dir = $config['queue_path'] ?? dirname($config['storage_path'] ?? __DIR__ . '/../data/storage.json') . '/queue';
-        if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) throw new RuntimeException('Cannot create queue directory');
-        // Apache protection is supplemental; configure a path outside the web root.
-        if (!file_exists($dir . '/.htaccess')) self::atomic($dir . '/.htaccess', "Require all denied\n");
-        return $dir;
+    private static function db(): PDO { return Storage::db(); }
+
+    private static function fingerprint(array $server): string
+    {
+        return hash('sha256', json_encode([
+            $server['type'] ?? '', rtrim((string)($server['base_url'] ?? ''), '/'), $server['username'] ?? ''
+        ], JSON_THROW_ON_ERROR));
     }
-    private static function atomic(string $path, string $value): void {
-        $tmp = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
-        $fp = fopen($tmp, 'xb');
-        if (!$fp) throw new RuntimeException('Cannot write queue');
-        try {
-            chmod($tmp, 0600);
-            $offset = 0;
-            while ($offset < strlen($value)) {
-                $n = fwrite($fp, substr($value, $offset));
-                if (!$n) throw new RuntimeException('Queue write failed');
-                $offset += $n;
-            }
-            if (!fflush($fp) || (function_exists('fsync') && !fsync($fp))) throw new RuntimeException('Queue flush failed');
-        } finally { fclose($fp); }
-        if (!rename($tmp, $path)) { @unlink($tmp); throw new RuntimeException('Cannot publish queue file'); }
+
+    private static function decode(array $row): array
+    {
+        $row['params'] = json_decode((string)($row['payload'] ?: '{}'), true, 512, JSON_THROW_ON_ERROR);
+        foreach ([
+            'cursor_pos' => 'cursor', 'total' => 'total', 'success_count' => 'success',
+            'unconfirmed_count' => 'unconfirmed', 'skipped_count' => 'skipped',
+            'active_phase' => 'active', 'notification_status' => 'notification', 'error_text' => 'error'
+        ] as $from => $to) $row[$to] = $row[$from] ?? null;
+        return $row;
     }
-    private static function save(string $path, array $value): void {
-        if (basename($path) === 'job.json') self::indexBeforeSave($value);
-        self::atomic($path, json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
-        if (basename($path) === 'job.json') self::indexAfterSave($value);
+
+    private static function save(array $job): void
+    {
+        self::db()->prepare(
+            'UPDATE bot_queue SET kind=?, payload=?, status=?, cursor_pos=?, total=?, success_count=?, unconfirmed_count=?, skipped_count=?, error_text=?, next_run=?, active_phase=?, notification_status=? WHERE id=?'
+        )->execute([
+            $job['kind'], json_encode($job['params'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $job['status'],
+            (int)$job['cursor'], (int)$job['total'], (int)$job['success'], (int)$job['unconfirmed'],
+            (int)$job['skipped'], $job['error'] ?: null, (int)$job['next_run'], $job['active'] ?: null,
+            $job['notification'] ?: 'pending', $job['id']
+        ]);
     }
-    private static function read(string $path): array {
-        $value = json_decode(file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
-        if (!is_array($value)) throw new RuntimeException('Invalid queue file');
-        return $value;
-    }
-    private static function fingerprint(array $server): string {
-        return hash('sha256', json_encode([$server['type'], rtrim($server['base_url'], '/'), $server['username']]));
-    }
-    public static function get(string $id): ?array {
+
+    public static function get(string $id): ?array
+    {
         if (!preg_match('/^[a-f0-9]{32}$/D', $id)) return null;
-        $file = self::directory() . '/' . $id . '/job.json';
-        if (is_file($file)) return self::read($file);
-        $file = self::directory() . '/tombstones/' . substr($id, 0, 2) . '/' . $id . '.json';
-        return is_file($file) ? self::read($file) : null;
+        $stmt = self::db()->prepare('SELECT * FROM bot_queue WHERE id=?'); $stmt->execute([$id]);
+        $row = $stmt->fetch(); return $row ? self::decode($row) : null;
     }
-    public static function recent(int|string $chat, int $user): array {
-        $path = self::indexDirectory('history') . '/' . hash('sha256', $chat . ':' . $user) . '.json';
-        $jobs = [];
-        foreach (is_file($path) ? self::read($path) : [] as $id) {
-            if ($job = self::get($id)) $jobs[] = $job;
-        }
-        return array_slice($jobs, 0, 10);
+
+    public static function recent(int|string $chatId, int $userId): array
+    {
+        $stmt = self::db()->prepare('SELECT * FROM bot_queue WHERE chat_id=? AND user_id=? ORDER BY created_at DESC LIMIT 10');
+        $stmt->execute([$chatId, $userId]); return array_map([self::class, 'decode'], $stmt->fetchAll() ?: []);
     }
-    public static function cancel(string $id): void {
-        $job = self::get($id);
-        if ($job && !in_array($job['status'], self::TERMINAL, true)) self::atomic(self::directory() . '/' . $id . '/cancel', '1');
+
+    public static function cancel(string $id): void
+    {
+        self::db()->prepare("UPDATE bot_queue SET status='cancelled' WHERE id=? AND status NOT IN ('completed','failed','cancelled')")->execute([$id]);
     }
-    public static function enqueue(string $kind, array $server, array $params, int|string $chat, int $user, string $submission): array {
-        if (!in_array($kind, ['delete', 'transfer', 'config', 'create', 'admin_status', 'stats', 'expiry', 'access', 'monitor', 'outbox', 'import', 'recharge'], true)) throw new InvalidArgumentException('Unsupported queue operation');
-        if ($kind === 'create' && max((int)($params['count'] ?? 1), count($params['uploaded_json'] ?? [])) > self::MAX_TARGETS) throw new InvalidArgumentException('Too many targets');
-        $dir = self::directory();
-        // A repeated press on the same submitted message has the same identity.
-        $id = substr(hash('sha256', json_encode([$chat, $user, $submission, $kind, $server['id'], $params], JSON_THROW_ON_ERROR)), 0, 32);
-        $lock = fopen($dir . '/.enqueue.lock', 'c');
-        if (!$lock || !flock($lock, LOCK_EX)) throw new RuntimeException('Cannot lock queue submission');
+
+    public static function enqueue(string $kind, array $server, array $params, int|string $chatId, int $userId, string $submission): array
+    {
+        $allowed = ['delete','transfer','config','create','admin_status','stats','expiry','access','monitor','outbox','import','recharge'];
+        if (!in_array($kind, $allowed, true)) throw new InvalidArgumentException('Unsupported queue operation');
+        $targetCount = max((int)($params['count'] ?? 1), count($params['uploaded_json'] ?? []));
+        if ($kind === 'create' && $targetCount > self::MAX_TARGETS) throw new LengthException('Too many targets');
+        $serverId = (int)($server['id'] ?? 0);
+        $id = substr(hash('sha256', json_encode([$chatId,$userId,$submission,$kind,$serverId,$params], JSON_THROW_ON_ERROR)), 0, 32);
+        $submissionKey = hash('sha256', json_encode([$chatId,$userId,$submission,$kind,$serverId], JSON_THROW_ON_ERROR));
+        $db = self::db(); $lock = $db->prepare("SELECT GET_LOCK('holderbot-queue-submit', 10)"); $lock->execute();
         try {
-            if ($existing = self::get($id)) return $existing;
-            if (count(glob(self::indexDirectory('ready') . '/*') ?: []) >= ($kind==='outbox' ? 2000 : 1500)) throw new QueueCapacityException('Queue capacity reached');
-            $jobDir = $dir . '/' . $id;
-            if (!is_dir($jobDir) && !mkdir($jobDir, 0700)) throw new RuntimeException('Cannot create job');
-            $count = 0;
-            if ($kind === 'create') {
-                if (isset($params['uploaded_json'])) {
-                    $items = $params['uploaded_json'];
-                    $count = count($items);
-                    foreach (array_chunk($items, self::PAGE_SIZE) as $page => $chunk) self::save($jobDir . '/input-' . $page . '.json', $chunk);
-                    unset($params['uploaded_json']);
-                    $params['json'] = true;
-                } else $count = max(1, (int)($params['count'] ?? 1));
-            }
-            $job = ['id'=>$id, 'kind'=>$kind, 'server_id'=>(int)$server['id'], 'server_fingerprint'=>self::fingerprint($server),
-                'params'=>$params, 'chat_id'=>$chat, 'user_id'=>$user, 'status'=>in_array($kind, ['delete','transfer','config'], true) ? 'discovering' : 'running',
-                'created_at'=>microtime(true), 'updated_at'=>microtime(true), 'page'=>1, 'pages'=>0, 'cursor'=>0, 'total'=>$kind === 'admin_status' ? 1 : $count,
-                'success'=>0, 'unconfirmed'=>0, 'skipped'=>0, 'delivery_failed'=>0, 'owner_failed'=>0, 'read_failures'=>0, 'next_run'=>0,
-                'active'=>null, 'pending'=>null, 'notification'=>($kind === 'outbox' || $user === 0) ? 'suppressed' : 'pending'];
-            // Publish metadata only after all immutable import pages exist.
-            self::remember($job);
-            self::save($jobDir . '/job.json', $job);
-            return $job;
-        } finally { flock($lock, LOCK_UN); fclose($lock); }
+            $existing = $db->prepare('SELECT * FROM bot_queue WHERE id=? OR submission_key=?'); $existing->execute([$id,$submissionKey]);
+            if ($row = $existing->fetch()) return self::decode($row);
+            $status = in_array($kind, ['delete','transfer','config'], true) ? 'discovering' : 'running';
+        $total = in_array($kind, ['admin_status','outbox'], true) ? 1 : (in_array($kind, ['create','import'], true) ? max(1,$targetCount) : 0);
+            $insert = $db->prepare('INSERT INTO bot_queue (id,kind,server_id,server_fingerprint,chat_id,user_id,submission_key,status,payload,total,notification_status) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+            $insert->execute([$id,$kind,$serverId,self::fingerprint($server),$chatId,$userId,$submissionKey,$status,json_encode($params, JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),$total,$userId ? 'pending' : 'suppressed']);
+            return self::get($id) ?? throw new RuntimeException('Queue insert failed');
+        } finally { $db->query("SELECT RELEASE_LOCK('holderbot-queue-submit')"); }
     }
-    public static function keyboard(array $job): array {
-        $rows = [[['text'=>'Refresh status', 'callback_data'=>'job:' . $job['id']]]];
-        if (!in_array($job['status'], self::TERMINAL, true)) $rows[] = [['text'=>'Cancel remaining work', 'callback_data'=>'job_cancel:' . $job['id']]];
-        $rows[] = [['text'=>'Back', 'callback_data'=>'srv:' . $job['server_id']]];
+
+    public static function message(int|string $chatId, int $userId, string $text, string $key, ?array $keyboard=null): array
+    { return self::enqueue('outbox',['id'=>0,'type'=>'internal','base_url'=>'','username'=>''],['text'=>$text,'keyboard'=>$keyboard],$chatId,$userId,$key); }
+
+    public static function photo(int|string $chatId, int $userId, string $url, string $caption, string $key): array
+    { return self::enqueue('outbox',['id'=>0,'type'=>'internal','base_url'=>'','username'=>''],['photo'=>$url,'text'=>$caption],$chatId,$userId,$key); }
+
+    public static function keyboard(array $job): array
+    {
+        $rows = [[['text'=>'Refresh status','callback_data'=>'job:'.$job['id']]]];
+        if (!in_array($job['status'],['completed','failed','cancelled'],true)) $rows[]=[['text'=>'Cancel remaining work','callback_data'=>'job_cancel:'.$job['id']]];
+        if ((int)$job['server_id']>0) $rows[]=[['text'=>'Back','callback_data'=>'srv:'.$job['server_id']]];
         return ['inline_keyboard'=>$rows];
     }
-    public static function describe(array $job): string {
-        $text = 'Batch ' . $job['id'] . "\nOperation: " . $job['kind'] . "\nStatus: " . $job['status'];
-        $text .= "\nProcessed: {$job['cursor']}/{$job['total']}\nConfirmed: {$job['success']}\nNot confirmed: {$job['unconfirmed']}\nSkipped: {$job['skipped']}";
-        if ($job['owner_failed']) $text .= "\nOwner assignments not confirmed: {$job['owner_failed']}";
-        if ($job['delivery_failed']) $text .= "\nQR deliveries not confirmed: {$job['delivery_failed']}";
-        if (isset($job['summary_id'])) $text .= "\nSummary delivery job: " . $job['summary_id'];
-        if (isset($job['error'])) $text .= "\n" . htmlspecialchars(substr($job['error'], 0, 600), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        if ($job['unconfirmed'] || $job['owner_failed']) $text .= "\nCheck the panel before repeating unconfirmed operations.";
-        return $text;
+
+    public static function describe(array $job): string
+    {
+        $text = "Batch {$job['id']}\nOperation: {$job['kind']}\nStatus: {$job['status']}\nProcessed: {$job['cursor']}/{$job['total']}\nConfirmed: {$job['success']}\nNot confirmed: {$job['unconfirmed']}\nSkipped: {$job['skipped']}";
+        return $text . (!empty($job['error']) ? "\n".htmlspecialchars((string)$job['error'],ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8') : '');
     }
-    private static function issue(string $dir, array &$job, string $username, string $reason): void {
-        self::save($dir . '/issue-' . hash('sha256', $username . $reason) . '.json', ['username'=>$username, 'reason'=>$reason, 'time'=>time()]);
-        $job['error'] = $reason . ($username !== '' ? ': ' . $username : '');
+
+    private static function step(array &$job): void
+    {
+        $params = $job['params']; $server = $job['server_id']>0 ? Storage::getServer((int)$job['server_id']) : null;
+        if ($job['kind'] !== 'outbox' && (!$server || self::fingerprint($server) !== $job['server_fingerprint'])) { $job['status']='failed'; $job['error']='Server removed or identity changed'; return; }
+        if ($job['kind'] === 'outbox') {
+            $job['active']='outbox'; self::save($job);
+            $result = isset($params['photo']) ? QrGenerator::sendQrPhoto($job['chat_id'],$params['photo'],$params['text']) : tg_send_message($job['chat_id'],$params['text'],$params['keyboard']??null);
+            $job['active']=null; $job['cursor']=1; $job['total']=1; if (!empty($result['ok'])) $job['success']=1; else { $job['unconfirmed']=1; $job['error']='Message delivery not confirmed'; } $job['status']='completed'; return;
+        }
+        if ($job['kind'] === 'import') {
+            $raw = tg_download_file((string)($params['import_file_id'] ?? ''), 8 * 1024 * 1024);
+            if ($raw === null || strlen($raw) > 8 * 1024 * 1024) throw new RuntimeException('Unable to download import');
+            $items = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+            if (!is_array($items) || array_is_list($items) === false || count($items) > self::MAX_TARGETS) throw new InvalidArgumentException('Invalid import payload');
+            foreach ($items as $item) {
+                if (!is_array($item) || empty($item['username']) || (float)($item['datalimit'] ?? 0) < 0 || (int)($item['datelimit'] ?? 0) < 0) throw new InvalidArgumentException('Invalid import entry');
+            }
+            $params['uploaded_json'] = array_values($items);
+            unset($params['import_file_id']);
+            $job['params'] = $params; $job['kind'] = 'create'; $job['status'] = 'running'; $job['total'] = count($items); return;
+        }
+        if ($job['kind'] === 'access') {
+            $token = $server['type']==='marzneshin' ? MarzneshinClient::getToken($server,true) : MarzbanClient::getToken($server,true);
+            if (!$token) throw new RuntimeException('Access refresh failed'); Storage::cacheSet('online_'.$server['id'],time(),86400); $job['success']=1; $job['total']=1; $job['cursor']=1; $job['status']='completed'; return;
+        }
+        if ($job['kind'] === 'stats') {
+            $stats = PanelManager::getServerStats($server);
+            $text = Formatter::statsCard($server, $stats);
+            self::message($job['chat_id'], (int)$job['user_id'], $text, $job['id'].':stats');
+            $job['success'] = 1; $job['total'] = 1; $job['cursor'] = 1; $job['status'] = 'completed'; return;
+        }
+        if ($job['kind'] === 'monitor') {
+            BackgroundTasks::monitorNodes([$server], $params['recipients'] ?? []);
+            $job['success'] = 1; $job['total'] = 1; $job['cursor'] = 1; $job['status'] = 'completed'; return;
+        }
+        if ($job['kind'] === 'expiry') {
+            BackgroundTasks::expiredReport([$server], $params['recipients'] ?? [], time());
+            $job['success'] = 1; $job['total'] = 1; $job['cursor'] = 1; $job['status'] = 'completed'; return;
+        }
+        if ($job['status'] === 'discovering') {
+            $users = PanelManager::getUsers($server,(int)($params['page']??1),self::PAGE_SIZE,null,$params['status']??null,$params['admin']??null,true);
+            $params['targets']=array_merge($params['targets']??[],array_column($users,'username')); $params['page']=(int)($params['page']??1)+1; $job['params']=$params; $job['total']=count($params['targets']); if (count($users)<self::PAGE_SIZE) $job['status']='running'; return;
+        }
+        if ($job['cursor'] >= $job['total']) { $job['status']='completed'; return; }
+        $index=(int)$job['cursor']; $username=$params['targets'][$index]??($params['username']??''); $ok=true;
+        switch ($job['kind']) {
+            case 'delete': $ok=PanelManager::deleteUser($server,$username); break;
+            case 'transfer': $ok=PanelManager::setOwner($server,$username,(string)$params['to_admin']); break;
+            case 'admin_status': $ok=!empty($params['active']) ? PanelManager::activateAdminUsers($server,(string)$params['admin']) : PanelManager::disableAdminUsers($server,(string)$params['admin']); break;
+            case 'recharge': $ok=(bool)PanelManager::chargeUser($server,(string)$params['username'],$params['data_limit'],(int)$params['date_limit'],!empty($params['reset']),!empty($params['additive']),(string)($params['date_type']??'fixed')); break;
+            case 'config':
+                $user=PanelManager::getUser($server,$username); if(!$user) throw new RuntimeException('Cannot read user config'); $serviceId=(string)$params['service_id']; $ids=$user['service_ids']??[]; $newIds=!empty($params['add'])?array_merge($ids,[$serviceId]):array_values(array_filter($ids,fn($id)=>(string)$id!==$serviceId)); $ok=PanelManager::updateUserConfigs($server,$username,$newIds); break;
+            case 'create':
+                $item=$params['uploaded_json'][$index]??null; $name=$item['username']??(($params['username']??'user').($job['total']>1?(string)((int)($params['usersuffix']??1)+$index):'')); $ok=(bool)PanelManager::createUser($server,$name,(float)($item['datalimit']??$params['data_limit']??0),(int)($item['datelimit']??$params['date_limit']??0),null,$params['selected_configs']??[],(string)($params['date_type']??'fixed'),$params['admin']??null); break;
+            default: $job['status']='completed'; return;
+        }
+        if($ok) $job['success']++; else $job['unconfirmed']++; $job['cursor']++;
     }
-    /** One bounded slice. The lock is released by the OS even after a killed worker. */
-    public static function run(?float $seconds = null, ?int $steps = null): int {
+
+    public static function run(?float $seconds=null, ?int $steps=null): int
+    {
         global $config;
-        $seconds = max(0.1, min(45, $seconds ?? (float)($config['queue_budget_seconds'] ?? 15)));
-        $steps = max(1, min(100, $steps ?? (int)($config['queue_steps'] ?? 10)));
-        $dir = self::directory();
-        $lock = fopen($dir . '/.worker.lock', 'c');
-        if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) { if ($lock) fclose($lock); return 0; }
-        $oldDeadline = RequestBudget::$deadline;
-        RequestBudget::$deadline = microtime(true) + $seconds;
-        $processed = 0;
-        try {
-            self::initializeIndex();
-            if (!is_file($dir.'/.indexed')) { self::save($dir.'/heartbeat.json',['last_run'=>time(),'migrating'=>true]); return 0; }
-            self::save($dir . '/heartbeat.json', ['last_run'=>time(), 'pid'=>getmypid()]);
-            do {
-                $jobs = []; $first = []; $outboxFirst = [];
-                foreach (glob(self::indexDirectory('ready') . '/*') ?: [] as $file) {
-                    try {
-                        $job = self::get(basename($file));
-                        if (!$job) { if (filemtime($file)<time()-300) unlink($file); continue; }
-                        if (in_array($job['status'], self::TERMINAL, true) && $job['notification'] !== 'pending') { unlink($file); continue; }
-                        if (is_file($dir . '/' . $job['id'] . '/cancel')) $job['next_run'] = 0;
-                        if ($job['next_run'] <= time()) $jobs[] = $job;
-                        if ($job['kind']==='outbox') {
-                            $chat=(string)$job['chat_id'];
-                            if (!isset($outboxFirst[$chat]) || $job['created_at']<$outboxFirst[$chat]['created_at']) $outboxFirst[$chat]=$job;
-                        }
-                        if (in_array($job['kind'], ['delete','transfer','config','create','admin_status','import','recharge'], true) && !in_array($job['status'], self::TERMINAL, true)) {
-                            $key = $job['server_id'];
-                            if (!isset($first[$key]) || [$job['created_at'], $job['id']] < [$first[$key]['created_at'], $first[$key]['id']]) $first[$key] = $job;
-                        }
-                    } catch (Throwable $e) { throw new RuntimeException('Corrupt queue job ' . basename($file) . '; repair before resuming worker', 0, $e); }
-                }
-                $jobs = array_values(array_filter($jobs, fn($job) => !in_array($job['kind'], ['delete','transfer','config','create','admin_status','import','recharge'], true)
-                    || in_array($job['status'], self::TERMINAL, true) || ($first[$job['server_id']]['id'] ?? '') === $job['id']));
-                $jobs = array_values(array_filter($jobs, fn($job) => $job['kind']!=='outbox' || ($outboxFirst[(string)$job['chat_id']]['id'] ?? '')===$job['id']));
-                usort($jobs, fn($a, $b) => $a['updated_at'] <=> $b['updated_at']);
-                foreach ($jobs as $job) {
-                    if ($processed >= $steps || microtime(true) >= RequestBudget::$deadline - 0.1) break 2;
-                    self::step($dir . '/' . $job['id'], $job);
-                    $processed++;
-                }
-            } while ($jobs);
-            self::maintain();
-            self::save($dir . '/heartbeat.json', ['last_run'=>time(), 'last_success'=>time(), 'pid'=>getmypid(), 'steps'=>$processed]);
-        } catch (Throwable $e) {
-            self::save($dir . '/heartbeat.json', ['last_run'=>time(), 'error'=>substr($e->getMessage(),0,500)]);
-            throw $e;
-        } finally { RequestBudget::$deadline = $oldDeadline; flock($lock, LOCK_UN); fclose($lock); }
-        return $processed;
+        $steps=max(1,min(100,$steps??(int)($config['queue_steps']??10))); $seconds=max(.1,min(45.0,$seconds??(float)($config['queue_budget_seconds']??15.0))); $db=self::db(); $lock=$db->query("SELECT GET_LOCK('holderbot-queue-worker',1)"); if((int)$lock->fetchColumn()!==1)return 0;
+        $old=RequestBudget::$deadline; RequestBudget::$deadline=microtime(true)+$seconds; $done=0;
+        try { while($done<$steps&&microtime(true)<RequestBudget::$deadline-.1) { $row=$db->query("SELECT * FROM bot_queue WHERE next_run<=UNIX_TIMESTAMP() AND status NOT IN ('completed','failed','cancelled') ORDER BY created_at LIMIT 1")->fetch(); if(!$row)break; $job=self::decode($row); try{self::step($job);unset($job['params']['read_failures']);}catch(Throwable $e){$job['error']=$e->getMessage();if($e instanceof InvalidArgumentException){$job['status']='failed';}else{$job['next_run']=time()+30;$job['params']['read_failures']=(int)($job['params']['read_failures']??0)+1;if($job['params']['read_failures']>=3)$job['status']='failed';}} self::save($job);$done++;} }
+        finally { $db->query("SELECT RELEASE_LOCK('holderbot-queue-worker')"); RequestBudget::$deadline=$old; }
+        return $done;
     }
-    private static function step(string $dir, array $job): void {
+
+    public static function health(): array
+    { $row=self::db()->query("SELECT COUNT(*) AS pending FROM bot_queue WHERE status NOT IN ('completed','failed','cancelled')")->fetch(); return ['last_run'=>time(),'pending'=>(int)($row['pending']??0),'stale'=>false]; }
+
+    /** Compact old terminal payloads while retaining IDs for deduplication. */
+    public static function maintain(?int $retentionDays = null): int
+    {
         global $config;
-        $path = $dir . '/job.json';
-        $job['updated_at'] = microtime(true);
-        // Never replay a mutation or send whose result was not persisted.
-        if ($job['active'] !== null) {
-            $phase = $job['active'];
-            if ($phase==='recharge_reset') { $job['unconfirmed']++; $job['recharge_done']=true; $job['cursor']=1; }
-            elseif ($phase==='recharge_write') { $job['recharge_phase']='reconcile'; }
-            elseif ($phase === 'outbox') { $job['unconfirmed']++; $job['status'] = 'completed'; }
-            elseif ($phase === 'restart') { $job['unconfirmed']++; $job['node_result']='Not confirmed after interruption'; }
-            elseif ($phase === 'mutate') { $job['unconfirmed']++; $job['cursor']++; if ($job['kind']==='recharge') $job['recharge_done']=true; }
-            elseif ($phase === 'owner') { $job['owner_failed']++; $job['pending']['phase'] = 'photo'; }
-            elseif ($phase === 'photo') { $job['delivery_failed']++; $job['pending'] = null; }
-            elseif ($phase === 'notify') $job['notification'] = 'unconfirmed';
-            self::issue($dir, $job, $job['current_user'] ?? '', 'Previous ' . $phase . ' result was not saved; not repeated');
-            $job['active'] = null;
-            self::save($path, $job);
-        }
-        if (($job['user_id'] !== 0 && !in_array((int)$job['user_id'], array_map('intval', $config['admin_ids'] ?? []), true))
-            || ($job['user_id'] === 0 && $job['kind'] === 'outbox' && !in_array((int)$job['chat_id'], array_map('intval', $config['admin_ids'] ?? []), true))) {
-            $job['status'] = 'cancelled'; $job['notification'] = 'suppressed';
-            $job['error'] = 'Submitting administrator is no longer authorized';
-            self::save($path, $job); return;
-        }
-        if (in_array($job['status'], self::TERMINAL, true)) {
-            if ($job['notification'] !== 'pending') return;
-            try { $delivery=self::message($job['chat_id'], $job['user_id'], self::describe($job), $job['id'] . ':summary', self::keyboard($job)); }
-            catch (QueueCapacityException $e) { $job['next_run']=time()+30; self::save($path,$job); return; }
-            $job['summary_id']=$delivery['id'];
-            $job['notification'] = 'queued'; self::save($path, $job); return;
-        }
-        if (is_file($dir . '/cancel')) {
-            $job['status'] = 'cancelled'; $job['pending'] = null;
-            self::save($path, $job); return;
-        }
-        $server = $job['kind'] === 'outbox' ? self::virtualServer() : Storage::getServer($job['server_id']);
-        if (!$server || self::fingerprint($server) !== $job['server_fingerprint']) {
-            $job['status'] = 'failed'; $job['error'] = 'Server removed or identity changed'; self::save($path, $job); return;
-        }
-        try {
-            if (in_array($job['kind'], ['stats','expiry','access','monitor','outbox','import','recharge'], true)) {
-                self::workload($dir, $path, $job, $server);
-            } elseif ($job['status'] === 'discovering') {
-                $params = $job['params'];
-                $users = PanelManager::getUsers($server, $job['page'], self::PAGE_SIZE, null, $params['status'] ?? null, $params['admin'] ?? null, true);
-                if ($job['total'] + count($users) > self::MAX_TARGETS) throw new LengthException('Target limit exceeded; split the batch by administrator');
-                self::save($dir . '/targets-' . $job['pages'] . '.json', array_column($users, 'username'));
-                $job['pages']++; $job['page']++; $job['total'] += count($users); $job['read_failures'] = 0;
-                if (count($users) < self::PAGE_SIZE) $job['status'] = 'running';
-            } elseif ($job['pending'] !== null) {
-                self::deliver($dir, $path, $job, $server);
-            } elseif ($job['cursor'] >= $job['total']) {
-                $job['status'] = 'completed';
-            } else {
-                self::mutate($dir, $path, $job, $server);
-            }
-        } catch (QueueCapacityException $e) {
-            $job['next_run']=time()+30;
-        } catch (Throwable $e) {
-            if ($job['active'] !== null) {
-                // Leave the durable marker for the next slice to classify safely.
-                return;
-            }
-            $job['read_failures']++;
-            $job['error'] = $e instanceof LengthException ? $e->getMessage() : 'Unable to read batch data; retrying before further mutations';
-            $job['next_run'] = time() + 30 * $job['read_failures'];
-            if ($job['read_failures'] >= 3 || $e instanceof LengthException) { $job['status'] = 'failed'; $job['next_run']=0; }
-        }
-        self::save($path, $job);
-    }
-    private static function mutate(string $dir, string $path, array &$job, array $server): void {
-        $p = $job['params']; $index = $job['cursor']; $kind = $job['kind'];
-        $item = null;
-        if ($kind === 'create') {
-            if (!empty($p['json'])) {
-                $chunk = self::read($dir . '/input-' . intdiv($index, self::PAGE_SIZE) . '.json');
-                $item = $chunk[$index % self::PAGE_SIZE];
-                $username = $item['username'];
-            } else $username = $p['username'] . ($job['total'] > 1 ? (string)((int)($p['usersuffix'] ?? 1) + $index) : '');
-        } elseif ($kind === 'admin_status') $username = $p['admin'];
-        else {
-            $chunk = self::read($dir . '/targets-' . intdiv($index, self::PAGE_SIZE) . '.json');
-            $username = $chunk[$index % self::PAGE_SIZE];
-        }
-        $job['current_user'] = $username;
-        // Receipts deduplicate users repeated across changing discovery pages.
-        $receipt = $dir . '/attempt-' . hash('sha256', $username) . '.json';
-        if (is_file($receipt)) { $job['skipped']++; $job['cursor']++; return; }
-        $ids = [];
-        if ($kind === 'config') {
-            $user = PanelManager::getUser($server, $username);
-            if (!$user) throw new RuntimeException('Cannot read user before config change');
-            $ids = $user['service_ids'];
-            $exists = in_array((string)$p['service_id'], array_map('strval', $ids), true);
-            if ($exists === (bool)$p['add']) { $job['skipped']++; $job['cursor']++; return; }
-            $ids = $p['add'] ? [...$ids, $p['service_id']] : array_values(array_filter($ids, fn($id) => (string)$id !== (string)$p['service_id']));
-        }
-        $job['read_failures'] = 0;
-        $job['active'] = 'mutate'; self::save($path, $job);
-        self::save($receipt, ['username'=>$username, 'attempted_at'=>time()]);
-        $created = null;
-        $ok = match ($kind) {
-            'delete' => PanelManager::deleteUser($server, $username),
-            'transfer' => PanelManager::setOwner($server, $username, $p['to_admin']),
-            'config' => PanelManager::updateUserConfigs($server, $username, $ids),
-            'admin_status' => $p['active'] ? PanelManager::activateAdminUsers($server, $username) : PanelManager::disableAdminUsers($server, $username),
-            'create' => (bool)($created = PanelManager::createUser($server, $username,
-                (float)($item['datalimit'] ?? $p['data_limit'] ?? 0), (int)($item['datelimit'] ?? $p['date_limit'] ?? 0), null, $p['selected_configs'],
-                $item !== null ? match ($item['datetypes']) { 'unlimited'=>'unlimited', 'after first use'=>'onhold', default=>'fixed' } : ($p['date_type'] ?? 'fixed'), null)),
-        };
-        $job[$ok ? 'success' : 'unconfirmed']++;
-        if (!$ok) self::issue($dir, $job, $username, 'Panel mutation was not confirmed; inspect panel before retrying');
-        if ($created) $job['pending'] = ['phase'=>!empty($p['admin']) ? 'owner' : 'photo', 'user'=>$created];
-        $job['cursor']++; $job['active'] = null;
-    }
-    private static function deliver(string $dir, string $path, array &$job, array $server): void {
-        $phase = $job['pending']['phase']; $user = $job['pending']['user'];
-        if ($phase==='photo') {
-            $cooldown=self::directory().'/telegram-cooldown.json';
-            if (is_file($cooldown) && ($until=self::read($cooldown)['until'])>time()) { $job['next_run']=$until; return; }
-        }
-        $job['active'] = $phase; self::save($path, $job);
-        if ($phase === 'owner') {
-            if (!PanelManager::setOwner($server, $user['username'], $job['params']['admin'])) {
-                $job['owner_failed']++;
-                self::issue($dir, $job, $user['username'], 'Owner assignment was not confirmed');
-            }
-            $job['pending']['phase'] = 'photo';
-        } else {
-            if (!empty($user['subscription_url'])) {
-                $response = QrGenerator::sendQrPhoto($job['chat_id'], $user['subscription_url'], Formatter::userInfo($server, $user));
-                if (self::retryDelivery($response, $job)) { $job['active'] = null; return; }
-                if (empty($response['ok'])) $job['delivery_failed']++;
-            }
-            $job['pending'] = null; $job['delivery_attempts']=0;
-        }
-        $job['active'] = null;
+        $days = max(1, $retentionDays ?? (int)($config['queue_retention_days'] ?? 7));
+        $stmt = self::db()->prepare("UPDATE bot_queue SET payload='{}' WHERE status IN ('completed','failed','cancelled') AND updated_at < FROM_UNIXTIME(?) AND payload <> '{}' LIMIT 100");
+        $stmt->execute([time() - $days * 86400]);
+        return $stmt->rowCount();
     }
 }

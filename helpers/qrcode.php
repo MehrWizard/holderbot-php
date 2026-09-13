@@ -644,10 +644,9 @@ class QrGenerator {
             return tg_send_message($chatId, $caption . "\n\n⚠️ <i>This link is too long to render as a QR code; use the text link above.</i>");
         }
 
-        $tmpFile = sys_get_temp_dir() . '/hb_qr_' . bin2hex(random_bytes(8)) . '.png';
-        file_put_contents($tmpFile, $png);
-        try { return tg_send_photo($chatId, $tmpFile, $caption); }
-        finally { @unlink($tmpFile); }
+        if (!class_exists('CURLStringFile')) {
+            throw new RuntimeException('CURLStringFile is required for file-free QR delivery');
+        }
+        return tg_send_photo($chatId, new CURLStringFile($png, 'holderbot-qr.png', 'image/png'), $caption);
     }
 }
-

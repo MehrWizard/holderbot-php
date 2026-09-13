@@ -41,9 +41,9 @@ class Handler(BaseHTTPRequestHandler):
 server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
 threading.Thread(target=server.serve_forever,daemon=True).start()
 php=r'''
-$config=['storage_path'=>$argv[2]];
-require $argv[1].'/storage.php'; require $argv[1].'/panels/panel_manager.php'; Storage::init();
-$s=['id'=>1,'type'=>'marzban','remark'=>'test','base_url'=>$argv[3],'username'=>'sudo','password'=>'good'];
+$config=['storage_type'=>'mysql'];
+require $argv[1].'/panels/panel_manager.php';
+$s=['id'=>1,'type'=>'marzban','remark'=>'test','base_url'=>$argv[2],'username'=>'sudo','password'=>'good'];
 foreach(['marzban','marzneshin'] as $kind) {
  $s['type']=$kind;
  foreach(['fixed','onhold','unlimited'] as $date) {
@@ -73,7 +73,7 @@ if (PanelManager::getNodes($s)!==[] || PanelManager::getAdmins($s)!==[]) throw n
 '''
 try:
     with tempfile.TemporaryDirectory() as tmp:
-        proc=subprocess.run(['php','-d','error_reporting=24575','-r',php,str(root),tmp+'/storage.json',f'http://127.0.0.1:{server.server_port}'],capture_output=True,text=True)
+        proc=subprocess.run(['php','-d','error_reporting=24575','-r',php,str(root),f'http://127.0.0.1:{server.server_port}'],capture_output=True,text=True)
         assert proc.returncode==0,proc.stderr
     creates=[c for c in calls if c['method']=='POST' and c['path'] in ['/api/user','/api/users']]
     assert len(creates)==6

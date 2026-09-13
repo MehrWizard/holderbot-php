@@ -59,10 +59,9 @@ if (empty($rawInput)) {
     echo "<!DOCTYPE html><html><head><title>HolderBot PHP</title></head><body style='font-family:sans-serif;padding:30px;background:#f7f9fa;'>";
     echo "<h2>🤖 HolderBot PHP Webhook Endpoint (" . HOLDERBOT_VERSION . ")</h2>";
     echo "<p>Status: <b style='color:green;'>Active & Running</b></p>";
-    echo "<p>Storage Engine: <b>" . htmlspecialchars($config['storage_type'] ?? 'json') . "</b></p>";
+    echo "<p>Storage Engine: <b>MySQL</b></p>";
     echo "<p>Configured Servers: <b>" . count(Storage::getServers()) . "</b></p>";
     echo "<p>Original Source: <a href='https://github.com/erfjab/holderbot/' target='_blank'>erfjab/holderbot</a></p>";
-    echo "<hr><p style='color:#666;'>To manage webhook registration, use <code>set_webhook.php</code>.</p>";
     echo "</body></html>";
     exit;
 }

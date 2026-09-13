@@ -10,20 +10,19 @@ require __DIR__ . '/helpers/format.php';
 require __DIR__ . '/helpers/keyboards.php';
 require __DIR__ . '/helpers/qrcode.php';
 require __DIR__ . '/helpers/queue.php';
+require __DIR__ . '/helpers/tasks.php';
 Storage::init();
 $command = $argv[1] ?? 'health';
 try {
     switch ($command) {
         case 'health':
             $health=BatchQueue::health();
-            echo json_encode($health,JSON_PRETTY_PRINT|JSON_THROW_ON_ERROR)."\n";
+            echo "last_run={$health['last_run']} pending={$health['pending']} stale=" . ($health['stale'] ? 'yes' : 'no') . "\n";
             exit($health['stale'] ? 1 : 0);
         case 'work': echo BatchQueue::run()." steps processed\n"; break;
         case 'attention':
-            foreach (array_slice(glob(BatchQueue::directory().'/attention/*') ?: [],0,100) as $file) {
-                $job=BatchQueue::get(basename($file));
-                if ($job) echo $job['id'].' '.$job['kind'].' '.$job['status']."\n";
-            }
+            $rows = Storage::db()->query("SELECT id,kind,status,error_text FROM bot_queue WHERE status IN ('failed') OR unconfirmed_count>0 ORDER BY updated_at DESC LIMIT 100")->fetchAll();
+            foreach ($rows as $row) echo $row['id'].' '.$row['kind'].' '.$row['status'].' '.($row['error_text'] ?? '')."\n";
             break;
         case 'inspect':
             $job=BatchQueue::get($argv[2] ?? '');
@@ -32,18 +31,13 @@ try {
             echo BatchQueue::describe($job)."\n";
             break;
         case 'issues':
-            $id=$argv[2] ?? '';
-            if (!BatchQueue::get($id)) throw new RuntimeException('Job not found');
-            foreach (glob(BatchQueue::directory().'/'.$id.'/issue-*.json') ?: [] as $file) echo file_get_contents($file)."\n";
+            $job=BatchQueue::get($argv[2] ?? '');
+            if (!$job) throw new RuntimeException('Job not found');
+            echo BatchQueue::describe($job)."\n";
             break;
         case 'cancel': BatchQueue::cancel($argv[2] ?? ''); echo "Cancellation requested\n"; break;
-        case 'retry-read': BatchQueue::retryRead($argv[2] ?? ''); echo "Read work requeued\n"; break;
-        case 'resend':
-            $job=BatchQueue::get($argv[2] ?? '');
-            if (!$job || $job['kind']!=='outbox' || !isset($job['params'])) throw new RuntimeException('An unarchived outbox job is required');
-            $new=BatchQueue::resend($job);
-            echo $new['id']."\n";
-            break;
+        case 'retry-read': throw new RuntimeException('Automatic retry is disabled; submit a new read job after reviewing the failure');
+        case 'resend': throw new RuntimeException('Automatic resend is disabled; use the bot action to create a new delivery');
         default: throw new RuntimeException('Usage: php queue.php health|work|attention|inspect ID|issues ID|cancel ID|retry-read ID|resend ID');
     }
-} catch (Throwable $e) { fwrite(STDERR,$e->getMessage()."\n"); exit(1); }
+} catch (Throwable $e) { error_log($e->getMessage()); exit(1); }
