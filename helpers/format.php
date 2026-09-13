@@ -82,6 +82,9 @@ class Formatter {
         $card .= "<b>🖥 Server:</b> <code>{$serverName}</code>\n";
         $card .= "<b>🚦 Status:</b> <b>{$statusEmoji}</b>\n";
         $card .= "<b>📊 Traffic:</b> <code>{$usedTraffic} / {$dataLimit}{$trafficPercent}</code>\n";
+        if (!empty($user['lifetime_used_traffic_bytes'])) {
+            $card .= "<b>📈 Lifetime Used Traffic:</b> <code>" . self::bytes($user['lifetime_used_traffic_bytes']) . "</code>\n";
+        }
         $card .= "<b>⏱ Expiration:</b> <code>{$expire}</code>\n";
 
         if (!empty($user['note'])) {
@@ -100,40 +103,24 @@ class Formatter {
     /**
      * Format server details card.
      */
-    public static function serverCard(array $server, ?array $nodes = null): string {
+    public static function serverCard(array $server): string {
         $remark = htmlspecialchars($server['remark']);
         $type = strtoupper($server['type']);
         $baseUrl = htmlspecialchars($server['base_url']);
         $activeEmoji = !empty($server['is_active']) ? '✅ Active' : '❌ Inactive';
+        $onlineEmoji = PanelManager::isOnline($server) ? '✅ Yes' : '❌ No';
         $monitorEmoji = !empty($server['node_monitoring']) ? '✅ Enabled' : '❌ Disabled';
         $restartEmoji = !empty($server['node_restart']) ? '✅ Enabled' : '❌ Disabled';
+        $expiredStatsEmoji = !empty($server['expired_stats']) ? '✅ Enabled' : '❌ Disabled';
 
         $text = "<b>🖥 Server:</b> <code>{$remark}</code> (ID: <code>{$server['id']}</code>)\n";
         $text .= "<b>⚙️ Type:</b> <code>{$type}</code>\n";
         $text .= "<b>🌐 URL:</b> <code>{$baseUrl}</code>\n";
         $text .= "<b>🚦 State:</b> {$activeEmoji}\n";
+        $text .= "<b>🛰 Online:</b> {$onlineEmoji}\n";
         $text .= "<b>📡 Node Monitoring:</b> {$monitorEmoji}\n";
         $text .= "<b>🔄 Auto Restart:</b> {$restartEmoji}\n";
-
-        if ($nodes !== null) {
-            $totalNodes = count($nodes);
-            $healthy = 0;
-            $nodeDetails = "";
-
-            foreach ($nodes as $node) {
-                $nodeRemark = htmlspecialchars($node['remark'] ?? ($node['name'] ?? 'Node'));
-                $status = $node['status'] ?? 'healthy';
-                $isOk = in_array(strtolower($status), ['connected', 'healthy', 'active', 'ok']);
-                if ($isOk) {
-                    $healthy++;
-                    $nodeDetails .= "  • ✅ <code>{$nodeRemark}</code>: {$status}\n";
-                } else {
-                    $nodeDetails .= "  • ❌ <code>{$nodeRemark}</code>: {$status}\n";
-                }
-            }
-
-            $text .= "\n<b>📡 Nodes ({$healthy}/{$totalNodes} Online):</b>\n{$nodeDetails}";
-        }
+        $text .= "<b>⚰️ Expired Stats:</b> {$expiredStatsEmoji}\n";
 
         return $text;
     }
@@ -143,7 +130,6 @@ class Formatter {
      */
     public static function statsCard(array $server, array $stats): string {
         $remark = htmlspecialchars($server['remark']);
-        $totalTraffic = self::bytes($stats['total_traffic'] ?? 0);
 
         $text = "📊 <b>Statistics Dashboard - {$remark}</b>\n\n";
         $text .= "📊 <b>Total:</b> <code>{$stats['total_users']}</code>\n";
@@ -156,41 +142,9 @@ class Formatter {
         $text .= "🕐 <b>Last Day Sub-Updated/Online:</b> <code>" . ($stats['update_day'] ?? 0) . "</code>/<code>" . ($stats['online_day'] ?? 0) . "</code>\n";
         $text .= "📆 <b>Last Week Sub-Updated/Online:</b> <code>" . ($stats['update_week'] ?? 0) . "</code>/<code>" . ($stats['online_week'] ?? 0) . "</code>\n";
         $text .= "📅 <b>Last Month Sub-Updated/Online:</b> <code>" . ($stats['update_month'] ?? 0) . "</code>/<code>" . ($stats['online_month'] ?? 0) . "</code>\n";
-        $text .= "📈 <b>Total Traffic Used:</b> <code>{$totalTraffic}</code>\n";
 
-        if (!empty($stats['today_expired'])) {
-            $text .= "\n⚰️ <b>Expired in 24 Hours:</b> " . implode(', ', $stats['today_expired']) . "\n";
-        }
-
-        if (!empty($stats['system'])) {
-            $sys = $stats['system'];
-            $text .= "\n🖥️ <b>Host System:</b>\n";
-            if (isset($sys['cpu_usage'])) {
-                $text .= "• <b>CPU:</b> <code>{$sys['cpu_usage']}%</code>\n";
-            }
-            if (isset($sys['mem_used']) && isset($sys['mem_total'])) {
-                $used = self::bytes($sys['mem_used']);
-                $tot = self::bytes($sys['mem_total']);
-                $text .= "• <b>RAM:</b> <code>{$used} / {$tot}</code>\n";
-            }
-        }
-
-        return $text;
-    }
-
-    /**
-     * Format bulk created users summary card.
-     */
-    public static function bulkCreatedCard(array $server, array $users): string {
-        $count = count($users);
-        $text = "🎉 <b>Batch Creation Finished!</b>\n";
-        $text .= "Successfully generated <code>{$count}</code> accounts on <b>{$server['remark']}</b>:\n\n";
-
-        foreach ($users as $u) {
-            $uname = htmlspecialchars($u['username']);
-            $sub = !empty($u['subscription_url']) ? "\n  <code>{$u['subscription_url']}</code>" : '';
-            $text .= "• 👤 <code>{$uname}</code>{$sub}\n";
-        }
+        $expiredList = !empty($stats['today_expired']) ? implode(', ', $stats['today_expired']) : '<code>None</code>';
+        $text .= "⚰️ <b>List of users:</b> {$expiredList}\n";
 
         return $text;
     }
@@ -200,8 +154,17 @@ class Formatter {
      */
     public static function templateCard(array $template): string {
         $remark = htmlspecialchars($template['remark']);
+        $isActive = !isset($template['is_active']) || !empty($template['is_active']);
+        $dateType = $template['date_type'] ?? 'fixed';
+        $dateTypeLabel = match ($dateType) {
+            'unlimited' => 'Unlimited',
+            'onhold' => 'After First Use',
+            default => 'Fixed Date',
+        };
         return "📋 <b>Template:</b> <code>{$remark}</code> (ID: <code>{$template['id']}</code>)\n\n" .
+               "• <b>Active:</b> <code>" . ($isActive ? 'Yes' : 'No') . "</code>\n" .
                "• <b>Data Limit:</b> <code>{$template['data_limit']} GB</code>\n" .
-               "• <b>Date Limit:</b> <code>{$template['date_limit']} Days</code>\n";
+               "• <b>Date Limit:</b> <code>{$template['date_limit']} Days</code>\n" .
+               "• <b>Date Type:</b> <code>{$dateTypeLabel}</code>\n";
     }
 }

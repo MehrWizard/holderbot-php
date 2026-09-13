@@ -50,14 +50,12 @@ class Keyboards {
                 ],
                 [
                     ['text' => '➕ Create User', 'callback_data' => "new_usr:{$serverId}"],
-                    ['text' => '📦 Bulk Create', 'callback_data' => "bulk_usr:{$serverId}"],
                 ],
                 [
                     ['text' => '⚡ Actions', 'callback_data' => "act_menu:{$serverId}"],
                     ['text' => '📊 Statistics', 'callback_data' => "stats:{$serverId}"],
                 ],
                 [
-                    ['text' => '📡 Node Health', 'callback_data' => "nodes:{$serverId}"],
                     ['text' => '⚙️ Settings', 'callback_data' => "srv_cfg:{$serverId}"],
                 ],
                 [
@@ -72,29 +70,27 @@ class Keyboards {
      */
     public static function serverSettings(array $server): array {
         $id = $server['id'];
-        $actText = !empty($server['is_active']) ? '🟢 Enabled' : '🔴 Disabled';
-        $monText = !empty($server['node_monitoring']) ? '🟢 Monitor: ON' : '🔴 Monitor: OFF';
-        $resText = !empty($server['node_restart']) ? '🟢 Restart: ON' : '🔴 Restart: OFF';
-        $expText = !empty($server['expired_stats']) ? '🟢 Expired Report: ON' : '🔴 Expired Report: OFF';
+        $monLabel = !empty($server['node_monitoring']) ? '📡 Monitoring Nodes' : '📡 Monitoring Nodes';
+        $resLabel = !empty($server['node_restart']) ? '🔄 Auto Restart Nodes' : '🔄 Auto Restart Nodes';
+        $expLabel = !empty($server['expired_stats']) ? '⚰️ Expired Stats' : '⚰️ Expired Stats';
 
         return [
             'inline_keyboard' => [
                 [
-                    ['text' => "Status: {$actText}", 'callback_data' => "tgl_srv_act:{$id}"],
+                    ['text' => $monLabel, 'callback_data' => "tgl_srv_mon_ask:{$id}"],
                 ],
                 [
-                    ['text' => $monText, 'callback_data' => "tgl_srv_mon:{$id}"],
-                    ['text' => $resText, 'callback_data' => "tgl_srv_res:{$id}"],
+                    ['text' => $resLabel, 'callback_data' => "tgl_srv_res_ask:{$id}"],
                 ],
                 [
-                    ['text' => $expText, 'callback_data' => "tgl_srv_exp:{$id}"],
+                    ['text' => $expLabel, 'callback_data' => "tgl_srv_exp_ask:{$id}"],
                 ],
                 [
-                    ['text' => '✏️ Edit Remark', 'callback_data' => "srv_edit_remark:{$id}"],
+                    ['text' => '🏷 Remark', 'callback_data' => "srv_edit_remark:{$id}"],
                     ['text' => '🔑 Edit Credentials', 'callback_data' => "srv_edit_creds:{$id}"],
                 ],
                 [
-                    ['text' => '🗑️ Delete Server', 'callback_data' => "del_srv_ask:{$id}"],
+                    ['text' => '🗑 Remove', 'callback_data' => "del_srv_ask:{$id}"],
                 ],
                 [
                     ['text' => '« Server Menu', 'callback_data' => "srv:{$id}"],
@@ -111,16 +107,15 @@ class Keyboards {
         array $users,
         int $page = 1,
         bool $hasMore = false,
-        string $filter = 'all'
+        string $filter = 'active'
     ): array {
         $inlineKeyboard = [];
 
-        // Filter buttons row
+        // Filter buttons row (Active / Limited / Expired only - no "show all" reset)
         $inlineKeyboard[] = [
-            ['text' => ($filter === 'all' ? '🔘 All' : 'All'), 'callback_data' => "users:{$serverId}:1:all"],
             ['text' => ($filter === 'active' ? '🔘 Active' : 'Active'), 'callback_data' => "users:{$serverId}:1:active"],
-            ['text' => ($filter === 'expired' ? '🔘 Expired' : 'Expired'), 'callback_data' => "users:{$serverId}:1:expired"],
             ['text' => ($filter === 'limited' ? '🔘 Limited' : 'Limited'), 'callback_data' => "users:{$serverId}:1:limited"],
+            ['text' => ($filter === 'expired' ? '🔘 Expired' : 'Expired'), 'callback_data' => "users:{$serverId}:1:expired"],
         ];
 
         // User list rows
@@ -299,13 +294,13 @@ class Keyboards {
                 ],
                 [
                     ['text' => '⏱️ Edit Date Limit', 'callback_data' => "tmpl_edit_date:{$tmplId}"],
-                    ['text' => $toggleText, 'callback_data' => "tmpl_tgl_act:{$tmplId}"],
+                    ['text' => $toggleText, 'callback_data' => "tmpl_tgl_ask:{$tmplId}"],
                 ],
                 [
                     ['text' => '🗑️ Delete Template', 'callback_data' => "tmpl_del_ask:{$tmplId}"],
                 ],
                 [
-                    ['text' => '« Back to Templates', 'callback_data' => 'tmpls'],
+                    ['text' => '🏛️ Home', 'callback_data' => 'home'],
                 ],
             ],
         ];
@@ -340,6 +335,20 @@ class Keyboards {
     }
 
     /**
+     * Date Type Selector for templates (no server/username context needed).
+     */
+    public static function templateDateTypeSelector(string $prefix, string $cancelData): array {
+        return [
+            'inline_keyboard' => [
+                [['text' => '♾️ Unlimited (No Expiry)', 'callback_data' => "{$prefix}:unlimited"]],
+                [['text' => '📅 Fixed Date (Days from Now)', 'callback_data' => "{$prefix}:fixed"]],
+                [['text' => '🚀 After First Use', 'callback_data' => "{$prefix}:onhold"]],
+                [['text' => '❌ Cancel', 'callback_data' => $cancelData]],
+            ],
+        ];
+    }
+
+    /**
      * Charge Confirmation Options Keyboard (Normal / Reset / Additive).
      */
     public static function chargeConfirmOptions(int $serverId, string $username, float $dataLimit, int $dateLimit): array {
@@ -357,7 +366,7 @@ class Keyboards {
     /**
      * Template selection keyboard for user creation or recharging.
      */
-    public static function templateSelector(int $serverId, array $templates, string $prefix = 'use_tmpl'): array {
+    public static function templateSelector(int $serverId, array $templates, string $prefix = 'use_tmpl', bool $allowCustom = true): array {
         $rows = [];
         foreach ($templates as $t) {
             if (isset($t['is_active']) && empty($t['is_active'])) {
@@ -373,10 +382,12 @@ class Keyboards {
             ];
         }
 
-        $rows[] = [
-            ['text' => '✏️ Custom Values', 'callback_data' => "{$prefix}_custom:{$serverId}"],
-            ['text' => '❌ Cancel', 'callback_data' => "srv:{$serverId}"],
-        ];
+        $lastRow = [];
+        if ($allowCustom) {
+            $lastRow[] = ['text' => '✏️ Custom Values', 'callback_data' => "{$prefix}_custom:{$serverId}"];
+        }
+        $lastRow[] = ['text' => '❌ Cancel', 'callback_data' => "srv:{$serverId}"];
+        $rows[] = $lastRow;
 
         return ['inline_keyboard' => $rows];
     }
