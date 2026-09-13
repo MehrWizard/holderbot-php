@@ -228,50 +228,11 @@ class StateHandlers {
             return true;
         }
 
-        if (($doc['file_size'] ?? 0) > 1048576) {
-            tg_send_message($chatId, 'Import exceeds 1 MiB. Split the JSON file into smaller batches.', Keyboards::cancel("srv:{$serverId}"));
+        if (($doc['file_size'] ?? 0) > 8388608) {
+            tg_send_message($chatId, 'Import exceeds 8 MiB. Split the JSON file into smaller batches.', Keyboards::cancel("srv:{$serverId}"));
             return true;
         }
-        $content = tg_download_file($doc['file_id']);
-        if ($content !== null && strlen($content) > 1048576) {
-            tg_send_message($chatId, 'Import exceeds 1 MiB. Split the JSON file into smaller batches.', Keyboards::cancel("srv:{$serverId}"));
-            return true;
-        }
-        if (!$content) {
-            tg_send_message($chatId, "❌ Invalid json.", Keyboards::cancel("srv:{$serverId}"));
-            return true;
-        }
-
-        $parsed = json_decode($content, true);
-        if (!is_array($parsed) || empty($parsed) || !array_is_list($parsed)) {
-            tg_send_message($chatId, "❌ Invalid json.", Keyboards::cancel("srv:{$serverId}"));
-            return true;
-        }
-
-        if (count($parsed) > 1000) {
-            tg_send_message($chatId, 'Import exceeds 1000 users. Split the JSON file into smaller batches.', Keyboards::cancel("srv:{$serverId}"));
-            return true;
-        }
-
-        // Every entry must be fully valid or the whole file is rejected.
-        $validDateTypes = ['unlimited', 'now', 'after first use'];
-        foreach ($parsed as $item) {
-            if (
-                !is_array($item)
-                || empty($item['username']) || !is_string($item['username'])
-                || !isset($item['datalimit']) || !is_numeric($item['datalimit'])
-                || !isset($item['datelimit']) || !is_numeric($item['datelimit'])
-                || !is_finite((float)$item['datalimit']) || (float)$item['datalimit'] < 0 || (float)$item['datalimit'] > PHP_INT_MAX / (1024 ** 3)
-                || !is_finite((float)$item['datelimit']) || (float)$item['datelimit'] < 0 || (float)$item['datelimit'] > (PHP_INT_MAX - time()) / 86400
-                || !isset($item['datetypes']) || !is_string($item['datetypes']) || !in_array($item['datetypes'], $validDateTypes, true)
-            ) {
-                tg_send_message($chatId, "❌ Invalid json.", Keyboards::cancel("srv:{$serverId}"));
-                return true;
-            }
-        }
-
-        $data['uploaded_json'] = $parsed;
-        $count = count($parsed);
+        $data['import_file_id'] = $doc['file_id'];
 
         require_once __DIR__ . '/callbacks.php';
         CallbackHandlers::renderConfigSelection($chatId, 0, $serverId, $userId, $data, 'json_ready');

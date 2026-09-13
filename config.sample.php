@@ -46,6 +46,7 @@ return [
     'queue_path' => __DIR__ . '/data/queue',
     'queue_budget_seconds' => 15,
     'queue_steps' => 10,
+    'queue_retention_days' => 7,
 
     // -------------------------------------------------------------------------
     // Storage Engine Settings

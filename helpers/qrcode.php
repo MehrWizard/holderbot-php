@@ -614,6 +614,10 @@ class QrGenerator {
         $backgroundPath = $config['qr_background'] ?? (getenv('QR_BACKGROUND') ?: '');
         if (!$backgroundPath || !is_file($backgroundPath)) return $png;
         if (!function_exists('imagecreatefromstring')) throw new RuntimeException('QR backgrounds require the PHP GD extension');
+        $dimensions = @getimagesize($backgroundPath);
+        if (!$dimensions || filesize($backgroundPath)>8388608 || $dimensions[0]*$dimensions[1]>8000000) {
+            throw new RuntimeException('QR background exceeds 8 MiB or 8 million pixels');
+        }
         $background = @imagecreatefromstring(file_get_contents($backgroundPath));
         if (!$background) return $png;
         $width = imagesx($background); $height = imagesy($background);

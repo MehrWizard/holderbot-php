@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/queue.php';
 
 /** Periodic jobs corresponding to app/settings/tasks/items. */
 class BackgroundTasks {
@@ -61,19 +62,28 @@ class BackgroundTasks {
             foreach ($admins as $admin) tg_send_message($admin, $text);
         }
     }
+    /** Schedule only; all panel and Telegram calls run in bounded queue steps. */
     public static function tick(bool $forceExpired = false): void {
         global $config;
-        $servers = Storage::getServers();
-        $admins = $config['admin_ids'] ?? [];
-        if (Storage::cacheGet('access_refresh_due') === null) {
-            self::refreshAccess($servers);
-            Storage::cacheSet('access_refresh_due', true, 8 * 3600);
+        $admins = array_values(array_unique(array_map('intval', $config['admin_ids'] ?? [])));
+        foreach (Storage::getServers() as $server) {
+            self::schedule('access', $server, [], (string)intdiv(time(), 8 * 3600));
+            if (!empty($server['node_monitoring'])) self::schedule('monitor', $server, ['recipients'=>$admins], (string)intdiv(time(), 30));
+            if (!empty($server['expired_stats']) && ($forceExpired || (int)date('G') >= 6)) {
+                self::schedule('expiry', $server, ['recipients'=>$admins], $forceExpired ? 'forced:' . time() : date('Y-m-d'));
+            }
         }
-        self::monitorNodes($servers, $admins);
-        $today = date('Y-m-d');
-        if ($forceExpired || ((int)date('G') >= 6 && Storage::cacheGet('last_expired_check_date') !== $today)) {
-            self::expiredReport($servers, $admins);
-            Storage::cacheSet('last_expired_check_date', $today, 2 * 86400);
+    }
+    private static function schedule(string $kind, array $server, array $params, string $period): void {
+        $key='queue_schedule_'.$kind.'_'.$server['id'];
+        $previous=Storage::cacheGet($key);
+        if ($previous) {
+            $job=BatchQueue::get($previous['id']);
+            // Coalesce missed ticks instead of accumulating a monitoring backlog.
+            if ($job && !in_array($job['status'], ['completed','failed','cancelled'], true)) return;
+            if ($previous['period']===$period) return;
         }
+        $job=BatchQueue::enqueue($kind,$server,$params,0,0,'schedule:'.$kind.':'.$period);
+        Storage::cacheSet($key,['id'=>$job['id'],'period'=>$period],30*86400);
     }
 }

@@ -105,8 +105,8 @@ check(!$requests && Storage::getState(42)===null && str_contains(lastText(),'Ope
 $recent=BatchQueue::recent(42,42); finishJob($recent[0]['id']);
 // Reject oversized imports before downloading or filling wizard storage.
 Storage::setState(42,'create_user_json',['server_id'=>1]);
-StateHandlers::handle(['chat'=>['id'=>42],'from'=>['id'=>42],'document'=>['file_id'=>'fixture','file_name'=>'large.json','file_size'=>1048577]],Storage::getState(42));
-check(str_contains(lastText(),'exceeds 1 MiB'), 'Oversized import accepted');
+StateHandlers::handle(['chat'=>['id'=>42],'from'=>['id'=>42],'document'=>['file_id'=>'fixture','file_name'=>'large.json','file_size'=>8388609]],Storage::getState(42));
+check(str_contains(lastText(),'exceeds 8 MiB'), 'Oversized import accepted');
 // Restore default test transport after native timeout checks above.
 // Same-server jobs must not mutate while an older snapshot is still being built.
 $db=[]; for($i=0;$i<51;$i++) $db['ordered'.$i]=array_merge($raw,['username'=>'ordered'.$i]);
@@ -116,9 +116,9 @@ BatchQueue::run(2,1);
 check(BatchQueue::get($second['id'])['page']===1 && BatchQueue::get($first['id'])['page']===2, 'Later same-server job ran during discovery');
 $first=finishJob($first['id']); $second=finishJob($second['id']);
 check($first['success']===51 && $second['success']===51 && !$db, 'Same-server jobs did not preserve submission order');
-// All import entries are validated before any job or state payload is created.
-Storage::setState(42,'create_user_json',['server_id'=>1]);
-$document='[{"username":"invalid","datalimit":1e999,"datelimit":1,"datetypes":"now"}]';
-StateHandlers::handle(['chat'=>['id'=>42],'from'=>['id'=>42],'document'=>['file_id'=>'fixture','file_name'=>'users.json']],Storage::getState(42));
-check(lastText()==='❌ Invalid json.' && Storage::getState(42)['step']==='create_user_json', 'Non-finite import damaged state');
+// Non-finite import values are rejected before creation.
+$invalid=false;
+try { QueueImport::validate(['username'=>'invalid','datalimit'=>INF,'datelimit'=>1,'datetypes'=>'now']); }
+catch (LengthException $e) { $invalid=true; }
+check($invalid,'Non-finite import accepted');
 echo 'PASS: '.($checks-$before)." queue assertions\n";

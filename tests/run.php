@@ -17,8 +17,8 @@ Storage::init();
 register_shutdown_function(function() use ($path) { if (is_dir($path . '.queue')) { $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($path . '.queue', FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST); foreach ($it as $file) { $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname()); } rmdir($path . '.queue'); } foreach ([$path, $path . '.lock'] as $file) if (is_file($file)) unlink($file); });
 $messages = []; $requests = []; $checks = 0;
 function check(bool $condition, string $message): void { global $checks; $checks++; if (!$condition) throw new RuntimeException($message); }
-function tg_send_message($chat, $text, $kb = null): array { global $messages; $messages[] = ['text' => $text, 'kb' => $kb]; return ['ok' => true, 'result' => ['message_id' => count($messages)]]; }
-function tg_edit_message($chat, $id, $text, $kb = null): array { return tg_send_message($chat, $text, $kb); }
+function tg_send_message($chat, $text, $kb = null): ?array { global $messages, $sendResults; $messages[] = ['chat'=>$chat, 'text' => $text, 'kb' => $kb]; if (!empty($sendResults)) return array_shift($sendResults); return ['ok' => true, 'result' => ['message_id' => count($messages)]]; }
+function tg_edit_message($chat, $id, $text, $kb = null): ?array { return tg_send_message($chat, $text, $kb); }
 function tg_answer_callback($id, $text = null, $alert = false): array { return ['ok' => true]; }
 function tg_delete_message($chat, $id): array { return ['ok' => true]; }
 function tgbot($method, $params = []): array { return ['ok' => true, 'result' => ['username' => 'test_bot']]; }
@@ -91,7 +91,7 @@ say('2.5'); check(lastText()==='❌ Invalid, Just use [0-9]','Reject fractional 
 say('10'); click('crt_dt_type:1:abcd:unlimited');
 check(Storage::getState(42)['step']==='create_user_configs','Unlimited -> config selection');
 click('usr_cfg:none:1'); click('usr_cfg_done:1'); check(!isset($db['abcd']), 'Empty selection must not create');
-click('usr_cfg:all:1'); click('usr_cfg_done:1'); check(isset($db['abcd']), 'Create user workflow');
+click('usr_cfg:all:1'); click('usr_cfg_done:1'); BatchQueue::run(10,100); check(isset($db['abcd']), 'Create user workflow');
 check(count(QrGenerator::$photos)===1 && str_starts_with(QrGenerator::$photos[0]['caption'],'• <b>Username:'), 'Created photo caption');
 click('act:1:abcd:cfg'); click('cfg_pick:none:1'); click('cfg_save:1:abcd'); check(Storage::getState(42)!==null,'Empty save must keep selection state');
 click('cfg_pick:tgl:1:b'); click('cfg_save:1:abcd'); check($db['abcd']['inbounds']===['vless'=>['b']], 'Config selection roundtrip');

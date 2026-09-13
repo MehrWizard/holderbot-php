@@ -297,11 +297,7 @@ class CallbackHandlers {
                 $dataLimit = (float)($state['data']['data_limit'] ?? 0);
                 $dateLimit = (int)($state['data']['date_limit'] ?? 0);
                 $dateType = $state['data']['date_type'] ?? 'fixed';
-                Storage::clearState($userId);
-
-                $updated = PanelManager::chargeUser($server, $username, $dataLimit, $dateLimit, $resetUsage, $additive, $dateType);
-                tg_answer_callback($id);
-                tg_edit_message($chatId, $messageId, $updated ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
+                self::queueBatch('recharge', $server, ['username'=>$username, 'data_limit'=>$dataLimit, 'date_limit'=>$dateLimit, 'reset'=>$resetUsage, 'additive'=>$additive, 'date_type'=>$dateType], $chatId, $messageId, $userId, $id);
             } else {
                 tg_answer_callback($id, "❌ Not Found.", true);
             }
@@ -336,7 +332,7 @@ class CallbackHandlers {
             elseif ($action === 'rvk') {
                 $updated = PanelManager::revokeSub($server, $username);
                 $ok = $updated !== null;
-                if ($updated) QrGenerator::sendQrPhoto($chatId, $updated['subscription_url'], Formatter::userInfo($server, $updated));
+                if ($updated) BatchQueue::photo($chatId, $userId, $updated['subscription_url'], Formatter::userInfo($server, $updated), 'revoke-qr:'.$id);
             }
             tg_answer_callback($id);
             tg_edit_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
@@ -673,11 +669,7 @@ class CallbackHandlers {
                 tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::cancel('home'));
                 return;
             }
-            tg_answer_callback($id);
-            tg_edit_message($chatId, $messageId, "⏳");
-            $stats = PanelManager::getServerStats($server);
-            $card = Formatter::statsCard($server, $stats);
-            tg_edit_message($chatId, $messageId, $card, Keyboards::cancel("srv:{$serverId}"));
+            self::queueBatch('stats', $server, [], $chatId, $messageId, $userId, $id);
             return;
         }
 
@@ -1400,11 +1392,7 @@ class CallbackHandlers {
                     return;
                 }
                 tg_answer_callback($callbackId, "Generating QR code...");
-                QrGenerator::sendQrPhoto(
-                    $chatId,
-                    $user['subscription_url'],
-                    Formatter::userInfo($server, $user)
-                );
+                BatchQueue::photo($chatId, $userId, $user['subscription_url'], Formatter::userInfo($server, $user), 'qr:'.$callbackId);
                 break;
 
             case 'del':
@@ -1503,40 +1491,11 @@ class CallbackHandlers {
             return;
         }
 
-        if (!empty($stateData['uploaded_json']) || (int)($stateData['count'] ?? 1) > 1) {
-            self::queueBatch('create', $server, $stateData, $chatId, $messageId, $userId, $callbackId);
+        if (!empty($stateData['import_file_id'])) {
+            self::queueBatch('import', $server, $stateData, $chatId, $messageId, $userId, $callbackId);
             return;
         }
-
-        Storage::clearState($userId);
-        tg_answer_callback($callbackId, "Creating user(s)...");
-        tg_edit_message($chatId, $messageId, "⏳");
-
-        $admin = !empty($stateData['admin']) ? $stateData['admin'] : null;
-        $selectedConfigs = $stateData['selected_configs'] ?? [];
-
-        $count = max(1, (int)($stateData['count'] ?? 1));
-        $baseName = $stateData['username'] ?? 'user';
-        $suffixStart = (int)($stateData['usersuffix'] ?? 1);
-        $dataLimit = (float)($stateData['data_limit'] ?? 0);
-        $expireDays = (int)($stateData['date_limit'] ?? 0);
-        $dateType = $stateData['date_type'] ?? 'fixed';
-
-        $createdList = [];
-        for ($i = 0; $i < $count; $i++) {
-            $uname = ($count === 1) ? $baseName : ($baseName . ($suffixStart + $i));
-            $created = PanelManager::createUser($server, $uname, $dataLimit, $expireDays, null, $selectedConfigs, $dateType, $admin);
-            if ($created) {
-                $createdList[] = $created;
-                if (!empty($created['subscription_url'])) {
-                    QrGenerator::sendQrPhoto($chatId, $created['subscription_url'], Formatter::userInfo($server, $created));
-                }
-            } else {
-                tg_send_message($chatId, "❌ Failed to create " . Formatter::escape($uname) . ".");
-            }
-        }
-
-        tg_send_message($chatId, "Let's back...", Keyboards::cancel("srv:{$serverId}"));
+        self::queueBatch('create', $server, $stateData, $chatId, $messageId, $userId, $callbackId);
     }
 
     private static function executeUserDelete(

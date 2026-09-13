@@ -225,6 +225,15 @@ class PanelManager {
         $user = self::getUser($server, $username);
         if (!$user) return null;
         if ($resetUsage && !self::resetUsage($server, $username)) return null;
+        $payload = self::rechargePayload($server, $username, $user, $dataLimitGb, $expireDays, $additive, $dateType);
+        $resp = $server['type'] === 'marzneshin'
+            ? MarzneshinClient::modifyUser($server, $username, $payload)
+            : MarzbanClient::modifyUser($server, $username, $payload);
+        return $resp && isset($resp['username']) ? self::normalizeUser($server, $resp) : null;
+    }
+
+    /** Absolute desired values can be persisted before a queued recharge. */
+    public static function rechargePayload(array $server, string $username, array $user, float|int $dataLimitGb, int $expireDays, bool $additive, string $dateType): array {
         $payload = self::datePayload($server, $username, $expireDays, $dateType);
         $bytes = (int)$dataLimitGb * (1024 ** 3);
         $currentBytes = $user['data_limit_bytes'];
@@ -245,10 +254,7 @@ class PanelManager {
                 elseif ($dateType === 'fixed') $payload['expire_date'] = gmdate('Y-m-d\TH:i:s\Z', time() + $remaining + $seconds);
             }
         }
-        $resp = $server['type'] === 'marzneshin'
-            ? MarzneshinClient::modifyUser($server, $username, $payload)
-            : MarzbanClient::modifyUser($server, $username, $payload);
-        return $resp && isset($resp['username']) ? self::normalizeUser($server, $resp) : null;
+        return $payload;
     }
 
     /** Payload shared by normal recharge and date-only edits. */
@@ -533,7 +539,7 @@ class PanelManager {
     /**
      * Fetch comprehensive server statistics with complete parity to Python HolderBot.
      */
-    public static function getServerStats(array $server): array {
+    public static function statsForUsers(array $server, array $users, int $now, string $botUsername = ''): array {
         $total = 0;
         $active = 0;
         $disabled = 0;
@@ -548,16 +554,6 @@ class PanelManager {
         $updateWeek = 0;
         $updateMonth = 0;
         $todayExpired = [];
-
-        $now = time();
-        $page = 1;
-        $size = self::pageSize($server);
-        $botUsername = self::getBotUsername();
-
-        // No page cap - walks every user, same as the original bot.
-        while (true) {
-            $users = self::getUsers($server, $page, $size);
-            if (empty($users)) break;
 
             foreach ($users as $u) {
                 $total++;
@@ -609,10 +605,6 @@ class PanelManager {
                 }
             }
 
-            if (count($users) < $size) break;
-            $page++;
-        }
-
         return [
             'total_users'   => $total,
             'active_users'  => $active,
@@ -629,6 +621,18 @@ class PanelManager {
             'update_month'  => $updateMonth,
             'today_expired' => $todayExpired,
         ];
+    }
+
+    public static function getServerStats(array $server): array {
+        $stats = self::statsForUsers($server, [], time());
+        $now = time(); $size = self::pageSize($server); $bot = self::getBotUsername();
+        for ($page = 1; ; $page++) {
+            $users = self::getUsers($server, $page, $size);
+            $part = self::statsForUsers($server, $users, $now, $bot);
+            foreach ($part as $key => $value) $stats[$key] = is_array($value) ? array_merge($stats[$key], $value) : $stats[$key] + $value;
+            if (count($users) < $size) break;
+        }
+        return $stats;
     }
 
     /**

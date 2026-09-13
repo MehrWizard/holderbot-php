@@ -1,9 +1,14 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/request_budget.php';
+require_once __DIR__ . '/queue_index.php';
+require_once __DIR__ . '/queue_workloads.php';
+
+class QueueCapacityException extends RuntimeException {}
 
 /** Local durable spool shared by JSON and MySQL installations on one host. */
 class BatchQueue {
+    use QueueIndex, QueueWorkloads;
     public const PAGE_SIZE = 50;
     public const MAX_TARGETS = 10000;
     private const TERMINAL = ['completed', 'failed', 'cancelled'];
@@ -33,7 +38,9 @@ class BatchQueue {
         if (!rename($tmp, $path)) { @unlink($tmp); throw new RuntimeException('Cannot publish queue file'); }
     }
     private static function save(string $path, array $value): void {
+        if (basename($path) === 'job.json') self::indexBeforeSave($value);
         self::atomic($path, json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+        if (basename($path) === 'job.json') self::indexAfterSave($value);
     }
     private static function read(string $path): array {
         $value = json_decode(file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
@@ -46,15 +53,16 @@ class BatchQueue {
     public static function get(string $id): ?array {
         if (!preg_match('/^[a-f0-9]{32}$/D', $id)) return null;
         $file = self::directory() . '/' . $id . '/job.json';
+        if (is_file($file)) return self::read($file);
+        $file = self::directory() . '/tombstones/' . substr($id, 0, 2) . '/' . $id . '.json';
         return is_file($file) ? self::read($file) : null;
     }
     public static function recent(int|string $chat, int $user): array {
+        $path = self::indexDirectory('history') . '/' . hash('sha256', $chat . ':' . $user) . '.json';
         $jobs = [];
-        foreach (glob(self::directory() . '/*/job.json') ?: [] as $file) {
-            $job = self::read($file);
-            if ((string)$job['chat_id'] === (string)$chat && (int)$job['user_id'] === $user) $jobs[] = $job;
+        foreach (is_file($path) ? self::read($path) : [] as $id) {
+            if ($job = self::get($id)) $jobs[] = $job;
         }
-        usort($jobs, fn($a, $b) => $b['created_at'] <=> $a['created_at']);
         return array_slice($jobs, 0, 10);
     }
     public static function cancel(string $id): void {
@@ -62,7 +70,7 @@ class BatchQueue {
         if ($job && !in_array($job['status'], self::TERMINAL, true)) self::atomic(self::directory() . '/' . $id . '/cancel', '1');
     }
     public static function enqueue(string $kind, array $server, array $params, int|string $chat, int $user, string $submission): array {
-        if (!in_array($kind, ['delete', 'transfer', 'config', 'create', 'admin_status'], true)) throw new InvalidArgumentException('Unsupported queue operation');
+        if (!in_array($kind, ['delete', 'transfer', 'config', 'create', 'admin_status', 'stats', 'expiry', 'access', 'monitor', 'outbox', 'import', 'recharge'], true)) throw new InvalidArgumentException('Unsupported queue operation');
         if ($kind === 'create' && max((int)($params['count'] ?? 1), count($params['uploaded_json'] ?? [])) > self::MAX_TARGETS) throw new InvalidArgumentException('Too many targets');
         $dir = self::directory();
         // A repeated press on the same submitted message has the same identity.
@@ -71,6 +79,7 @@ class BatchQueue {
         if (!$lock || !flock($lock, LOCK_EX)) throw new RuntimeException('Cannot lock queue submission');
         try {
             if ($existing = self::get($id)) return $existing;
+            if (count(glob(self::indexDirectory('ready') . '/*') ?: []) >= ($kind==='outbox' ? 2000 : 1500)) throw new QueueCapacityException('Queue capacity reached');
             $jobDir = $dir . '/' . $id;
             if (!is_dir($jobDir) && !mkdir($jobDir, 0700)) throw new RuntimeException('Cannot create job');
             $count = 0;
@@ -84,11 +93,12 @@ class BatchQueue {
                 } else $count = max(1, (int)($params['count'] ?? 1));
             }
             $job = ['id'=>$id, 'kind'=>$kind, 'server_id'=>(int)$server['id'], 'server_fingerprint'=>self::fingerprint($server),
-                'params'=>$params, 'chat_id'=>$chat, 'user_id'=>$user, 'status'=>in_array($kind, ['create','admin_status'], true) ? 'running' : 'discovering',
+                'params'=>$params, 'chat_id'=>$chat, 'user_id'=>$user, 'status'=>in_array($kind, ['delete','transfer','config'], true) ? 'discovering' : 'running',
                 'created_at'=>microtime(true), 'updated_at'=>microtime(true), 'page'=>1, 'pages'=>0, 'cursor'=>0, 'total'=>$kind === 'admin_status' ? 1 : $count,
                 'success'=>0, 'unconfirmed'=>0, 'skipped'=>0, 'delivery_failed'=>0, 'owner_failed'=>0, 'read_failures'=>0, 'next_run'=>0,
-                'active'=>null, 'pending'=>null, 'notification'=>'pending'];
+                'active'=>null, 'pending'=>null, 'notification'=>($kind === 'outbox' || $user === 0) ? 'suppressed' : 'pending'];
             // Publish metadata only after all immutable import pages exist.
+            self::remember($job);
             self::save($jobDir . '/job.json', $job);
             return $job;
         } finally { flock($lock, LOCK_UN); fclose($lock); }
@@ -104,6 +114,7 @@ class BatchQueue {
         $text .= "\nProcessed: {$job['cursor']}/{$job['total']}\nConfirmed: {$job['success']}\nNot confirmed: {$job['unconfirmed']}\nSkipped: {$job['skipped']}";
         if ($job['owner_failed']) $text .= "\nOwner assignments not confirmed: {$job['owner_failed']}";
         if ($job['delivery_failed']) $text .= "\nQR deliveries not confirmed: {$job['delivery_failed']}";
+        if (isset($job['summary_id'])) $text .= "\nSummary delivery job: " . $job['summary_id'];
         if (isset($job['error'])) $text .= "\n" . htmlspecialchars(substr($job['error'], 0, 600), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         if ($job['unconfirmed'] || $job['owner_failed']) $text .= "\nCheck the panel before repeating unconfirmed operations.";
         return $text;
@@ -124,26 +135,31 @@ class BatchQueue {
         RequestBudget::$deadline = microtime(true) + $seconds;
         $processed = 0;
         try {
+            self::initializeIndex();
+            if (!is_file($dir.'/.indexed')) { self::save($dir.'/heartbeat.json',['last_run'=>time(),'migrating'=>true]); return 0; }
+            self::save($dir . '/heartbeat.json', ['last_run'=>time(), 'pid'=>getmypid()]);
             do {
-                $jobs = [];
-                foreach (glob($dir . '/*/job.json') ?: [] as $file) {
+                $jobs = []; $first = []; $outboxFirst = [];
+                foreach (glob(self::indexDirectory('ready') . '/*') ?: [] as $file) {
                     try {
-                        $job = self::read($file);
-                        if ($job['next_run'] <= time() && (!in_array($job['status'], self::TERMINAL, true) || $job['notification'] === 'pending')) $jobs[] = $job;
-                    } catch (Throwable $e) { error_log('Cannot read queue job ' . basename(dirname($file))); }
+                        $job = self::get(basename($file));
+                        if (!$job) { if (filemtime($file)<time()-300) unlink($file); continue; }
+                        if (in_array($job['status'], self::TERMINAL, true) && $job['notification'] !== 'pending') { unlink($file); continue; }
+                        if (is_file($dir . '/' . $job['id'] . '/cancel')) $job['next_run'] = 0;
+                        if ($job['next_run'] <= time()) $jobs[] = $job;
+                        if ($job['kind']==='outbox') {
+                            $chat=(string)$job['chat_id'];
+                            if (!isset($outboxFirst[$chat]) || $job['created_at']<$outboxFirst[$chat]['created_at']) $outboxFirst[$chat]=$job;
+                        }
+                        if (in_array($job['kind'], ['delete','transfer','config','create','admin_status','import','recharge'], true) && !in_array($job['status'], self::TERMINAL, true)) {
+                            $key = $job['server_id'];
+                            if (!isset($first[$key]) || [$job['created_at'], $job['id']] < [$first[$key]['created_at'], $first[$key]['id']]) $first[$key] = $job;
+                        }
+                    } catch (Throwable $e) { throw new RuntimeException('Corrupt queue job ' . basename($file) . '; repair before resuming worker', 0, $e); }
                 }
-                // Keep one active job per server so our own mutations cannot shift
-                // another job's paginated discovery. Other servers remain fair.
-                $first = [];
-                foreach (glob($dir . '/*/job.json') ?: [] as $file) {
-                    try {
-                        $candidate = self::read($file);
-                        if (in_array($candidate['status'], self::TERMINAL, true)) continue;
-                        $key = $candidate['server_id'];
-                        if (!isset($first[$key]) || [$candidate['created_at'], $candidate['id']] < [$first[$key]['created_at'], $first[$key]['id']]) $first[$key] = $candidate;
-                    } catch (Throwable $e) { /* Corrupt jobs are logged above. */ }
-                }
-                $jobs = array_values(array_filter($jobs, fn($job) => in_array($job['status'], self::TERMINAL, true) || ($first[$job['server_id']]['id'] ?? '') === $job['id']));
+                $jobs = array_values(array_filter($jobs, fn($job) => !in_array($job['kind'], ['delete','transfer','config','create','admin_status','import','recharge'], true)
+                    || in_array($job['status'], self::TERMINAL, true) || ($first[$job['server_id']]['id'] ?? '') === $job['id']));
+                $jobs = array_values(array_filter($jobs, fn($job) => $job['kind']!=='outbox' || ($outboxFirst[(string)$job['chat_id']]['id'] ?? '')===$job['id']));
                 usort($jobs, fn($a, $b) => $a['updated_at'] <=> $b['updated_at']);
                 foreach ($jobs as $job) {
                     if ($processed >= $steps || microtime(true) >= RequestBudget::$deadline - 0.1) break 2;
@@ -151,6 +167,11 @@ class BatchQueue {
                     $processed++;
                 }
             } while ($jobs);
+            self::maintain();
+            self::save($dir . '/heartbeat.json', ['last_run'=>time(), 'last_success'=>time(), 'pid'=>getmypid(), 'steps'=>$processed]);
+        } catch (Throwable $e) {
+            self::save($dir . '/heartbeat.json', ['last_run'=>time(), 'error'=>substr($e->getMessage(),0,500)]);
+            throw $e;
         } finally { RequestBudget::$deadline = $oldDeadline; flock($lock, LOCK_UN); fclose($lock); }
         return $processed;
     }
@@ -161,7 +182,11 @@ class BatchQueue {
         // Never replay a mutation or send whose result was not persisted.
         if ($job['active'] !== null) {
             $phase = $job['active'];
-            if ($phase === 'mutate') { $job['unconfirmed']++; $job['cursor']++; }
+            if ($phase==='recharge_reset') { $job['unconfirmed']++; $job['recharge_done']=true; $job['cursor']=1; }
+            elseif ($phase==='recharge_write') { $job['recharge_phase']='reconcile'; }
+            elseif ($phase === 'outbox') { $job['unconfirmed']++; $job['status'] = 'completed'; }
+            elseif ($phase === 'restart') { $job['unconfirmed']++; $job['node_result']='Not confirmed after interruption'; }
+            elseif ($phase === 'mutate') { $job['unconfirmed']++; $job['cursor']++; if ($job['kind']==='recharge') $job['recharge_done']=true; }
             elseif ($phase === 'owner') { $job['owner_failed']++; $job['pending']['phase'] = 'photo'; }
             elseif ($phase === 'photo') { $job['delivery_failed']++; $job['pending'] = null; }
             elseif ($phase === 'notify') $job['notification'] = 'unconfirmed';
@@ -169,30 +194,31 @@ class BatchQueue {
             $job['active'] = null;
             self::save($path, $job);
         }
-        if (!in_array((int)$job['user_id'], array_map('intval', $config['admin_ids'] ?? []), true)) {
+        if (($job['user_id'] !== 0 && !in_array((int)$job['user_id'], array_map('intval', $config['admin_ids'] ?? []), true))
+            || ($job['user_id'] === 0 && $job['kind'] === 'outbox' && !in_array((int)$job['chat_id'], array_map('intval', $config['admin_ids'] ?? []), true))) {
             $job['status'] = 'cancelled'; $job['notification'] = 'suppressed';
             $job['error'] = 'Submitting administrator is no longer authorized';
             self::save($path, $job); return;
         }
         if (in_array($job['status'], self::TERMINAL, true)) {
             if ($job['notification'] !== 'pending') return;
-            $job['active'] = 'notify'; self::save($path, $job);
-            try {
-                $response = tg_send_message($job['chat_id'], self::describe($job), self::keyboard($job));
-                $job['notification'] = !empty($response['ok']) ? 'sent' : 'unconfirmed';
-            } catch (Throwable $e) { $job['notification'] = 'unconfirmed'; }
-            $job['active'] = null; self::save($path, $job); return;
+            try { $delivery=self::message($job['chat_id'], $job['user_id'], self::describe($job), $job['id'] . ':summary', self::keyboard($job)); }
+            catch (QueueCapacityException $e) { $job['next_run']=time()+30; self::save($path,$job); return; }
+            $job['summary_id']=$delivery['id'];
+            $job['notification'] = 'queued'; self::save($path, $job); return;
         }
         if (is_file($dir . '/cancel')) {
             $job['status'] = 'cancelled'; $job['pending'] = null;
             self::save($path, $job); return;
         }
-        $server = Storage::getServer($job['server_id']);
+        $server = $job['kind'] === 'outbox' ? self::virtualServer() : Storage::getServer($job['server_id']);
         if (!$server || self::fingerprint($server) !== $job['server_fingerprint']) {
             $job['status'] = 'failed'; $job['error'] = 'Server removed or identity changed'; self::save($path, $job); return;
         }
         try {
-            if ($job['status'] === 'discovering') {
+            if (in_array($job['kind'], ['stats','expiry','access','monitor','outbox','import','recharge'], true)) {
+                self::workload($dir, $path, $job, $server);
+            } elseif ($job['status'] === 'discovering') {
                 $params = $job['params'];
                 $users = PanelManager::getUsers($server, $job['page'], self::PAGE_SIZE, null, $params['status'] ?? null, $params['admin'] ?? null, true);
                 if ($job['total'] + count($users) > self::MAX_TARGETS) throw new LengthException('Target limit exceeded; split the batch by administrator');
@@ -206,6 +232,8 @@ class BatchQueue {
             } else {
                 self::mutate($dir, $path, $job, $server);
             }
+        } catch (QueueCapacityException $e) {
+            $job['next_run']=time()+30;
         } catch (Throwable $e) {
             if ($job['active'] !== null) {
                 // Leave the durable marker for the next slice to classify safely.
@@ -214,7 +242,7 @@ class BatchQueue {
             $job['read_failures']++;
             $job['error'] = $e instanceof LengthException ? $e->getMessage() : 'Unable to read batch data; retrying before further mutations';
             $job['next_run'] = time() + 30 * $job['read_failures'];
-            if ($job['read_failures'] >= 3 || $e instanceof LengthException) $job['status'] = 'failed';
+            if ($job['read_failures'] >= 3 || $e instanceof LengthException) { $job['status'] = 'failed'; $job['next_run']=0; }
         }
         self::save($path, $job);
     }
@@ -265,6 +293,10 @@ class BatchQueue {
     }
     private static function deliver(string $dir, string $path, array &$job, array $server): void {
         $phase = $job['pending']['phase']; $user = $job['pending']['user'];
+        if ($phase==='photo') {
+            $cooldown=self::directory().'/telegram-cooldown.json';
+            if (is_file($cooldown) && ($until=self::read($cooldown)['until'])>time()) { $job['next_run']=$until; return; }
+        }
         $job['active'] = $phase; self::save($path, $job);
         if ($phase === 'owner') {
             if (!PanelManager::setOwner($server, $user['username'], $job['params']['admin'])) {
@@ -275,9 +307,10 @@ class BatchQueue {
         } else {
             if (!empty($user['subscription_url'])) {
                 $response = QrGenerator::sendQrPhoto($job['chat_id'], $user['subscription_url'], Formatter::userInfo($server, $user));
+                if (self::retryDelivery($response, $job)) { $job['active'] = null; return; }
                 if (empty($response['ok'])) $job['delivery_failed']++;
             }
-            $job['pending'] = null;
+            $job['pending'] = null; $job['delivery_attempts']=0;
         }
         $job['active'] = null;
     }

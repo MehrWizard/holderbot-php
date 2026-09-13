@@ -19,10 +19,10 @@ $daemon = in_array('--daemon', $argv, true);
 $forceExpired = in_array('--expired', $argv, true);
 do {
     $start = microtime(true);
+    try { BackgroundTasks::tick($forceExpired); }
+    catch (Throwable $e) { error_log('HolderBot scheduler failed: ' . $e->getMessage()); }
     try { BatchQueue::run(); }
     catch (Throwable $e) { error_log('HolderBot queue failed: ' . $e->getMessage()); }
-    try { BackgroundTasks::tick($forceExpired); }
-    catch (Throwable $e) { error_log('HolderBot background job failed: ' . $e->getMessage()); }
     $forceExpired = false;
     if ($daemon) usleep((int)(max(0.1, 30 - (microtime(true) - $start)) * 1000000));
 } while ($daemon);
