@@ -1206,7 +1206,9 @@ class CallbackHandlers {
         }
         Storage::clearState($userId);
         tg_answer_callback($callbackId, BatchQueue::loadingMessage((string)$job['kind']));
-        tg_edit_message($chatId, $messageId, BatchQueue::describe($job), BatchQueue::keyboard($job));
+        $description = BatchQueue::describe($job);
+        if (!in_array($job['status'], ['completed', 'failed', 'cancelled'], true)) $description .= "\nUse Refresh status to check progress.";
+        tg_edit_message($chatId, $messageId, $description, BatchQueue::keyboard($job));
     }
 
     private static function renderHome(int|string $chatId, int $messageId): void {

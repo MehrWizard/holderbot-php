@@ -272,10 +272,31 @@ final class BatchQueue
         }
         if ($status === 'cancelled') return '⛔ ' . ucfirst($label) . ' cancelled.';
 
-        $text = '⏳ ' . self::loadingMessage((string)$job['kind']);
+        if ($status === 'discovering') {
+            return '⏳ Finding users for ' . $label . '.' .
+                ((int)($job['total'] ?? 0) > 0 ? "\nDiscovered: " . (int)$job['total'] . '.' : '');
+        }
+        if ($job['kind'] === 'stats') {
+            $page = max(0, (int)($job['params']['page'] ?? 1) - 1);
+            return $page > 0
+                ? "⏳ Statistics scan in progress.\nPages scanned: {$page}."
+                : '⏳ Statistics scan queued; first page is pending.';
+        }
+        if ($job['kind'] === 'expiry') {
+            $page = max(0, (int)($job['params']['scan']['page'] ?? 1) - 1);
+            return $page > 0
+                ? "⏳ Expiry scan in progress.\nPages scanned: {$page}."
+                : '⏳ Expiry scan queued; first page is pending.';
+        }
+        if (($job['active'] ?? '') === 'inline') return '⏳ Executing the request now.';
+        if (($job['active'] ?? '') === 'fallback') {
+            return '⏳ The inline request exceeded its time limit. Queue processing is continuing.';
+        }
+        $text = '⏳ ' . (($job['active'] ?? '') === 'mutation' ? 'Applying ' . $label . '.' : self::loadingMessage((string)$job['kind']));
         $total = (int)($job['total'] ?? 0);
         if ($total > 0) $text .= "\nProcessed: " . (int)$job['cursor'] . "/{$total}.";
-        return $text . "\nUse Refresh status to check progress.";
+        if ($total === 0) $text .= "\nWaiting for the worker to start.";
+        return $text;
     }
 
     private static function step(array &$job): void
