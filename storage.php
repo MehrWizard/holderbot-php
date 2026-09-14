@@ -96,7 +96,7 @@ class Storage {
 
                     CREATE TABLE IF NOT EXISTS bot_cache (
                         cache_key VARCHAR(128) PRIMARY KEY,
-                        cache_value TEXT NOT NULL,
+                        cache_value MEDIUMTEXT NOT NULL,
                         expires_at INT NOT NULL
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -180,6 +180,8 @@ class Storage {
                 try { self::$pdo->exec("ALTER TABLE templates ADD COLUMN is_active TINYINT(1) DEFAULT 1"); } catch (Throwable) {}
                 try { self::$pdo->exec("ALTER TABLE templates ADD COLUMN date_type VARCHAR(16) NOT NULL DEFAULT 'fixed'"); } catch (Throwable) {}
                 try { self::$pdo->exec("ALTER TABLE bot_queue ADD COLUMN lease_until INT NOT NULL DEFAULT 0 AFTER notification_status"); } catch (Throwable) {}
+                $cacheColumn=self::$pdo->query("SHOW COLUMNS FROM bot_cache LIKE 'cache_value'")->fetch();
+                if(strtolower((string)($cacheColumn['Type'] ?? ''))==='text') self::$pdo->exec('ALTER TABLE bot_cache MODIFY cache_value MEDIUMTEXT NOT NULL');
                 $queueColumns = self::$pdo->query('SHOW COLUMNS FROM bot_queue')->fetchAll(PDO::FETCH_COLUMN);
                 if (!in_array('cancel_requested', $queueColumns, true)) self::$pdo->exec('ALTER TABLE bot_queue ADD COLUMN cancel_requested TINYINT NOT NULL DEFAULT 0');
                 if (!in_array('last_served', $queueColumns, true)) self::$pdo->exec('ALTER TABLE bot_queue ADD COLUMN last_served DOUBLE NOT NULL DEFAULT 0, ADD INDEX queue_fair (last_served)');

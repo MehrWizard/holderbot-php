@@ -22,7 +22,7 @@ class Formatter {
     public static array $cards=[];
     public static function statsCard($server,$stats): string { self::$cards[]=$stats; return '<b>Stats</b> '.implode(',', $stats['today_expired'] ?? []); }
 }
-class Keyboards { public static function serverMenu(...$args): array { return []; } }
+class Keyboards { public static function serverMenu(...$args): array { return []; } public static function stats(...$args): array { return []; } }
 function tg_replace_message(...$args): array { return ['ok'=>true]; }
 function tg_edit_message(...$args): array { return ['ok'=>true]; }
 class BackgroundTasks {
@@ -36,6 +36,7 @@ Storage::cacheSet('queue_heartbeat',time()-600,3600);
 $small=BatchQueue::enqueueInline('stats',$server,['message_id'=>123],99,42,'small_stats');
 BatchQueue::run(2,10,$small['id']);
 if (BatchQueue::get($small['id'])['status']!=='completed' || PanelManager::$pages!==[1]) throw new RuntimeException('Small stats did not finish immediately beside cron lock');
+if((BatchQueue::cachedStats($serverId)['text'] ?? '')==='') throw new RuntimeException('Completed statistics were not cached');
 if (!BatchQueue::health()['stale']) throw new RuntimeException('Inline scan concealed stopped cron');
 if (Formatter::$cards[0]['today_expired']!==[]) throw new RuntimeException('Empty report promised follow-up messages');
 $other->query('SELECT RELEASE_ALL_LOCKS()');
@@ -83,4 +84,7 @@ if(count($parts)<2) throw new RuntimeException('Long report was not safely chunk
 $length=new ReflectionMethod(BatchQueue::class,'telegramTextLength');
 foreach($parts as $part) if($length->invoke(null,json_decode($part,true)['text'])>4096) throw new RuntimeException('A follow-up report exceeds Telegram limits');
 foreach($parts as $part) if(str_contains(json_decode($part,true)['text'],"\n")) throw new RuntimeException('Chunked users are not comma-separated');
+$cache=new ReflectionMethod(BatchQueue::class,'cacheStatsResult'); $cache->invoke(null,$long,$longText);
+$cached=BatchQueue::cachedStats($serverId);
+if($cached['text']!==$longText || count($cached['chunks'])!==count($parts)) throw new RuntimeException('Latest complete statistics cache lost its chunks');
 echo "PASS: immediate statistics, cron continuation, read timeout recovery, heartbeat isolation; Telegram stubbed\n";

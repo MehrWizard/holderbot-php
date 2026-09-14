@@ -3,6 +3,7 @@ declare(strict_types=1);
 // Exercise real handlers and keyboard builders; only external boundaries are stubbed.
 class Storage {
     public static array $state=[];
+    public static array $cache=[];
     public static array $templates=[1=>['id'=>1,'remark'=>'basic','date_type'=>'fixed','date_limit'=>30,'data_limit'=>10]];
     public static bool $failSave=false;
     public static function getTemplates(): array { return array_values(self::$templates); }
@@ -17,8 +18,8 @@ class Storage {
     public static function getState($id): ?array { return self::$state[$id] ?? null; }
     public static function setState($id,$step,$data=[]): void { self::$state[$id]=compact('step','data'); }
     public static function clearState($id): void { unset(self::$state[$id]); }
-    public static function cacheGet(...$args): mixed { return null; }
-    public static function cacheSet(...$args): void {}
+    public static function cacheGet($key): mixed { return self::$cache[$key] ?? null; }
+    public static function cacheSet($key,$value,...$args): void { self::$cache[$key]=$value; }
 }
 class PanelManager {
     public static array $calls=[];
@@ -43,6 +44,7 @@ function tg_replace_message(...$args): array { global $events; $events[]=['repla
 function tg_delete_message(...$args): array { global $events; $events[]=['delete',$args]; return ['ok'=>true]; }
 function tg_answer_callback(...$args): array { global $events; $events[]=['alert',$args]; return ['ok'=>true]; }
 require __DIR__.'/../helpers/keyboards.php';
+require __DIR__.'/../helpers/tracker.php';
 require __DIR__.'/../handlers/commands.php';
 require __DIR__.'/../handlers/callbacks.php';
 require __DIR__.'/../handlers/states.php';
@@ -141,4 +143,7 @@ $count=count(PanelManager::$calls); callback('set_own:first_user:1:new_admin');
 check(count(PanelManager::$calls)===$count && end($events)[0]==='alert','Old owner button mutated another user');
 callback('set_own:second_user:1:new_admin');
 check(end(PanelManager::$calls)===['owner','second_user','new_admin'] && end($events)[1][2]==='❌ Failed','Ownership failure reported success');
+Storage::cacheSet('stats_result_1',['server_id'=>1,'text'=>'cached stats','chunks'=>['one,two'],'generated_at'=>time()],3600);
+callback('stats:1');
+check($events[count($events)-2][0]==='edit' && $events[count($events)-2][1][2]==='cached stats' && end($events)[0]==='send' && end($events)[1][1]==='one,two','Stats button did not render the latest cache immediately');
 echo "PASS: command, deep-link, Home, search, pagination and stale wizard workflows; external boundaries stubbed\n";

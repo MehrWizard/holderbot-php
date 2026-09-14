@@ -141,7 +141,7 @@ class CommandHandlers {
         }
 
         $card = Formatter::userCard($server, $user);
-        $kb = Keyboards::userActions($serverId, $user['username'], $user['is_active'], $user['status']);
+        $kb = Keyboards::userActions($serverId, $user['username'], $user['is_active'], $user['status'], "stats_cached:{$serverId}");
         self::sendFreshMenu($chatId, $card, $kb);
         return true;
     }

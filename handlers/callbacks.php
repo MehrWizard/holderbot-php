@@ -33,6 +33,14 @@ class CallbackHandlers {
             self::renderServerMenuFresh($chatId, $serverId);
             return;
         }
+        if(str_starts_with($data,'stats_back:')) {
+            $serverId=(int)substr($data,strlen('stats_back:'));
+            Storage::clearState($userId);
+            tg_answer_callback($id);
+            MessageTracker::cleanup($chatId,$messageId>0?[$messageId]:[]);
+            self::renderServerMenu($chatId,$messageId,$serverId);
+            return;
+        }
 
         if (str_starts_with($data, 'job:') || str_starts_with($data, 'job_cancel:')) {
             [$action, $jobId] = explode(':', $data, 2);
@@ -730,15 +738,19 @@ class CallbackHandlers {
             return;
         }
 
-        // Server Statistics: stats:<id>
-        if (str_starts_with($data, 'stats:')) {
-            $serverId = (int)substr($data, strlen('stats:'));
+        // Cached statistics view and explicit refresh.
+        if (str_starts_with($data,'stats_cached:') || str_starts_with($data,'stats_refresh:') || str_starts_with($data,'stats:')) {
+            $refresh=str_starts_with($data,'stats_refresh:');
+            $prefix=$refresh?'stats_refresh:':(str_starts_with($data,'stats_cached:')?'stats_cached:':'stats:');
+            $serverId=(int)substr($data,strlen($prefix));
             $server = Storage::getServer($serverId);
             if (!$server) {
                 tg_answer_callback($id, "❌ Not Found.", true);
                 tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::cancel('home'));
                 return;
             }
+            if(!$refresh && self::renderCachedStats($id,$chatId,$messageId,$serverId)) return;
+            MessageTracker::cleanup($chatId,$messageId>0?[$messageId]:[]);
             self::queueBatch('stats', $server, ['message_id' => $messageId], $chatId, $messageId, $userId, $id);
             return;
         }
@@ -1256,6 +1268,19 @@ class CallbackHandlers {
         $description = BatchQueue::describe($job);
         if (!in_array($job['status'], ['completed', 'failed', 'cancelled'], true)) $description .= "\nUse Refresh status to check progress.";
         tg_edit_message($chatId, $messageId, $description, BatchQueue::keyboard($job));
+    }
+
+    private static function renderCachedStats(string $callbackId,int|string $chatId,int $messageId,int $serverId): bool {
+        $cached=BatchQueue::cachedStats($serverId);
+        if(!$cached) return false;
+        tg_answer_callback($callbackId,'Showing latest completed statistics.');
+        MessageTracker::cleanup($chatId,$messageId>0?[$messageId]:[]);
+        tg_edit_message($chatId,$messageId,$cached['text'],Keyboards::stats($serverId));
+        foreach($cached['chunks'] as $chunk) {
+            $sent=tg_send_message($chatId,$chunk);
+            if(!empty($sent['result']['message_id'])) MessageTracker::rememberForCleanup($chatId,(int)$sent['result']['message_id']);
+        }
+        return true;
     }
 
     private static function renderHome(int|string $chatId, int $messageId, bool $fresh = false): void {

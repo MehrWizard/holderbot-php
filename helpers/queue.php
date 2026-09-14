@@ -504,6 +504,24 @@ final class BatchQueue
         return $summary;
     }
 
+    private static function cacheStatsResult(array $job, string $text): void
+    {
+        $select=self::db()->prepare("SELECT payload FROM bot_queue_items WHERE job_id=? AND status='pending' ORDER BY position");
+        $select->execute([$job['id']]); $chunks=[];
+        foreach($select->fetchAll(PDO::FETCH_COLUMN) as $payload) {
+            $chunks[]=(string)(json_decode((string)$payload,true,512,JSON_THROW_ON_ERROR)['text'] ?? '');
+        }
+        Storage::cacheSet('stats_result_'.(int)$job['server_id'],[
+            'server_id'=>(int)$job['server_id'],'text'=>$text,'chunks'=>$chunks,'generated_at'=>time(),
+        ],30*86400);
+    }
+
+    public static function cachedStats(int $serverId): ?array
+    {
+        $cached=Storage::cacheGet('stats_result_'.$serverId);
+        return is_array($cached) && (int)($cached['server_id'] ?? 0)===$serverId && is_string($cached['text'] ?? null) && is_array($cached['chunks'] ?? null) ? $cached : null;
+    }
+
     private static function monitorStep(array &$job, array $server): void
     {
         if (empty($server['node_monitoring'])) { $job['status']='cancelled'; return; }
@@ -664,7 +682,8 @@ final class BatchQueue
                 }
             }
             $text=self::prepareStatsDelivery($job,$server,$stats);
-            $job['params']['notifications']=[['key'=>'final','payload'=>['message_id'=>(int)$params['message_id'],'text'=>$text,'keyboard'=>Keyboards::serverMenu((int)$server['id'])]]];
+            self::cacheStatsResult($job,$text);
+            $job['params']['notifications']=[['key'=>'final','payload'=>['message_id'=>(int)$params['message_id'],'text'=>$text,'keyboard'=>Keyboards::stats((int)$server['id'])]]];
             $job['params']['custom_result']=true;
             $job['params']['report_ready'] = true;
             $job['success'] = 1; $job['total'] = 1; $job['cursor'] = 1; return;

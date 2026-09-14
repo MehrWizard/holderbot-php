@@ -28,6 +28,12 @@ class Keyboards {
             [self::button('☁️ Server', "srv_cfg:{$serverId}"), self::button('🏛️ Home', 'home')],
         ]];
     }
+    public static function stats(int $serverId): array {
+        return ['inline_keyboard'=>[
+            [self::button('🔄 Refresh Stats',"stats_refresh:{$serverId}")],
+            [self::button('◀️ Back',"stats_back:{$serverId}")],
+        ]];
+    }
     public static function serverSettings(array $server): array {
         $id = $server['id'];
         return self::rows([
@@ -55,7 +61,7 @@ class Keyboards {
         $rows[] = [self::button('◀️ Back', "srv:{$serverId}")];
         return ['inline_keyboard' => $rows];
     }
-    public static function userActions(int $serverId, string $username, bool $isActive, string $status): array {
+    public static function userActions(int $serverId, string $username, bool $isActive, string $status, ?string $backData = null): array {
         $actions = [
             'dl' => '📊 Data Limit', 'dt' => '⏱️ Date Limit', 'tgl_ask' => $isActive ? '❌ Disabled' : '✅ Activated',
             'rst_ask' => '🔁 Reset Usage', 'rvk_ask' => '⛓️‍💥 Revoke', 'qr' => '🖼 Qrcode',
@@ -63,7 +69,7 @@ class Keyboards {
         ];
         $buttons = [];
         foreach ($actions as $action => $label) $buttons[] = self::button($label, "act:{$serverId}:{$username}:{$action}");
-        return self::rows($buttons, 2, "srv:{$serverId}");
+        return self::rows($buttons, 2, $backData ?? "srv:{$serverId}");
     }
     public static function actionsMenu(int $serverId, string $serverType = 'marzban'): array {
         $actions = ['act_adm' => '✔️ Activate Users', 'dis_adm' => '✖️ Disabled Users', 'del_exp' => '🗑 Delete Expired', 'del_lim' => '🗑 Delete Limited', 'del_all' => '🗑 Delete Admin Users', 'xfer_adm' => '💱 Transfer Users'];
