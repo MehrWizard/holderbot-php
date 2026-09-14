@@ -212,7 +212,7 @@ final class BatchQueue
     {
         $rows = [[['text'=>'Refresh status','callback_data'=>'job:'.$job['id']]]];
         if (!in_array($job['status'],['completed','failed','cancelled'],true)) $rows[]=[['text'=>'Cancel remaining work','callback_data'=>'job_cancel:'.$job['id']]];
-        if ((int)$job['server_id']>0) $rows[]=[['text'=>'Back','callback_data'=>'srv:'.$job['server_id']]];
+        if ((int)$job['server_id']>0) $rows[]=[['text'=>'Back','callback_data'=>'queue_back:'.$job['server_id']]];
         return ['inline_keyboard'=>$rows];
     }
 

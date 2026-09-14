@@ -18,6 +18,15 @@ class CallbackHandlers {
         $messageId = $callbackQuery['message']['message_id'] ?? 0;
         $userId = $callbackQuery['from']['id'];
 
+        if (str_starts_with($data, 'queue_back:')) {
+            $serverId = (int)substr($data, strlen('queue_back:'));
+            Storage::clearState($userId);
+            tg_answer_callback($id);
+            if ($messageId > 0) tg_delete_message($chatId, $messageId);
+            self::renderServerMenuFresh($chatId, $serverId);
+            return;
+        }
+
         if (str_starts_with($data, 'job:') || str_starts_with($data, 'job_cancel:')) {
             [$action, $jobId] = explode(':', $data, 2);
             $job = BatchQueue::get($jobId);
@@ -1229,6 +1238,15 @@ class CallbackHandlers {
         $text = "Select a Button";
         $kb = Keyboards::serverMenu($serverId);
         tg_edit_message($chatId, $messageId, $text, $kb);
+    }
+
+    private static function renderServerMenuFresh(int|string $chatId, int $serverId): void {
+        $server = Storage::getServer($serverId);
+        if (!$server) {
+            tg_send_message($chatId, "❌ Not Found.", Keyboards::home(Storage::getServers()));
+            return;
+        }
+        tg_send_message($chatId, "Select a Button", Keyboards::serverMenu($serverId));
     }
 
     private static function renderServerSettings(int|string $chatId, int $messageId, int $serverId): void {
