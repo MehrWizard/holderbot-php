@@ -62,6 +62,38 @@ class BackgroundTasks {
             foreach ($admins as $admin) tg_send_message($admin, $text);
         }
     }
+
+    /** Process one expiry-report page and return checkpoint state. */
+    public static function expiryPage(array $server, array $state, ?int $now = null): array {
+        $now ??= time();
+        $page = max(1, (int)($state['page'] ?? 1));
+        $total = (int)($state['total'] ?? 0);
+        $names = is_array($state['names'] ?? null) ? $state['names'] : [];
+        $matched = (int)($state['matched'] ?? count($names));
+        $users = PanelManager::getUsers($server, $page, PanelManager::pageSize($server), null, null, null, true);
+        $total += count($users);
+        foreach ($users as $user) {
+            if ($server['type'] === 'marzneshin' && ($user['raw']['expire_strategy'] ?? '') !== 'fixed_date') continue;
+            $hours = (int)((($user['expire_timestamp'] ?? 0) - $now) / 3600);
+            if ($hours > 0 && $hours < 24) {
+                $matched++;
+                if (count($names) < 25) $names[] = (string)$user['username'];
+            }
+        }
+        return ['page' => $page + 1, 'total' => $total, 'names' => $names, 'matched' => $matched, 'done' => count($users) < PanelManager::pageSize($server), 'now' => $now];
+    }
+
+    /** Deliver a completed expiry report from an incremental scan. */
+    public static function sendExpiryReport(array $server, array $admins, array $names, int $total, ?int $matched = null): void {
+        $bot = tgbot('getMe');
+        $botUsername = $bot['result']['username'] ?? '';
+        $links = [];
+        foreach ($names as $name) $links[] = "<a href='https://t.me/{$botUsername}?start=user_{$server['id']}_" . rawurlencode($name) . "'> <code>" . Formatter::escape($name) . '</code> </a>';
+        $list = $links ? implode(',', $links) : '<code>None</code>';
+        $text = '📊 <b>Users scheduled to expire today in ' . Formatter::escape(ucwords($server['remark'])) . " server:</b>\n";
+        $text .= '⚰️ <b>List of users[<code>' . ($matched ?? count($names)) . '</code>/<code>' . $total . '</code>]:</b> ' . $list;
+        foreach ($admins as $admin) tg_send_message($admin, $text);
+    }
     /** Schedule only; all panel and Telegram calls run in bounded queue steps. */
     public static function tick(bool $forceExpired = false): void {
         global $config;

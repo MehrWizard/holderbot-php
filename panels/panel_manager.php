@@ -653,7 +653,7 @@ class PanelManager {
         return strtolower($server['type'] ?? 'marzban') === 'marzneshin' ? 100 : 25;
     }
 
-    private static function getBotUsername(): string {
+    public static function getBotUsername(): string {
         $cached = Storage::cacheGet('bot_username');
         if ($cached !== null) {
             return $cached;

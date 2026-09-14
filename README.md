@@ -53,7 +53,7 @@ Optional queue settings in `config.php`:
 
 ## Queue operations
 
-The queue is reserved for work that can exceed webhook or shared-host limits: multi-user creation and imports, bulk deletion, transfers, configuration and admin-wide status changes, full statistics scans, monitoring, access refresh, expiry reports, and other scheduled work. Single-user edits, recharge, creation, and QR delivery run immediately. These short operations are persisted as inline jobs first; if the inline lease expires, cron safely takes over under a per-job MySQL lock and updates the original loading message. Credentials are loaded from MySQL when a job runs and are not copied into queue payloads.
+The queue is reserved for work that can exceed webhook or shared-host limits: multi-user creation and imports, bulk deletion, transfers, configuration and admin-wide status changes, full statistics scans, monitoring, access refresh, expiry reports, and other scheduled work. Single-user edits, recharge, creation, and QR delivery run immediately. These short operations are persisted as inline jobs first; if the inline lease expires, cron safely takes over under a per-job MySQL lock and updates the original loading message. Statistics and expiry reports scan one panel page per worker slice, so panel size does not determine PHP memory use. Credentials are loaded from MySQL when a job runs and are not copied into queue payloads.
 
 ```bash
 php queue.php health

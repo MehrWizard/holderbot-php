@@ -7,7 +7,7 @@ require_once __DIR__ . '/request_budget.php';
 final class BatchQueue
 {
     public const PAGE_SIZE = 50;
-    public const MAX_TARGETS = 10000;
+    public const MAX_TARGETS = 100000;
 
     private static function db(): PDO { return Storage::db(); }
 
@@ -196,8 +196,8 @@ final class BatchQueue
         if (!in_array($job['status'], ['completed', 'failed', 'cancelled'], true)) return;
         $messageId = (int)($job['params']['message_id'] ?? 0);
         if ($messageId <= 0 || (string)$job['chat_id'] === '0') return;
-        if ($job['status'] === 'completed' && in_array($job['kind'], ['stats', 'qr', 'revoke_qr'], true)) return;
-        if ($job['kind'] === 'create' && !empty($job['params']['send_qr']) && $job['status'] === 'completed') return;
+        if ($job['status'] === 'completed' && (int)($job['success'] ?? 0) > 0 && in_array($job['kind'], ['stats', 'qr', 'revoke_qr'], true)) return;
+        if ($job['kind'] === 'create' && !empty($job['params']['send_qr']) && $job['status'] === 'completed' && (int)($job['unconfirmed'] ?? 0) === 0) return;
         try { tg_replace_message($job['chat_id'], $messageId, self::describe($job), self::keyboard($job)); }
         catch (Throwable $e) { error_log('Unable to deliver final job result: ' . $e->getMessage()); }
     }
@@ -242,7 +242,9 @@ final class BatchQueue
         $status = (string)($job['status'] ?? 'running');
         if ($status === 'completed') {
             if ($job['kind'] === 'stats') return '📊 Server statistics updated.';
-            return '✅ ' . ucfirst($label) . ' completed.\nProcessed: ' . (int)$job['cursor'] . ' item(s).';
+            $text = '✅ ' . ucfirst($label) . ' completed.\nProcessed: ' . (int)$job['cursor'] . ' item(s).';
+            if ((int)($job['unconfirmed'] ?? 0) > 0) $text .= "\nUnconfirmed: " . (int)$job['unconfirmed'] . '. Check the panel before retrying.';
+            return $text;
         }
         if ($status === 'failed') {
             $text = '❌ ' . ucfirst($label) . ' failed.';
@@ -311,7 +313,18 @@ final class BatchQueue
             }
             $stats = Storage::cacheGet('stats_' . $server['id']);
             if (!is_array($stats)) {
-                $stats = PanelManager::getServerStats($server);
+                $stats = $params['stats'] ?? PanelManager::statsForUsers($server, [], time());
+                $page = max(1, (int)($params['page'] ?? 1));
+                $users = PanelManager::getUsers($server, $page, PanelManager::pageSize($server), null, null, null, true);
+                $part = PanelManager::statsForUsers($server, $users, (int)($params['now'] ?? time()), PanelManager::getBotUsername());
+                foreach ($part as $key => $value) $stats[$key] = is_array($value) ? array_merge($stats[$key] ?? [], $value) : (int)($stats[$key] ?? 0) + (int)$value;
+                if (count($users) >= PanelManager::pageSize($server)) {
+                    $params['stats'] = $stats;
+                    $params['page'] = $page + 1;
+                    $params['now'] = (int)($params['now'] ?? time());
+                    $job['params'] = $params;
+                    return;
+                }
                 Storage::cacheSet('stats_' . $server['id'], $stats, 30);
             }
             $text = Formatter::statsCard($server, $stats);
@@ -323,15 +336,23 @@ final class BatchQueue
             $job['success'] = 1; $job['total'] = 1; $job['cursor'] = 1; $job['status'] = 'completed'; return;
         }
         if ($job['kind'] === 'expiry') {
-            BackgroundTasks::expiredReport([$server], $params['recipients'] ?? [], time());
+            $scan = BackgroundTasks::expiryPage($server, $params['scan'] ?? [], (int)($params['now'] ?? time()));
+            if (!$scan['done']) {
+                $params['scan'] = $scan;
+                $job['params'] = $params;
+                return;
+            }
+            BackgroundTasks::sendExpiryReport($server, $params['recipients'] ?? [], $scan['names'], (int)$scan['total'], (int)$scan['matched']);
             $job['success'] = 1; $job['total'] = 1; $job['cursor'] = 1; $job['status'] = 'completed'; return;
         }
         if ($job['status'] === 'discovering') {
+            $job['active'] = 'discovering';
             $users = PanelManager::getUsers($server,(int)($params['page']??1),self::PAGE_SIZE,null,$params['status']??null,$params['admin']??null,true);
             $params['targets']=array_merge($params['targets']??[],array_column($users,'username')); $params['page']=(int)($params['page']??1)+1; $job['params']=$params; $job['total']=count($params['targets']); if (count($users)<self::PAGE_SIZE) $job['status']='running'; return;
         }
         if ($job['cursor'] >= $job['total']) { $job['status']='completed'; return; }
         $index=(int)$job['cursor']; $username=$params['targets'][$index]??($params['username']??''); $ok=true;
+        $job['active'] = 'mutation';
         switch ($job['kind']) {
             case 'delete': $ok=PanelManager::deleteUser($server,$username); break;
             case 'transfer': $ok=PanelManager::setOwner($server,$username,(string)$params['to_admin']); break;
@@ -383,7 +404,23 @@ final class BatchQueue
                     self::notifyFallback($job);
                 }
                 try{self::step($job);unset($job['params']['read_failures']);}
-                catch(Throwable $e){$job['error']=$e->getMessage();if($e instanceof InvalidArgumentException){$job['status']='failed';}else{$job['next_run']=time()+30;$job['params']['read_failures']=(int)($job['params']['read_failures']??0)+1;if($job['params']['read_failures']>=3)$job['status']='failed';}}
+                catch(Throwable $e){
+                    $job['error']=$e->getMessage();
+                    if($e instanceof InvalidArgumentException){$job['status']='failed';}
+                    elseif (($job['active'] ?? '') === 'mutation' || ($job['active'] ?? '') === 'fallback') {
+                        // The panel may have accepted a mutation before the
+                        // connection failed. Do not repeat it blindly; record
+                        // one uncertain item and continue the batch.
+                        $job['unconfirmed']++;
+                        $job['cursor']++;
+                        $job['next_run']=time();
+                        if ($job['cursor'] >= $job['total']) $job['status']='completed';
+                    } else {
+                        $job['next_run']=time()+30;
+                        $job['params']['read_failures']=(int)($job['params']['read_failures']??0)+1;
+                        if($job['params']['read_failures']>=3)$job['status']='failed';
+                    }
+                }
                 self::finalizeMessage($job);
                 self::save($job);
             } finally { self::releaseJobLock((string)$job['id']); }

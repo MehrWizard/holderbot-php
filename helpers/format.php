@@ -146,7 +146,10 @@ class Formatter {
         $text .= "📆 <b>Last Week Sub-Updated/Online:</b> <code>" . ($stats['update_week'] ?? 0) . "</code>/<code>" . ($stats['online_week'] ?? 0) . "</code>\n";
         $text .= "📅 <b>Last Month Sub-Updated/Online:</b> <code>" . ($stats['update_month'] ?? 0) . "</code>/<code>" . ($stats['online_month'] ?? 0) . "</code>\n";
 
-        $expiredList = !empty($stats['today_expired']) ? implode(',', $stats['today_expired']) : '<code>None</code>';
+        $expired = is_array($stats['today_expired'] ?? null) ? $stats['today_expired'] : [];
+        $visibleExpired = array_slice($expired, 0, 25);
+        if (count($expired) > count($visibleExpired)) $visibleExpired[] = '<i>and ' . (count($expired) - count($visibleExpired)) . ' more</i>';
+        $expiredList = $visibleExpired ? implode(',', $visibleExpired) : '<code>None</code>';
         $text .= "⚰️ <b>Expired in 24 Hours:</b> {$expiredList}";
 
         return $text;
