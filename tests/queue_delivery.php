@@ -8,7 +8,7 @@ $sends=[];
 function tg_send_message($chat, $text, ...$args): array {
     global $sends;
     $sends[] = [$chat,$text];
-    throw new RuntimeException('Simulated delivery failure');
+    return ['ok'=>false,'error_code'=>403,'description'=>'bot blocked'];
 }
 function tg_replace_message(...$args): array { return ['ok'=>false]; }
 class PanelManager {

@@ -142,6 +142,21 @@ class Storage {
                     content MEDIUMBLOB NOT NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
                 $stateColumns = self::$pdo->query('SHOW COLUMNS FROM bot_states')->fetchAll(PDO::FETCH_COLUMN);
+                self::$pdo->exec("CREATE TABLE IF NOT EXISTS bot_notifications (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    job_id CHAR(32) NOT NULL,
+                    delivery_key VARCHAR(100) NOT NULL,
+                    chat_id BIGINT NOT NULL,
+                    payload JSON NOT NULL,
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    attempts INT NOT NULL DEFAULT 0,
+                    next_run INT NOT NULL DEFAULT 0,
+                    error_text VARCHAR(1000) NULL,
+                    telegram_message_id BIGINT NULL,
+                    UNIQUE KEY notification_identity(job_id,delivery_key),
+                    KEY notification_pending(status,next_run,id),
+                    KEY notification_order(job_id,status,id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
                 if (!in_array('chat_id', $stateColumns, true)) {
                     self::$pdo->exec('ALTER TABLE bot_states ADD COLUMN chat_id BIGINT NOT NULL DEFAULT 0');
                 }

@@ -13,9 +13,9 @@ $page=ImportReader::page(fn($offset,$length)=>substr($escaped,$offset,min($lengt
 $next=ImportReader::page(fn($offset,$length)=>substr($escaped,$offset,min($length,7)),$page['offset'],true,1);
 if (!$next['done'] || $next['items'][0]['username']!=='b') throw new RuntimeException('Chunk boundary parsing failed');
 function tg_download_file(string $id, int $max): string { return '[' . implode(',', array_map(fn($i)=>json_encode(['username'=>'large_'.$i,'datalimit'=>2,'datelimit'=>30]),range(1,16000))) . ']'; }
-function tg_replace_message(...$args): array { return ['ok'=>false]; }
-function tg_edit_message(...$args): array { return ['ok'=>false]; }
-function tg_send_message(...$args): array { return ['ok'=>false]; }
+function tg_replace_message(...$args): array { return ['ok'=>false,'error_code'=>403]; }
+function tg_edit_message(...$args): array { return ['ok'=>false,'error_code'=>403]; }
+function tg_send_message(...$args): array { return ['ok'=>false,'error_code'=>403]; }
 $serverId=Storage::saveServer(['remark'=>'isolated','type'=>'marzban','base_url'=>'http://example.invalid','username'=>'test','password'=>'test']);
 $server=Storage::getServer($serverId);
 $locked=BatchQueue::enqueueInline('qr',$server,[],0,0,'locked');

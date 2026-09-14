@@ -17,7 +17,7 @@ try {
     switch ($command) {
         case 'health':
             $health=BatchQueue::health();
-            echo "last_run={$health['last_run']} pending={$health['pending']} stale=" . ($health['stale'] ? 'yes' : 'no') . "\n";
+            echo "last_run={$health['last_run']} pending={$health['pending']} pending_notifications={$health['pending_notifications']} stale=" . ($health['stale'] ? 'yes' : 'no') . "\n";
             exit($health['stale'] ? 1 : 0);
         case 'work': echo BatchQueue::run()." steps processed\n"; break;
         case 'attention':

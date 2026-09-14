@@ -338,8 +338,7 @@ class CallbackHandlers {
                     tg_edit_message($chatId, $messageId, BatchQueue::describe($attempt['job']), BatchQueue::keyboard($attempt['job']));
                     return;
                 }
-                $updated = $attempt['result'];
-                tg_replace_message($chatId, $messageId, "✅ Success.", Keyboards::cancel("usr:{$serverId}:{$username}"));
+                // Final delivery is committed with the job result.
             } else {
                 tg_answer_callback($id, "❌ Not Found.", true);
             }
@@ -390,12 +389,7 @@ class CallbackHandlers {
                     tg_edit_message($chatId, $messageId, BatchQueue::describe($attempt['job']), BatchQueue::keyboard($attempt['job']));
                     return;
                 }
-                $ok = true; // A duplicate completed callback has no in-memory result.
-                $updated = $attempt['result'];
-                if (!empty($updated['subscription_url'])) {
-                    try { QrGenerator::sendQrPhoto($chatId, $updated['subscription_url'], Formatter::userInfo($server, $updated)); }
-                    catch (Throwable $e) { error_log('QR delivery failed after confirmed revoke: ' . $e->getMessage()); }
-                }
+                return; // Durable result delivery handles QR and the replacement message.
             }
             if ($action !== 'rvk') tg_answer_callback($id);
             tg_replace_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
@@ -1496,7 +1490,7 @@ class CallbackHandlers {
                 $attempt = BatchQueue::executeInline($job, function () use ($server, $username, $chatId) {
                     $user = PanelManager::getUser($server, $username);
                     if (!$user || empty($user['subscription_url'])) throw new InvalidArgumentException('No subscription link available for QR');
-                    return QrGenerator::sendQrPhoto($chatId, $user['subscription_url'], Formatter::userInfo($server, $user));
+                    return $user;
                 });
                 if ($attempt['state'] === 'queued') {
                     tg_edit_message($chatId, $messageId, BatchQueue::fallbackMessage($attempt['job']), BatchQueue::keyboard($attempt['job']));
@@ -1509,7 +1503,7 @@ class CallbackHandlers {
                 if ($attempt['state'] !== 'completed') {
                     return;
                 }
-                tg_replace_message($chatId, $messageId, '✅ QR code sent.', Keyboards::cancel("usr:{$serverId}:{$username}"));
+                // Final delivery is committed with the job result.
                 break;
 
             case 'del':
@@ -1643,13 +1637,7 @@ class CallbackHandlers {
             tg_edit_message($chatId, $messageId, BatchQueue::describe($attempt['job']), BatchQueue::keyboard($attempt['job']));
             return;
         }
-        $created = $attempt['result'];
-        if (!empty($created['subscription_url'])) {
-            try { QrGenerator::sendQrPhoto($chatId, $created['subscription_url'], Formatter::userInfo($server, $created)); }
-            catch (Throwable $e) { error_log('QR delivery failed after confirmed creation: ' . $e->getMessage()); }
-        }
-        tg_replace_message($chatId, $messageId, '✅ User created.', Keyboards::cancel("srv:{$serverId}"));
-        tg_send_message($chatId, "Let's back...", Keyboards::cancel("srv:{$serverId}"));
+        // QR and final replacement are committed with the confirmed creation.
     }
 
     private static function executeUserDelete(

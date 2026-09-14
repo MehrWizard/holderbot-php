@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Optional isolated MariaDB upgrade test; requires server tools and pdo_mysql."""
 from pathlib import Path
+import argparse
 import socket
 import subprocess
 import tempfile
 import time
 
 root = Path(__file__).resolve().parents[1]
+suites = {'queue_large':120,'queue_delivery':45,'queue_stats':45,'queue_monitor':45,'notifications':45,'queue_bulk':300}
+parser = argparse.ArgumentParser()
+parser.add_argument('--only', choices=suites, help='Run one suite after isolated schema checks')
+args = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix='holderbot-mysql-') as tmp:
     data = tmp + '/db'
     subprocess.run(['mariadb-install-db', '--no-defaults', '--datadir='+data], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -54,11 +59,9 @@ if ($argv[3]!=='fresh' && (Storage::getState(42)['step'] ?? '') !== 'legacy') th
                 out, err = worker.communicate(timeout=45)
                 assert worker.returncode == 0, err.decode()
         print('PASS: fresh, legacy, interrupted MySQL upgrades with 4 concurrent workers each')
-        subprocess.run(['php', '-d', 'extension=pdo_mysql', str(root/'tests/queue_large.php'), str(port)], check=True, timeout=120)
-        subprocess.run(['php', '-d', 'extension=pdo_mysql', str(root/'tests/queue_delivery.php'), str(port)], check=True, timeout=45)
-        subprocess.run(['php', '-d', 'extension=pdo_mysql', str(root/'tests/queue_stats.php'), str(port)], check=True, timeout=45)
-        subprocess.run(['php', '-d', 'extension=pdo_mysql', str(root/'tests/queue_monitor.php'), str(port)], check=True, timeout=45)
-        subprocess.run(['php', '-d', 'extension=pdo_mysql', str(root/'tests/queue_bulk.php'), str(port)], check=True, timeout=300)
+        for suite, timeout in suites.items():
+            if args.only is None or args.only == suite:
+                subprocess.run(['php', '-d', 'extension=pdo_mysql', str(root/'tests'/f'{suite}.php'), str(port)], check=True, timeout=timeout)
     finally:
         server.terminate()
         server.wait(timeout=15)

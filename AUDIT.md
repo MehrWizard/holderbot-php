@@ -11,7 +11,7 @@ Reference: local Python v0.6.0. Python database migration is out of scope. Core 
 - [X] Retain bulk loading message IDs, track edit replacements, restore bulk creation QR output, and fix confirmation markup.
 - [X] Send queue Home navigation as a fresh menu and return Unicode-safe status alerts.
 - [X] Store bulk targets, import entries, and complete report chunks in child MySQL rows. Parse imports incrementally and validate before creating users.
-- [X] Deliver reports one recipient per step and terminate failed notification attempts without replaying panel mutations.
+- [X] Commit notifications with job results in a separate MySQL outbox. Deliver reports one recipient per step, retry transient failures, and suppress permanent Telegram rejections without replaying mutations.
 - [X] Preserve the expiry scan time, report real worker heartbeat age, and clean expired data in bounded passes while retaining uncertain-operation evidence.
 - [X] Require matching template date wizard state, reject invalid date types, and preserve creation state after a database-save failure.
 - [X] Bind configuration and ownership callbacks to their target username so an older editor cannot alter another user on the same server. Old selector buttons must be reopened.
@@ -34,8 +34,8 @@ Reference: local Python v0.6.0. Python database migration is out of scope. Core 
 
 Ambiguous recharge, reset, revoke, and other mutations still require operator review. Stored intent helps that review; matching remote values alone cannot prove which request applied them. No automatic mutation replay or operator resolution command is provided.
 
-Notification delivery is best effort. A process crash between saving a delivery checkpoint and sending can lose a notification. Completed mutations are not replayed to recover notifications. Imports remain limited to 8 MiB and 100,000 entries.
+Notifications remain pending until a send response is recorded. A crash before sending is retried by cron, including for completed jobs. A crash after Telegram accepts a message but before local acknowledgement can cause a duplicate on retry; exactly-once sending is not guaranteed. Completed mutations are never replayed to recover notifications. Imports remain limited to 8 MiB and 100,000 entries.
 
 ## Local verification
 
-Passed: PHP syntax; 36 differential presentation fixtures; QR matrices for all 40 versions; 36 local HTTP requests across both clients; isolated MySQL fresh and interrupted upgrades with four concurrent workers; 16,000-row import ingestion; mutation process-exit recovery; cancellation and scheduling; bounded cleanup and delivery; persisted mutation intent and paginated issue inspection. Telegram calls are stubbed in database tests. The large mutation test uses stubbed panel transport and relaxed commit flushing in its disposable database; it does not measure live throughput or power-loss durability.
+Passed: PHP syntax; 36 differential presentation fixtures; QR matrices for all 40 versions; 36 local HTTP requests across both clients; isolated MySQL fresh and interrupted upgrades with four concurrent workers; 16,000-row import ingestion; mutation process-exit recovery; cancellation and scheduling; bounded cleanup and delivery; persisted mutation intent and paginated issue inspection. Notification tests cover atomic rollback, a separate-process exit at send entry, deduplication, permanent rejection, and transient retries. Telegram calls are stubbed in database tests. The large mutation test uses stubbed panel transport and relaxed commit flushing in its disposable database; it does not measure live throughput or power-loss durability.
