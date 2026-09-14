@@ -28,6 +28,11 @@ class CallbackHandlers {
             if ($action === 'job_cancel') {
                 BatchQueue::cancel($jobId);
                 $job = BatchQueue::get($jobId) ?? $job;
+            } else {
+                $statusText = BatchQueue::describe($job);
+                if (strlen($statusText) > 190) $statusText = substr($statusText, 0, 187) . '...';
+                tg_answer_callback($id, $statusText, true);
+                return;
             }
             tg_answer_callback($id, $action === 'job_cancel' ? 'Cancellation requested. Completed work is retained.' : null);
             tg_edit_message($chatId, $messageId, BatchQueue::describe($job), BatchQueue::keyboard($job));
