@@ -167,14 +167,21 @@ class Keyboards {
             self::button('❌ No', "decline:usr:{$serverId}:{$username}"),
         ], 1, "usr:{$serverId}:{$username}");
     }
-    public static function templateSelector(int $serverId, array $templates, string $prefix = 'use_tmpl', bool $allowCustom = true): array {
+    public static function templateSelector(int $serverId, array $templates, string $prefix = 'use_tmpl', bool $allowCustom = true,int $page=1,?string $backData=null): array {
+        $templates=array_values(array_filter($templates,fn($t)=>!isset($t['is_active']) || !empty($t['is_active'])));
+        $page=max(1,$page);$total=count($templates);
+        $templates=array_slice($templates,($page-1)*self::SELECTOR_PAGE,self::SELECTOR_PAGE);
         $buttons = [];
         foreach ($templates as $t) {
-            if (isset($t['is_active']) && !$t['is_active']) continue;
             $buttons[] = self::button("{$t['id']} | {$t['remark']} [{$t['data_limit']} GB - {$t['date_limit']} Day]", "{$prefix}:{$serverId}:{$t['id']}");
         }
         if ($allowCustom) $buttons[] = self::button('CUSTOM', "{$prefix}_custom:{$serverId}");
-        return self::rows($buttons, 1, "srv:{$serverId}");
+        $markup=self::rows($buttons,1,$backData ?? "srv:{$serverId}");
+        $nav=[];
+        if($page>1)$nav[]=self::button('⬅️',"template_page:{$prefix}:{$serverId}:".($page-1));
+        if($page*self::SELECTOR_PAGE<$total)$nav[]=self::button('➡️',"template_page:{$prefix}:{$serverId}:".($page+1));
+        if($nav)array_splice($markup['inline_keyboard'],-1,0,[$nav]);
+        return $markup;
     }
     public static function configSelector(int $serverId, array $configs, array $selectedNames, string $prefix, string $doneCallback, string $cancelCallback,int $page=1): array {
         $page=max(1,$page); $total=count($configs); $allConfigs=$configs; $configs=array_slice($configs,($page-1)*self::SELECTOR_PAGE,self::SELECTOR_PAGE);

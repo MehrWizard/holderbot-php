@@ -4,6 +4,23 @@ declare(strict_types=1);
 /** Durable delivery, independent of panel execution. Requires the caller's transaction when staging a result. */
 final class NotificationOutbox
 {
+    /** A menu has reused the loading message; future results must be sent separately. */
+    public static function detachLoadingMessage(int|string $chatId,int $messageId): bool
+    {
+        if($messageId<=0) return true;
+        $db=Storage::db();
+        $lock=$db->query("SELECT GET_LOCK('holderbot-notifications', 10)");
+        if((int)$lock->fetchColumn()!==1) return false;
+        try { Storage::cacheSet('detached_loading_'.$chatId.'_'.$messageId,true,30*86400); }
+        finally { $db->query("SELECT RELEASE_LOCK('holderbot-notifications')"); }
+        return true;
+    }
+
+    public static function loadingMessageDetached(int|string $chatId,int $messageId): bool
+    {
+        return $messageId>0 && Storage::cacheGet('detached_loading_'.$chatId.'_'.$messageId)===true;
+    }
+
     public static function stage(string $jobId, string $key, int|string $chatId, array $payload): void
     {
         if ((string)$chatId === '0') return;
@@ -27,6 +44,7 @@ final class NotificationOutbox
                 $select=$db->prepare($sql); $select->execute($jobId===null?[]:[$jobId]); $row=$select->fetch();
                 if (!$row) break;
                 $payload=json_decode($row['payload'],true,512,JSON_THROW_ON_ERROR);
+                if(isset($payload['message_id']) && self::loadingMessageDetached($row['chat_id'],(int)$payload['message_id'])) unset($payload['message_id']);
                 // Pending remains durable while the network call is in flight.
                 $db->prepare('UPDATE bot_notifications SET attempts=attempts+1 WHERE id=?')->execute([$row['id']]);
                 $error=null;

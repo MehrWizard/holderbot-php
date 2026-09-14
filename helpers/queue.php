@@ -381,7 +381,7 @@ final class BatchQueue
     private static function notifyFallback(array $job): void
     {
         $messageId = (int)($job['params']['message_id'] ?? 0);
-        if ($messageId <= 0 || (string)$job['chat_id'] === '0') return;
+        if ($messageId <= 0 || (string)$job['chat_id'] === '0' || NotificationOutbox::loadingMessageDetached($job['chat_id'],$messageId)) return;
         try { tg_edit_message($job['chat_id'], $messageId, self::fallbackMessage($job), self::keyboard($job)); }
         catch (Throwable $e) { error_log('Unable to update inline fallback message: ' . $e->getMessage()); }
     }

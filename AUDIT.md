@@ -9,7 +9,7 @@ Reference: local Python v0.6.0. Python database migration is out of scope.
 - [X] Reload jobs under MySQL locks, retain cancellation requests, and rotate worker scheduling.
 - [X] Reject null mutation results as unconfirmed; checkpoint confirmed results before notifications.
 - [X] Retain bulk loading message IDs, track edit replacements, restore bulk creation QR output, and fix confirmation markup.
-- [X] Send queue Home navigation as a fresh menu and return Unicode-safe status alerts.
+- [X] Edit queue Home and Back navigation in place, detach its loading message from result delivery, and return Unicode-safe status alerts.
 - [X] Store bulk targets, import entries, and complete report chunks in child MySQL rows. Parse imports incrementally and validate before creating users.
 - [X] Commit notifications with job results in a separate MySQL outbox. Deliver reports one recipient per step, retry transient failures, and suppress permanent Telegram rejections without replaying mutations.
 - [X] Preserve the expiry scan time, report real worker heartbeat age, and clean expired data in bounded passes while retaining uncertain-operation evidence.
@@ -28,6 +28,7 @@ Reference: local Python v0.6.0. Python database migration is out of scope.
 - [X] Bind destructive confirmations and selectors to the current server, user, template, admin, action, and wizard state.
 - [X] Paginate server, template, admin, service, configuration, and user selectors without skipping exact page boundaries.
 - [X] Invalidate cached statistics after user mutations and server changes.
+- [X] Bound creation and recharge template pickers to 20 entries per page with state-checked navigation.
 
 The source contract executes presentation logic from the original Python tree and pins all 75 router handlers, including decorators, messages, keyboards, state transitions, CRUD calls, and panel calls. PHP workflow tests exercise the corresponding command, callback, wizard, validation, and failure surfaces.
 

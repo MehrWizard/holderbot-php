@@ -21,6 +21,7 @@ class CallbackHandlers {
         $userId = $callbackQuery['from']['id'];
 
         if ($data === 'queue_home') {
+            if(!NotificationOutbox::detachLoadingMessage($chatId,$messageId)){tg_answer_callback($id,'Please try again shortly.',true);return;}
             Storage::clearState($userId);
             tg_answer_callback($id);
             self::renderHome($chatId, $messageId);
@@ -58,9 +59,20 @@ class CallbackHandlers {
             if(!$server || ($state['step']??'')!=='cfg_action_pick' || (int)($state['data']['server_id']??0)!==$serverId){tg_answer_callback($id,'Session expired, please retry.',true);return;}
             tg_answer_callback($id);tg_edit_message($chatId,$messageId,'Select items',Keyboards::bulkServices($serverId,PanelManager::getServices($server),$page));return;
         }
+        if(str_starts_with($data,'template_page:')) {
+            $parts=explode(':',$data,4);$prefix=$parts[1]??'';$serverId=(int)($parts[2]??0);$page=max(1,(int)($parts[3]??1));
+            $server=Storage::getServer($serverId);$state=Storage::getState($userId);
+            $expectedStep=$prefix==='use_tmpl'?'create_user_template':($prefix==='chg_tmpl'?'user_mod_charge':'');
+            if(!$server || $expectedStep==='' || ($state['step']??'')!==$expectedStep || (int)($state['data']['server_id']??0)!==$serverId){tg_answer_callback($id,'Session expired, please retry.',true);return;}
+            $back=$prefix==='chg_tmpl'?'usr:'.$serverId.':'.$state['data']['username']:"srv:{$serverId}";
+            tg_answer_callback($id);
+            tg_edit_message($chatId,$messageId,'Select items',Keyboards::templateSelector($serverId,Storage::getActiveTemplates(),$prefix,$prefix==='use_tmpl',$page,$back));
+            return;
+        }
 
         if (str_starts_with($data, 'queue_back:')) {
             $serverId = (int)substr($data, strlen('queue_back:'));
+            if(!NotificationOutbox::detachLoadingMessage($chatId,$messageId)){tg_answer_callback($id,'Please try again shortly.',true);return;}
             Storage::clearState($userId);
             tg_answer_callback($id);
             self::renderServerMenu($chatId, $messageId, $serverId);
@@ -340,6 +352,7 @@ class CallbackHandlers {
             $state = Storage::getState($userId);
             if (
                 $tmpl
+                && (!isset($tmpl['is_active']) || !empty($tmpl['is_active']))
                 && ($state['step'] ?? '') === 'user_mod_charge'
                 && (int)($state['data']['server_id'] ?? 0) === $serverId
                 && !empty($state['data']['username'])
@@ -1487,8 +1500,7 @@ class CallbackHandlers {
                 }
                 Storage::setState($userId, 'user_mod_charge', ['server_id' => $serverId, 'username' => $username]);
                 tg_answer_callback($callbackId);
-                $kb = Keyboards::templateSelector($serverId, $templates, 'chg_tmpl', false);
-                $kb['inline_keyboard'][count($kb['inline_keyboard']) - 1][0]['callback_data'] = "usr:{$serverId}:{$username}";
+                $kb = Keyboards::templateSelector($serverId, $templates, 'chg_tmpl', false,1,"usr:{$serverId}:{$username}");
                 tg_edit_message(
                     $chatId,
                     $messageId,

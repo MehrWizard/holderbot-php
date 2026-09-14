@@ -7,6 +7,7 @@ class Storage {
     public static array $templates=[1=>['id'=>1,'remark'=>'basic','date_type'=>'fixed','date_limit'=>30,'data_limit'=>10]];
     public static bool $failSave=false;
     public static function getTemplates(): array { return array_values(self::$templates); }
+    public static function getActiveTemplates(): array { return array_values(array_filter(self::$templates,fn($t)=>!isset($t['is_active']) || !empty($t['is_active']))); }
     public static function getTemplate($id): ?array { return self::$templates[$id] ?? null; }
     public static function saveTemplate($data): int {
         if (self::$failSave) throw new RuntimeException('Simulated database failure');
@@ -55,6 +56,10 @@ class BatchQueue {
     public static function keyboard($job): array { return ['inline_keyboard'=>[]]; }
     public static function fallbackMessage($job): string { return 'Loading...'; }
 }
+class NotificationOutbox {
+    public static array $detached=[];
+    public static function detachLoadingMessage($chat,$message): bool { self::$detached[]=[(string)$chat,$message]; return true; }
+}
 $events=[];
 function tg_send_message(...$args): array { global $events; $events[]=['send',$args]; return ['ok'=>true,'result'=>['message_id'=>100]]; }
 function tg_edit_message(...$args): array { global $events; $events[]=['edit',$args]; return ['ok'=>true]; }
@@ -83,8 +88,8 @@ command('/user 1abc name'); command('/start user_1abc_name');
 check(count(PanelManager::$calls)===$count,'Malformed server ID reached panel');
 Storage::setState(42,'create_user_name',[]); callback('home');
 check(Storage::getState(42)===null && end($events)[0]==='edit' && end($events)[1][2]==='Shared welcome','Home did not clear wizard and edit menu');
-callback('queue_home'); check(end($events)[0]==='edit','Loading Home did not edit recent message');
-callback('queue_back:1'); check(end($events)[0]==='edit','Loading Back did not edit recent message');
+callback('queue_home'); check(end($events)[0]==='edit' && end(NotificationOutbox::$detached)===['99',5],'Loading Home did not detach and edit recent message');
+callback('queue_back:1'); check(end($events)[0]==='edit' && count(NotificationOutbox::$detached)===2,'Loading Back did not detach and edit recent message');
 PanelManager::$users=array_fill(0,10,['username'=>'test','is_active'=>true]);
 callback('users:1:2:expired');
 check(end(PanelManager::$calls)===['list',3,10,null,'expired'],'User pagination did not use a page-safe exact look-ahead');
@@ -177,6 +182,14 @@ check(array_map(fn($button)=>$button['callback_data'],$homeRows[10])===['tmpls',
 check(in_array('home_page:1',buttons(Keyboards::home($many,2)),true),'Server selector has no previous page');
 $templates=array_map(fn($i)=>['id'=>$i,'remark'=>'template'.$i],range(1,45));
 check(in_array('tmpls:2',buttons(Keyboards::templatesMenu($templates)),true),'Template selector has no next page');
+$selectorTemplates=array_map(fn($i)=>['id'=>$i,'remark'=>'template'.$i,'data_limit'=>1,'date_limit'=>30],range(1,45));
+check(count(array_filter(buttons(Keyboards::templateSelector(1,$selectorTemplates)),fn($v)=>str_starts_with($v,'use_tmpl:')))===20,'Create-user template selector is not bounded');
+check(in_array('template_page:use_tmpl:1:2',buttons(Keyboards::templateSelector(1,$selectorTemplates)),true),'Create-user template selector has no next page');
+Storage::$templates=array_column($selectorTemplates,null,'id');
+Storage::setState(42,'create_user_template',['server_id'=>1,'username'=>'new_user']);callback('template_page:use_tmpl:1:2');
+check(in_array('template_page:use_tmpl:1:1',buttons(end($events)[1][3]),true),'Create-user template selector did not navigate back');
+Storage::setState(42,'user_mod_charge',['server_id'=>1,'username'=>'test_user']);callback('template_page:chg_tmpl:1:2');
+check(in_array('usr:1:test_user',buttons(end($events)[1][3]),true),'Recharge template selector lost user Back');
 $admins=array_map(fn($i)=>'admin'.$i,range(1,45));
 check(count(array_filter(buttons(Keyboards::adminsSelector(1,$admins,'xfer_from')),fn($v)=>str_starts_with($v,'xfer_from:')))===20,'Admin selector is not bounded');
 $configs=array_map(fn($i)=>['id'=>$i,'name'=>'config'.$i],range(1,45));

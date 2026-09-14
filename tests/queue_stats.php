@@ -23,13 +23,20 @@ class Formatter {
     public static function statsCard($server,$stats): string { self::$cards[]=$stats; return '<b>Stats</b> '.implode(',', $stats['today_expired'] ?? []); }
 }
 class Keyboards { public static function serverMenu(...$args): array { return []; } public static function stats(...$args): array { return []; } }
-function tg_replace_message(...$args): array { return ['ok'=>true]; }
+$replacements=0;$newMessages=0;
+function tg_replace_message(...$args): array { global $replacements;$replacements++;return ['ok'=>true]; }
+function tg_send_message(...$args): array { global $newMessages;$newMessages++;return ['ok'=>true,'result'=>['message_id'=>1000+$newMessages]]; }
 function tg_edit_message(...$args): array { return ['ok'=>true]; }
 class BackgroundTasks {
     public static function expiryPage(...$args): array { return ['page'=>2,'names'=>['name_with_underscores'],'done'=>true,'matched'=>1,'total'=>1]; }
 }
 $serverId=Storage::saveServer(['remark'=>'statistics','type'=>'marzban','base_url'=>'http://example.invalid','username'=>'test','password'=>'test']);
 $server=Storage::getServer($serverId);
+$navigation=BatchQueue::enqueueInline('stats',$server,['message_id'=>901],99,42,'navigation_result');
+NotificationOutbox::stage($navigation['id'],'final',99,['message_id'=>901,'text'=>'Stats finished','keyboard'=>[]]);
+if(!NotificationOutbox::detachLoadingMessage(99,901)) throw new RuntimeException('Could not detach loading menu');
+NotificationOutbox::drain(1,$navigation['id']);
+if($replacements!==0 || $newMessages!==1) throw new RuntimeException('Detached result deleted the navigated menu');
 $other=new PDO('mysql:host=127.0.0.1;port='.(int)$argv[1].';dbname=fresh','root','');
 $other->query("SELECT GET_LOCK('holderbot-queue-worker',0)");
 Storage::cacheSet('queue_heartbeat',time()-600,3600);
