@@ -13,7 +13,17 @@ function tg_send_message($chat, $text, ...$args): array {
 function tg_replace_message(...$args): array { return ['ok'=>false]; }
 class PanelManager {
     public static int $revokes=0;
+    public static function getUser(...$args): array { return ['subscription_url'=>'old secret subscription']; }
     public static function revokeSub(...$args): array { self::$revokes++; return ['subscription_url'=>'test']; }
+    public static function chargeUser($server,$username,$data,$days,$reset,$additive,$type,$beforeWrite): ?array {
+        global $rechargeId;
+        foreach (['reset_usage','apply_recharge'] as $phase) {
+            $beforeWrite($phase,['data_limit'=>12345,'expire'=>45678]);
+            $saved=BatchQueue::get($rechargeId);
+            if (($saved['params']['mutation_intent']['phase'] ?? '')!==$phase || $saved['active']!=='mutation') throw new LogicException('Remote write preceded intent checkpoint');
+        }
+        throw new RuntimeException('Simulated lost recharge response');
+    }
 }
 class QrGenerator {
     public static function sendQrPhoto(...$args): array { throw new RuntimeException('Simulated QR failure'); }
@@ -54,4 +64,14 @@ BatchQueue::run(2,10);
 BatchQueue::run(2,10);
 $revoke=BatchQueue::get($revoke['id']);
 if ($revoke['status']!=='completed' || (int)$revoke['success']!==1 || PanelManager::$revokes!==1) throw new RuntimeException('QR failure changed or replayed confirmed revoke');
+$evidence=BatchQueue::issues($revoke['id']);
+if (($evidence['intent']['payload']['previous_subscription_sha256'] ?? '')!==hash('sha256','old secret subscription')) throw new RuntimeException('Missing revoke baseline');
+$recharge=BatchQueue::enqueueInline('recharge',$server,['username'=>'review_me','data_limit'=>1,'date_limit'=>2,'reset'=>true],0,0,'intent_recharge');
+$rechargeId=$recharge['id'];
+$attempt=BatchQueue::executeInline($recharge,function(array &$running)use($server){ return BatchQueue::recharge($running,$server); });
+$evidence=BatchQueue::issues($rechargeId);
+if ($attempt['state']!=='failed' || $evidence['intent']['payload']['data_limit']!==12345 || $evidence['intent']['phase']!=='apply_recharge') throw new RuntimeException('Lost recharge intent after failure');
+$insert=Storage::db()->prepare("INSERT INTO bot_queue_items(job_id,position,username,status) VALUES(?,?,?,'uncertain')");
+for($i=0;$i<51;$i++) $insert->execute([$rechargeId,$i,'review_'.$i]);
+if (count(BatchQueue::issues($rechargeId)['items'])!==50 || count(BatchQueue::issues($rechargeId,49)['items'])!==1) throw new RuntimeException('Issue inspection is not paginated');
 echo "PASS: bounded report recipients, terminal delivery failures, confirmed revoke survives QR failure; Telegram stubbed\n";

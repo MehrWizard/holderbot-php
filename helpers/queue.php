@@ -146,7 +146,7 @@ final class BatchQueue
 
     /**
      * Run a persisted short operation while holding its MySQL advisory lock.
-     * If the operation throws, leave it runnable for the normal queue worker.
+     * Unconfirmed mutations are held for review; read-only failures can fall back.
      */
     public static function executeInline(array $job, callable $operation): array
     {
@@ -170,7 +170,7 @@ final class BatchQueue
             $current['active'] = 'inline';
             self::save($current);
             try {
-                $result = $operation();
+                $result = $operation($current);
                 if ($result === null || $result === false) throw new RuntimeException('Operation outcome was not confirmed');
                 $current['status'] = 'completed';
                 $current['cursor'] = 1;
@@ -206,6 +206,41 @@ final class BatchQueue
     {
         return 'The request took too long. Continuing in the background.' .
             "\nQueue reference: <code>#" . htmlspecialchars(substr((string)$job['id'], 0, 10), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</code>';
+    }
+
+    /** Called while the job lock is held; persist absolute intent before each write. */
+    public static function recharge(array &$job, array $server): ?array
+    {
+        $params = $job['params'];
+        return PanelManager::chargeUser($server, (string)$params['username'], $params['data_limit'], (int)$params['date_limit'],
+            !empty($params['reset']), !empty($params['additive']), (string)($params['date_type'] ?? 'fixed'),
+            function (string $phase, array $payload) use (&$job): void {
+                $job['params']['mutation_intent'] = ['username'=>$job['params']['username'], 'phase'=>$phase, 'payload'=>$payload];
+                $job['active'] = 'mutation';
+                self::save($job);
+            });
+    }
+
+    /** Bounded, credential-free evidence for operator review. */
+    public static function issues(string $id, int $after = -1): array
+    {
+        $job = self::get($id);
+        if (!$job) throw new InvalidArgumentException('Job not found');
+        $select = self::db()->prepare("SELECT position,username,status FROM bot_queue_items WHERE job_id=? AND status='uncertain' AND position>? ORDER BY position LIMIT 50");
+        $select->execute([$id,$after]);
+        return ['intent'=>$job['params']['mutation_intent'] ?? null, 'items'=>$select->fetchAll()];
+    }
+
+    public static function revoke(array &$job, array $server): ?array
+    {
+        $username = (string)$job['params']['username'];
+        $before = PanelManager::getUser($server, $username);
+        if (!$before || empty($before['subscription_url'])) throw new RuntimeException('Cannot read subscription before revoke');
+        $job['params']['mutation_intent'] = ['username'=>$username, 'phase'=>'revoke_subscription',
+            'payload'=>['previous_subscription_sha256'=>hash('sha256', $before['subscription_url'])]];
+        $job['active'] = 'mutation';
+        self::save($job);
+        return PanelManager::revokeSub($server, $username);
     }
 
     private static function notifyFallback(array $job): void
@@ -432,9 +467,7 @@ final class BatchQueue
             $messageId = (int)($params['message_id'] ?? 0);
             $username = (string)($params['username'] ?? '');
             if ($messageId <= 0 || $username === '') throw new InvalidArgumentException('Revoke request is incomplete');
-            $job['active'] = 'mutation';
-            self::save($job);
-            $updated = PanelManager::revokeSub($server, $username);
+            $updated = self::revoke($job, $server);
             if (!$updated) throw new RuntimeException('Subscription revoke failed');
             // Persist confirmed success before QR generation or Telegram calls.
             $job['active']=null; $job['success']=1; $job['total']=1; $job['cursor']=1; $job['status']='completed';
@@ -529,13 +562,14 @@ final class BatchQueue
             $username = $target['username']; $itemPosition = (int)$target['position'];
         }
 
+        $job['params']['mutation_intent'] = ['username'=>$username, 'phase'=>$job['kind'], 'position'=>$itemPosition ?? $index];
         $job['active'] = 'mutation';
         self::save($job);
         switch ($job['kind']) {
             case 'delete': $ok=PanelManager::deleteUser($server,$username); break;
             case 'transfer': $ok=PanelManager::setOwner($server,$username,(string)$params['to_admin']); break;
             case 'admin_status': $ok=!empty($params['active']) ? PanelManager::activateAdminUsers($server,(string)$params['admin']) : PanelManager::disableAdminUsers($server,(string)$params['admin']); break;
-            case 'recharge': $ok=(bool)PanelManager::chargeUser($server,(string)$params['username'],$params['data_limit'],(int)$params['date_limit'],!empty($params['reset']),!empty($params['additive']),(string)($params['date_type']??'fixed')); break;
+            case 'recharge': $ok=(bool)self::recharge($job,$server); break;
             case 'config':
                 $user=PanelManager::getUser($server,$username); if(!$user) throw new RuntimeException('Cannot read user config'); $serviceId=(string)$params['service_id']; $ids=$user['service_ids']??[]; $newIds=!empty($params['add'])?array_merge($ids,[$serviceId]):array_values(array_filter($ids,fn($id)=>(string)$id!==$serviceId)); $ok=PanelManager::updateUserConfigs($server,$username,$newIds); break;
             case 'create':
@@ -549,6 +583,8 @@ final class BatchQueue
                     $name = $item['username'];
                     $itemPosition = $index;
                 }
+                $job['params']['mutation_intent']['username'] = $name;
+                self::save($job);
                 $created = PanelManager::createUser($server, $name, (float)($item['datalimit']??$params['data_limit']??0), (int)($item['datelimit']??$params['date_limit']??0), null, $params['selected_configs']??[], (string)($params['date_type']??'fixed'), $params['admin']??null);
                 $ok = $created !== null;
                 if ($ok && !empty($created['subscription_url'])) {

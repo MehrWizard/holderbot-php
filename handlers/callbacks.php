@@ -327,7 +327,7 @@ class CallbackHandlers {
                 Storage::clearState($userId);
                 tg_answer_callback($id, 'Updating user...');
                 tg_edit_message($chatId, $messageId, 'Loading...');
-                $attempt = BatchQueue::executeInline($job, fn() => PanelManager::chargeUser($server, $username, $dataLimit, $dateLimit, $resetUsage, $additive, $dateType));
+                $attempt = BatchQueue::executeInline($job, function (array &$running) use ($server) { return BatchQueue::recharge($running, $server); });
                 if ($attempt['state'] === 'queued') {
                     tg_edit_message($chatId, $messageId, BatchQueue::fallbackMessage($attempt['job']), BatchQueue::keyboard($attempt['job']));
                     return;
@@ -375,8 +375,8 @@ class CallbackHandlers {
                 ], $chatId, $userId, 'callback:' . $id);
                 tg_answer_callback($id, 'Updating subscription...');
                 tg_edit_message($chatId, $messageId, 'Loading...');
-                $attempt = BatchQueue::executeInline($job, function () use ($server, $username, $chatId) {
-                    $updated = PanelManager::revokeSub($server, $username);
+                $attempt = BatchQueue::executeInline($job, function (array &$running) use ($server) {
+                    $updated = BatchQueue::revoke($running, $server);
                     if (!$updated) throw new RuntimeException('Subscription revoke failed');
                     return $updated;
                 });

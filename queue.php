@@ -34,10 +34,20 @@ try {
             $job=BatchQueue::get($argv[2] ?? '');
             if (!$job) throw new RuntimeException('Job not found');
             echo BatchQueue::describe($job)."\n";
+            $issues=BatchQueue::issues($job['id'], (int)($argv[3] ?? -1));
+            if ($issues['intent']) {
+                echo 'Last mutation target: '.($issues['intent']['username'] ?? '')."\n";
+                echo 'Last write phase: '.($issues['intent']['phase'] ?? '')."\n";
+                foreach ($issues['intent']['payload'] ?? [] as $field=>$value) {
+                    if (is_scalar($value) || $value === null) echo $field.'='.var_export($value,true)."\n";
+                }
+            }
+            foreach ($issues['items'] as $item) echo $item['position'].' '.$item['username'].' '.$item['status']."\n";
+            if (count($issues['items'])===50) echo 'Next page: php queue.php issues '.$job['id'].' '.end($issues['items'])['position']."\n";
             break;
         case 'cancel': BatchQueue::cancel($argv[2] ?? ''); echo "Cancellation requested\n"; break;
         case 'retry-read': throw new RuntimeException('Automatic retry is disabled; submit a new read job after reviewing the failure');
         case 'resend': throw new RuntimeException('Automatic resend is disabled; use the bot action to create a new delivery');
-        default: throw new RuntimeException('Usage: php queue.php health|work|attention|inspect ID|issues ID|cancel ID|retry-read ID|resend ID');
+        default: throw new RuntimeException('Usage: php queue.php health|work|attention|inspect ID|issues ID [AFTER_POSITION]|cancel ID|retry-read ID|resend ID');
     }
 } catch (Throwable $e) { error_log($e->getMessage()); exit(1); }

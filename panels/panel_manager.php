@@ -220,12 +220,17 @@ class PanelManager {
         int $expireDays,
         bool $resetUsage = false,
         bool $additive = false,
-        string $dateType = 'fixed'
+        string $dateType = 'fixed',
+        ?callable $beforeWrite = null
     ): ?array {
         $user = self::getUser($server, $username);
         if (!$user) return null;
-        if ($resetUsage && !self::resetUsage($server, $username)) return null;
         $payload = self::rechargePayload($server, $username, $user, $dataLimitGb, $expireDays, $additive, $dateType);
+        if ($resetUsage) {
+            if ($beforeWrite) $beforeWrite('reset_usage', $payload);
+            if (!self::resetUsage($server, $username)) return null;
+        }
+        if ($beforeWrite) $beforeWrite('apply_recharge', $payload);
         $resp = $server['type'] === 'marzneshin'
             ? MarzneshinClient::modifyUser($server, $username, $payload)
             : MarzbanClient::modifyUser($server, $username, $payload);

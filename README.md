@@ -59,10 +59,11 @@ The queue is reserved for work that can exceed webhook or shared-host limits: mu
 php queue.php health
 php queue.php attention
 php queue.php inspect JOB_ID
+php queue.php issues JOB_ID
 php queue.php cancel JOB_ID
 ```
 
-`/jobs` in Telegram lists recent jobs for the current chat. Jobs are deduplicated by submission identity, rotate through bounded worker slices, and retain success and uncertain-operation counts. Cancellation stops remaining work after the current step; it cannot undo a panel request already sent. Expired job data is cleaned up incrementally; uncertain-operation evidence is retained. Report delivery advances one recipient per step. Remote APIs do not provide a shared transaction, so uncertain mutations require manual review.
+`/jobs` in Telegram lists recent jobs for the current chat. Jobs are deduplicated by submission identity, rotate through bounded worker slices, and retain success and uncertain-operation counts. Cancellation stops remaining work after the current step; it cannot undo a panel request already sent. Expired job data is cleaned up incrementally; uncertain-operation evidence is retained. Report delivery advances one recipient per step. Remote APIs do not provide a shared transaction, so uncertain mutations require manual review. `issues` shows the last mutation target, persisted recharge values or revoke baseline hash, and up to 50 uncertain users per page.
 
 ## Verification
 
