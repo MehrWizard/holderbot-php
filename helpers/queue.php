@@ -131,7 +131,11 @@ final class BatchQueue
                 $job['error'] = 'Stats request has no originating message';
                 return;
             }
-            $stats = PanelManager::getServerStats($server);
+            $stats = Storage::cacheGet('stats_' . $server['id']);
+            if (!is_array($stats)) {
+                $stats = PanelManager::getServerStats($server);
+                Storage::cacheSet('stats_' . $server['id'], $stats, 30);
+            }
             $text = Formatter::statsCard($server, $stats);
             $response = tg_edit_message($job['chat_id'], (int)$params['message_id'], $text, Keyboards::serverMenu((int)$server['id']));
             if (empty($response['ok'])) throw new RuntimeException('Unable to deliver statistics');

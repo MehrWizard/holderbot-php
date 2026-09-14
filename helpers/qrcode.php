@@ -562,19 +562,20 @@ final class PngWriter {
         $n = count($matrix);
         $imgSize = ($n + $quietZone * 2) * $moduleSize;
 
-        // Build raw scanlines (8-bit grayscale, filter type 0 per line)
+        // Build one scanline per QR module row, then repeat it vertically.
+        // This avoids millions of per-pixel intdiv/string-concatenation calls
+        // on shared hosts while producing the same grayscale PNG bytes.
+        $quiet = str_repeat("\xFF", $quietZone * $moduleSize);
         $raw = '';
-        for ($y = 0; $y < $imgSize; $y++) {
-            $raw .= "\x00"; // filter type: None
-            $moduleRow = intdiv($y, $moduleSize) - $quietZone;
-            for ($x = 0; $x < $imgSize; $x++) {
-                $moduleCol = intdiv($x, $moduleSize) - $quietZone;
-                $isDark = false;
-                if ($moduleRow >= 0 && $moduleRow < $n && $moduleCol >= 0 && $moduleCol < $n) {
-                    $isDark = (bool)$matrix[$moduleRow][$moduleCol];
-                }
-                $raw .= $isDark ? "\x00" : "\xFF";
+        for ($moduleRow = -$quietZone; $moduleRow < $n + $quietZone; $moduleRow++) {
+            $line = "\x00" . $quiet;
+            for ($moduleCol = -$quietZone; $moduleCol < $n + $quietZone; $moduleCol++) {
+                $dark = $moduleRow >= 0 && $moduleRow < $n && $moduleCol >= 0 && $moduleCol < $n
+                    && (bool)$matrix[$moduleRow][$moduleCol];
+                $line .= str_repeat($dark ? "\x00" : "\xFF", $moduleSize);
             }
+            $line .= $quiet;
+            $raw .= str_repeat($line, $moduleSize);
         }
 
         $compressed = gzcompress($raw, 9);
@@ -639,9 +640,25 @@ class QrGenerator {
      * data is too large to encode.
      */
     public static function sendQrPhoto(int|string $chatId, string $data, string $caption): ?array {
-        $png = self::generatePng($data);
+        global $config;
+        $background = (string)($config['qr_background'] ?? (getenv('QR_BACKGROUND') ?: ''));
+        $cacheKey = 'qr_png_' . hash('sha256', $data . '|' . $background);
+        $png = null;
+        if (class_exists('Storage')) {
+            try {
+                $cached = Storage::cacheGet($cacheKey);
+                if (is_string($cached) && $cached !== '') $png = base64_decode($cached, true) ?: null;
+            } catch (Throwable) {
+                // QR delivery remains available if the optional cache is unavailable.
+            }
+        }
+        $png ??= self::generatePng($data);
         if ($png === null) {
             return tg_send_message($chatId, $caption . "\n\n⚠️ <i>This link is too long to render as a QR code; use the text link above.</i>");
+        }
+
+        if (class_exists('Storage')) {
+            try { Storage::cacheSet($cacheKey, base64_encode($png), 86400); } catch (Throwable) {}
         }
 
         if (!class_exists('CURLStringFile')) {
