@@ -1240,11 +1240,10 @@ class CallbackHandlers {
 
     private static function renderHome(int|string $chatId, int $messageId, bool $fresh = false): void {
         $servers = Storage::getServers();
-        $text = "Welcome to HolderBot 🤖 [<code>" . HOLDERBOT_VERSION . "</code> by @ErfJabs]\n";
-        $text .= "<b><a href='https://t.me/pingihostbot'>نصب پنل و انجام تانل به صورت کامل خودکار!</a></b>";
+        $text = Formatter::start();
         $kb = Keyboards::home($servers);
         if ($fresh) tg_send_message($chatId, $text, $kb);
-        else tg_edit_message($chatId, $messageId, $text, $kb);
+        else tg_replace_message($chatId, $messageId, $text, $kb);
     }
 
     private static function renderServerMenu(int|string $chatId, int $messageId, int $serverId): void {

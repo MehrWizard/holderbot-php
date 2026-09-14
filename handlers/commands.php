@@ -32,6 +32,10 @@ class CommandHandlers {
                     }
                     $subParts = explode('_', $parts[1], 3);
                     if (count($subParts) >= 3) {
+                        if (!ctype_digit($subParts[1]) || $subParts[2] === '') {
+                            tg_send_message($chatId, "❌ Invalid pattern.");
+                            return true;
+                        }
                         return self::handleDeepLinkUser($chatId, (int)$subParts[1], $subParts[2]);
                     }
                 }
@@ -97,7 +101,7 @@ class CommandHandlers {
      * instead), matching the original bot's behavior.
      */
     private static function cmdUser(int|string $chatId, array $parts): bool {
-        if (count($parts) < 3) {
+        if (count($parts) < 3 || !ctype_digit($parts[1]) || trim($parts[2]) === '') {
             tg_send_message($chatId, "❌ Invalid pattern.\n/user serverid username");
             return true;
         }
