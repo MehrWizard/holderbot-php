@@ -3,13 +3,16 @@ declare(strict_types=1);
 $config=['storage_type'=>'mysql','mysql'=>['host'=>'127.0.0.1','port'=>(int)$argv[1],'database'=>'fresh','username'=>'root','password'=>'']];
 require __DIR__.'/../storage.php';
 require __DIR__.'/../helpers/queue.php';
+require __DIR__.'/../helpers/tracker.php';
 Storage::init();
-$sent=[]; $mode='ok';
+$sent=[]; $deleted=[]; $mode='ok'; $nextMessageId=null;
 function tg_send_message($chat,$text,...$args): ?array {
-    global $sent,$mode; $sent[]=[$chat,$text];
-    return match($mode) { 'blocked'=>['ok'=>false,'error_code'=>403], 'rate'=>['ok'=>false,'error_code'=>429,'parameters'=>['retry_after'=>120]], 'timeout'=>null, default=>['ok'=>true,'result'=>['message_id'=>123]] };
+    global $sent,$mode,$nextMessageId; $sent[]=[$chat,$text];
+    $messageId=$nextMessageId===null ? 123 : $nextMessageId++;
+    return match($mode) { 'blocked'=>['ok'=>false,'error_code'=>403], 'rate'=>['ok'=>false,'error_code'=>429,'parameters'=>['retry_after'=>120]], 'timeout'=>null, default=>['ok'=>true,'result'=>['message_id'=>$messageId]] };
 }
 function tg_replace_message($chat,$id,$text,...$args): ?array { return tg_send_message($chat,$text); }
+function tg_delete_message($chat,$id): array { global $deleted; $deleted[]=(int)$id; return ['ok'=>true]; }
 function check($value,$message): void { if(!$value) throw new RuntimeException($message); }
 function notice($id): array {
     $s=Storage::db()->prepare('SELECT * FROM bot_notifications WHERE job_id=? ORDER BY id DESC LIMIT 1'); $s->execute([$id]); return $s->fetch() ?: [];
@@ -68,4 +71,11 @@ check(notice($job['id'])['payload']!=='{}' && BatchQueue::get($job['id'])['paylo
 check(BatchQueue::health()['pending_notifications']>0,'Health omitted delivery backlog');
 BatchQueue::run(2,10);
 check(notice($job['id'])['status']==='sent','Cron did not deliver notification for completed job');
+$nextMessageId=201;
+NotificationOutbox::stage($job['id'],'report_1_0',99,['text'=>'first,second']);
+NotificationOutbox::stage($job['id'],'report_2_0',99,['text'=>'third,fourth']);
+NotificationOutbox::drain(2,$job['id']);
+check(Storage::cacheGet('tracked_messages_99')===[201,202],'Delivered report message IDs were not retained together');
+MessageTracker::begin(99); MessageTracker::sent(99,'new menu',[],['ok'=>true,'result'=>['message_id'=>300]]);
+check($deleted===[201,202],'Menu cleanup did not delete every old report chunk');
 echo "PASS: atomic notification staging, process-exit recovery, deduplication, permanent rejection and transient retry; Telegram stubbed\n";

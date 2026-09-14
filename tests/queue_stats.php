@@ -82,4 +82,5 @@ $parts=$chunks->fetchAll(PDO::FETCH_COLUMN);
 if(count($parts)<2) throw new RuntimeException('Long report was not safely chunked');
 $length=new ReflectionMethod(BatchQueue::class,'telegramTextLength');
 foreach($parts as $part) if($length->invoke(null,json_decode($part,true)['text'])>4096) throw new RuntimeException('A follow-up report exceeds Telegram limits');
+foreach($parts as $part) if(str_contains(json_decode($part,true)['text'],"\n")) throw new RuntimeException('Chunked users are not comma-separated');
 echo "PASS: immediate statistics, cron continuation, read timeout recovery, heartbeat isolation; Telegram stubbed\n";

@@ -458,9 +458,9 @@ final class BatchQueue
         $insert = self::db()->prepare('INSERT IGNORE INTO bot_queue_items (job_id,position,username,payload) VALUES (?,?,?,?)');
         $chunks = []; $chunk = '';
         foreach ($entries as $entry) {
-            $candidate=$chunk . ($chunk === '' ? '' : "\n") . $entry;
+            $candidate=$chunk . ($chunk === '' ? '' : ',') . $entry;
             if ($chunk !== '' && self::telegramTextLength($candidate) > self::TELEGRAM_TEXT_LIMIT) { $chunks[] = $chunk; $chunk = ''; }
-            $chunk .= ($chunk === '' ? '' : "\n") . $entry;
+            $chunk .= ($chunk === '' ? '' : ',') . $entry;
         }
         if ($chunk !== '') $chunks[] = $chunk;
         foreach ($chunks as $index => $entry) {
@@ -487,7 +487,7 @@ final class BatchQueue
         $select->execute([$job['id']]); $entries=[];
         foreach($select->fetchAll(PDO::FETCH_COLUMN) as $payload) {
             $text=(string)(json_decode((string)$payload,true,512,JSON_THROW_ON_ERROR)['text'] ?? '');
-            foreach(explode("\n",$text) as $entry) if($entry!=='') $entries[]=$entry;
+            foreach(explode(',',$text) as $entry) if($entry!=='') $entries[]=$entry;
         }
         $stats['today_expired']=$entries;
         $full=Formatter::statsCard($server,$stats);

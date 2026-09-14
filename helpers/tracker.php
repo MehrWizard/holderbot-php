@@ -11,6 +11,10 @@ class MessageTracker {
     private static function key(int|string $chat): string { return 'tracked_messages_' . $chat; }
     public static function remember(int|string $chat, int $message): void {
         if ((string)$chat !== (string)self::$chat) return;
+        self::rememberForCleanup($chat,$message);
+    }
+    /** Record cron-delivered result messages without requiring webhook context. */
+    public static function rememberForCleanup(int|string $chat, int $message): void {
         $ids = Storage::cacheGet(self::key($chat)) ?? [];
         $ids[] = $message;
         Storage::cacheSet(self::key($chat), array_values(array_unique($ids)), 30 * 86400);
