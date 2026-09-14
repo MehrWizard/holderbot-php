@@ -147,5 +147,7 @@ for index,(fixture,value) in enumerate(zip(fixtures,actual)):
         # The requested PHP Home layout removes Check Update and combines its actions.
         expected=[row for row in expected if '🗃 Templates' not in row and '➕ Add Server' not in row]
         expected.append(['🗃 Templates','➕ Add Server'])
+    if fixture['kind']=='keyboard' and fixture['method']=='templateActions':
+        expected[-1]=['◀️ Back','🏛️ Home']
     assert value == expected, f"Fixture {index} {fixture['kind']}:\nExpected: {expected!r}\nActual: {value!r}"
 print(f'PASS: {len(fixtures)} differential fixtures evaluated against original Python code')

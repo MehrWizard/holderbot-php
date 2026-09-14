@@ -29,6 +29,8 @@ Reference: local Python v0.6.0. Python database migration is out of scope.
 - [X] Paginate server, template, admin, service, configuration, and user selectors without skipping exact page boundaries.
 - [X] Invalidate cached statistics after user mutations and server changes.
 - [X] Bound creation and recharge template pickers to 20 entries per page with state-checked navigation.
+- [X] Use callback identity for bulk submission deduplication so another action from the same edited message creates a new job.
+- [X] Return template cards to their source list page and remove duplicate confirmation navigation.
 
 The source contract executes presentation logic from the original Python tree and pins all 75 router handlers, including decorators, messages, keyboards, state transitions, CRUD calls, and panel calls. PHP workflow tests exercise the corresponding command, callback, wizard, validation, and failure surfaces.
 

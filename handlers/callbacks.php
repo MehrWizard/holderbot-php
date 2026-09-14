@@ -835,6 +835,7 @@ class CallbackHandlers {
 
         // Templates Menu: tmpls
         if ($data === 'tmpls' || str_starts_with($data,'tmpls:')) {
+            Storage::clearState($userId);
             tg_answer_callback($id);
             self::renderTemplates($chatId,$messageId,max(1,(int)(explode(':',$data,2)[1] ?? 1)));
             return;
@@ -842,32 +843,34 @@ class CallbackHandlers {
 
         // View Template: tmpl_view:<id>
         if (str_starts_with($data, 'tmpl_view:')) {
-            $tmplId = (int)substr($data, strlen('tmpl_view:'));
+            $parts=explode(':',$data,3);$tmplId=(int)($parts[1]??0);$page=max(1,(int)($parts[2]??1));
             $tmpl = Storage::getTemplate($tmplId);
             if (!$tmpl) {
                 tg_answer_callback($id, "❌ Not Found.", true);
                 tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::cancel());
                 return;
             }
+            Storage::clearState($userId);
             tg_answer_callback($id);
             $isActive = !isset($tmpl['is_active']) || !empty($tmpl['is_active']);
-            tg_edit_message($chatId, $messageId, Formatter::templateCard($tmpl), Keyboards::templateActions($tmplId, $isActive));
+            tg_edit_message($chatId, $messageId, Formatter::templateCard($tmpl), Keyboards::templateActions($tmplId, $isActive,$page));
             return;
         }
 
         // Confirm before toggling Template is_active: tmpl_tgl_ask:<id>
         if (str_starts_with($data, 'tmpl_tgl_ask:')) {
-            $tmplId = (int)substr($data, strlen('tmpl_tgl_ask:'));
+            $parts=explode(':',$data,3);$tmplId=(int)($parts[1]??0);$page=max(1,(int)($parts[2]??1));
             if(!Storage::getTemplate($tmplId)){tg_answer_callback($id,'Not found.',true);return;}
-            Storage::setState($userId,'template_confirm',['template_id'=>$tmplId,'action'=>'toggle']);
+            Storage::setState($userId,'template_confirm',['template_id'=>$tmplId,'action'=>'toggle','page'=>$page]);
             tg_answer_callback($id);
-            tg_edit_message($chatId, $messageId, "Are your sure?", Keyboards::confirm("tmpl_tgl_act:{$tmplId}", "tmpl_view:{$tmplId}"));
+            tg_edit_message($chatId, $messageId, "Are your sure?", Keyboards::confirm("tmpl_tgl_act:{$tmplId}", "tmpl_view:{$tmplId}:{$page}"));
             return;
         }
 
         // Toggle Template is_active: tmpl_tgl_act:<id>
         if (str_starts_with($data, 'tmpl_tgl_act:')) {
             $tmplId = (int)substr($data, strlen('tmpl_tgl_act:'));
+            $page=max(1,(int)(Storage::getState($userId)['data']['page']??1));
             if(!self::consumeConfirmation($userId,'template_confirm',['template_id'=>$tmplId,'action'=>'toggle'])){tg_answer_callback($id,'Session expired, please retry.',true);return;}
             $tmpl = Storage::getTemplate($tmplId);
             if (!$tmpl) {
@@ -878,21 +881,21 @@ class CallbackHandlers {
             $tmpl['is_active'] = ($tmpl['is_active'] ?? true) ? 0 : 1;
             Storage::saveTemplate($tmpl);
             tg_answer_callback($id, "✅ Success.");
-            tg_edit_message($chatId, $messageId, "✅ Success.", Keyboards::cancel());
+            tg_edit_message($chatId, $messageId, "✅ Success.", Keyboards::cancel('tmpls:'.$page));
             return;
         }
 
         // Delete Template prompt: tmpl_del_ask:<id>
         if (str_starts_with($data, 'tmpl_del_ask:')) {
-            $tmplId = (int)substr($data, strlen('tmpl_del_ask:'));
+            $parts=explode(':',$data,3);$tmplId=(int)($parts[1]??0);$page=max(1,(int)($parts[2]??1));
             if(!Storage::getTemplate($tmplId)){tg_answer_callback($id,'Not found.',true);return;}
-            Storage::setState($userId,'template_confirm',['template_id'=>$tmplId,'action'=>'delete']);
+            Storage::setState($userId,'template_confirm',['template_id'=>$tmplId,'action'=>'delete','page'=>$page]);
             tg_answer_callback($id);
             tg_edit_message(
                 $chatId,
                 $messageId,
                 "Are your sure?",
-                Keyboards::confirm("tmpl_del:{$tmplId}", "tmpl_view:{$tmplId}")
+                Keyboards::confirm("tmpl_del:{$tmplId}", "tmpl_view:{$tmplId}:{$page}")
             );
             return;
         }
@@ -900,10 +903,11 @@ class CallbackHandlers {
         // Delete Template confirmed: tmpl_del:<id>
         if (str_starts_with($data, 'tmpl_del:')) {
             $tmplId = (int)substr($data, strlen('tmpl_del:'));
+            $page=max(1,(int)(Storage::getState($userId)['data']['page']??1));
             if(!self::consumeConfirmation($userId,'template_confirm',['template_id'=>$tmplId,'action'=>'delete'])){tg_answer_callback($id,'Session expired, please retry.',true);return;}
             $ok = Storage::deleteTemplate($tmplId);
             tg_answer_callback($id);
-            tg_edit_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel());
+            tg_edit_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel('tmpls:'.$page));
             return;
         }
 
@@ -1336,9 +1340,10 @@ class CallbackHandlers {
     private static function queueBatch(string $kind, array $server, array $params, int|string $chatId, int $messageId, int $userId, string $callbackId): void {
         try {
             $params['message_id'] = $messageId;
+            $submission='callback:'.$callbackId;
             $job = $kind === 'stats'
-                ? BatchQueue::enqueueInline($kind, $server, $params, $chatId, $userId, 'callback:' . $callbackId)
-                : BatchQueue::enqueue($kind, $server, $params, $chatId, $userId, 'message:' . $messageId);
+                ? BatchQueue::enqueueInline($kind, $server, $params, $chatId, $userId, $submission)
+                : BatchQueue::enqueue($kind, $server, $params, $chatId, $userId, $submission);
         } catch (Throwable $e) {
             error_log('Batch submission failed: ' . $e->getMessage());
             tg_answer_callback($callbackId, 'Unable to queue this batch. Check queue storage and batch size.', true);

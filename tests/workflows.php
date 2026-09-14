@@ -37,6 +37,7 @@ class PanelManager {
 class Formatter {
     public static function start(): string { return 'Shared welcome'; }
     public static function userCard($server,$user): string { return 'Card '.$user['username']; }
+    public static function templateCard($template): string { return 'Template '.$template['id']; }
     public static function escape($text): string { return htmlspecialchars($text); }
 }
 class BatchQueue {
@@ -182,6 +183,23 @@ check(array_map(fn($button)=>$button['callback_data'],$homeRows[10])===['tmpls',
 check(in_array('home_page:1',buttons(Keyboards::home($many,2)),true),'Server selector has no previous page');
 $templates=array_map(fn($i)=>['id'=>$i,'remark'=>'template'.$i],range(1,45));
 check(in_array('tmpls:2',buttons(Keyboards::templatesMenu($templates)),true),'Template selector has no next page');
+$templateCard=Keyboards::templateActions(1);
+check(in_array('tmpls:1',buttons($templateCard),true),'Template card has no Back to template list');
+$pageTwoCard=Keyboards::templatesMenu($templates,2);
+check(in_array('tmpl_view:21:2',buttons($pageTwoCard),true),'Template list did not retain its page in card callback');
+Storage::$templates=array_column($templates,null,'id');
+callback('tmpl_view:21:2');
+check(in_array('tmpls:2',buttons(end($events)[1][3]),true),'Template card Back lost the source page');
+callback('tmpl_tgl_ask:21:2');
+check(in_array('tmpl_view:21:2',buttons(end($events)[1][3]),true),'Template confirmation No lost the source page');
+callback('tmpl_view:21:2');
+check(Storage::getState(42)===null,'Returning from template confirmation left a stale pending action');
+callback('tmpl_tgl_ask:21:2');callback('tmpl_tgl_act:21');
+check(in_array('tmpls:2',buttons(end($events)[1][3]),true) && Storage::$templates[21]['is_active']===0,'Template toggle did not return to source page');
+callback('tmpl_tgl_act:21');
+check(Storage::$templates[21]['is_active']===0 && end($events)[0]==='alert','Repeated template confirmation toggled twice');
+$confirmation=Keyboards::confirm('tmpl_del:1','tmpl_view:1');
+check(count(array_filter(buttons($confirmation),fn($data)=>$data==='tmpl_view:1'))===1 && !in_array('tmpls',buttons($confirmation),true),'Confirmation shows duplicate No and Back navigation');
 $selectorTemplates=array_map(fn($i)=>['id'=>$i,'remark'=>'template'.$i,'data_limit'=>1,'date_limit'=>30],range(1,45));
 check(count(array_filter(buttons(Keyboards::templateSelector(1,$selectorTemplates)),fn($v)=>str_starts_with($v,'use_tmpl:')))===20,'Create-user template selector is not bounded');
 check(in_array('template_page:use_tmpl:1:2',buttons(Keyboards::templateSelector(1,$selectorTemplates)),true),'Create-user template selector has no next page');

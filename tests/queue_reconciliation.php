@@ -19,6 +19,10 @@ class PanelManager {
 foreach(['marzban','marzneshin'] as $type) {
     $id=Storage::saveServer(['type'=>$type,'remark'=>'reconcile_'.$type,'base_url'=>'https://example.invalid','username'=>'test','password'=>'test']);
     $server=Storage::getServer($id);
+    $first=BatchQueue::enqueue('delete',$server,['message_id'=>7,'admin'=>'alice'],99,42,'callback:bulk_a_'.$type);
+    $repeat=BatchQueue::enqueue('delete',$server,['message_id'=>7,'admin'=>'alice'],99,42,'callback:bulk_a_'.$type);
+    $second=BatchQueue::enqueue('delete',$server,['message_id'=>7,'admin'=>'bob'],99,42,'callback:bulk_b_'.$type);
+    if($first['id']!==$repeat['id'] || $first['id']===$second['id']) throw new RuntimeException('Bulk callback identity suppressed a new action or replayed an old one');
     foreach([200,300] as $value) {
         $job=BatchQueue::enqueueInline('recharge',$server,['username'=>'test'],0,0,'reconcile_'.$value);
         BatchQueue::executeInline($job,function(array &$running){

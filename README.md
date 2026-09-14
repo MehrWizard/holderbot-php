@@ -21,7 +21,7 @@ Telegram and panel APIs still require JSON at their HTTP boundaries. The applica
 - Restored Python menus, cards, prompts, pagination, templates, inline results, and text overrides. Template pickers are paginated, and leaving a running job preserves the navigated menu when its result arrives.
 - Fixed callback parsing, long usernames, numeric server IDs, stale confirmations and selectors, and chat-scoped wizard state.
 - Fixed Marzban and Marzneshin credential validation, token-cache identity, user creation, date changes, recharge, ownership, and config updates.
-- Fixed destructive batch pagination and bounded all large selectors without skipping users at page boundaries.
+- Fixed destructive batch pagination, bounded large selectors, and allowed repeated bulk actions from the same menu without reusing an earlier job.
 - Added Unicode digit handling, HTML escaping, bounded input validation, and correct empty API responses.
 - Added full QR versions 1–40, in-memory QR uploads, optional backgrounds, MySQL migrations, and persistent queue processing.
 - Repaired known upstream defects in additive recharge, template updates, inline owner handling, and credential-edit validation.

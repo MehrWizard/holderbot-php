@@ -117,27 +117,23 @@ class Keyboards {
     public static function templatesMenu(array $templates,int $page=1): array {
         $page=max(1,$page); $total=count($templates); $templates=array_slice($templates,($page-1)*self::SELECTOR_PAGE,self::SELECTOR_PAGE);
         $buttons = [];
-        foreach ($templates as $t) $buttons[] = self::button((($t['is_active'] ?? true) ? '✅ ' : '❌ ') . $t['remark'], "tmpl_view:{$t['id']}");
+        foreach ($templates as $t) $buttons[] = self::button((($t['is_active'] ?? true) ? '✅ ' : '❌ ') . $t['remark'], "tmpl_view:{$t['id']}:{$page}");
         $rows = array_chunk($buttons, 2);
         $rows[] = [self::button('➕ Create', 'new_tmpl'), self::button('🏛️ Home', 'home')];
         $nav=[]; if($page>1)$nav[]=self::button('⬅️','tmpls:'.($page-1)); if($page*self::SELECTOR_PAGE<$total)$nav[]=self::button('➡️','tmpls:'.($page+1)); if($nav)$rows[]=$nav;
         return self::navigationLast(['inline_keyboard' => $rows]);
     }
-    public static function templateActions(int $tmplId, bool $isActive = true): array {
+    public static function templateActions(int $tmplId, bool $isActive = true,int $page=1): array {
+        $page=max(1,$page);
         return self::rows([
             self::button('📊 Data Limit', "tmpl_edit_data:{$tmplId}"), self::button('⏱️ Date Limit', "tmpl_edit_date:{$tmplId}"),
-            self::button($isActive ? '❌ Disabled' : '✅ Activated', "tmpl_tgl_ask:{$tmplId}"), self::button('🏷 Remark', "tmpl_edit_remark:{$tmplId}"),
-            self::button('🗑 Remove', "tmpl_del_ask:{$tmplId}"),
-        ]);
+            self::button($isActive ? '❌ Disabled' : '✅ Activated', "tmpl_tgl_ask:{$tmplId}:{$page}"), self::button('🏷 Remark', "tmpl_edit_remark:{$tmplId}"),
+            self::button('🗑 Remove', "tmpl_del_ask:{$tmplId}:{$page}"),
+        ],2,'tmpls:'.$page);
     }
     public static function confirm(string $confirmData, string $cancelData = 'home'): array {
-        $back = $cancelData;
-        if (str_starts_with($back, 'act_confirm:')) {
-            $parts = explode(':', $back);
-            $back = "usr:{$parts[2]}:{$parts[3]}";
-        } elseif (preg_match('/^(?:srv_cfg|act_menu):(\d+)$/', $back, $m)) $back = 'srv:' . $m[1];
-        elseif (str_starts_with($back, 'tmpl_view:')) $back = 'home';
-        return self::rows([self::button('✅ Yes', $confirmData), self::button('❌ No', $cancelData)], 2, $cancelData);
+        // No already returns to the previous screen; a second Back button would duplicate it.
+        return self::rows([self::button('✅ Yes', $confirmData), self::button('❌ No', $cancelData)]);
     }
     public static function dateTypeSelector(int $serverId, string $username, string $prefix = 'dt_type'): array {
         $back = $prefix === 'crt_dt_type' ? "srv:{$serverId}" : "usr:{$serverId}:{$username}";
