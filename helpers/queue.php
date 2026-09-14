@@ -73,7 +73,7 @@ final class BatchQueue
             $existing = $db->prepare('SELECT * FROM bot_queue WHERE id=? OR submission_key=?'); $existing->execute([$id,$submissionKey]);
             if ($row = $existing->fetch()) return self::decode($row);
             $status = in_array($kind, ['delete','transfer','config'], true) ? 'discovering' : 'running';
-        $total = in_array($kind, ['admin_status','outbox'], true) ? 1 : (in_array($kind, ['create','import'], true) ? max(1,$targetCount) : 0);
+        $total = in_array($kind, ['admin_status','outbox','recharge'], true) ? 1 : (in_array($kind, ['create','import'], true) ? max(1,$targetCount) : 0);
             $insert = $db->prepare('INSERT INTO bot_queue (id,kind,server_id,server_fingerprint,chat_id,user_id,submission_key,status,payload,total,notification_status) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
             $insert->execute([$id,$kind,$serverId,self::fingerprint($server),$chatId,$userId,$submissionKey,$status,json_encode($params, JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),$total,$userId ? 'pending' : 'suppressed']);
             return self::get($id) ?? throw new RuntimeException('Queue insert failed');
@@ -126,9 +126,15 @@ final class BatchQueue
             if (!$token) throw new RuntimeException('Access refresh failed'); Storage::cacheSet('online_'.$server['id'],time(),86400); $job['success']=1; $job['total']=1; $job['cursor']=1; $job['status']='completed'; return;
         }
         if ($job['kind'] === 'stats') {
+            if (empty($params['message_id'])) {
+                $job['status'] = 'cancelled';
+                $job['error'] = 'Stats request has no originating message';
+                return;
+            }
             $stats = PanelManager::getServerStats($server);
             $text = Formatter::statsCard($server, $stats);
-            self::message($job['chat_id'], (int)$job['user_id'], $text, $job['id'].':stats');
+            $response = tg_edit_message($job['chat_id'], (int)$params['message_id'], $text, Keyboards::serverMenu((int)$server['id']));
+            if (empty($response['ok'])) throw new RuntimeException('Unable to deliver statistics');
             $job['success'] = 1; $job['total'] = 1; $job['cursor'] = 1; $job['status'] = 'completed'; return;
         }
         if ($job['kind'] === 'monitor') {

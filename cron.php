@@ -8,6 +8,7 @@ require __DIR__ . '/storage.php';
 require __DIR__ . '/tgbot.php';
 require __DIR__ . '/panels/panel_manager.php';
 require __DIR__ . '/helpers/format.php';
+require __DIR__ . '/helpers/keyboards.php';
 require __DIR__ . '/helpers/tasks.php';
 require_once __DIR__ . '/helpers/queue.php';
 require __DIR__ . '/helpers/qrcode.php';

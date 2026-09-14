@@ -40,7 +40,7 @@ function tgbot(string $method, array $params = []): ?array {
     // Check if parameters contain file uploads (CURLFile)
     $hasFile = false;
     foreach ($params as $val) {
-        if ($val instanceof CURLFile) {
+        if ($val instanceof CURLFile || (class_exists('CURLStringFile') && $val instanceof CURLStringFile)) {
             $hasFile = true;
             break;
         }

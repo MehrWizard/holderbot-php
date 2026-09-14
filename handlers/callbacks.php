@@ -669,7 +669,7 @@ class CallbackHandlers {
                 tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::cancel('home'));
                 return;
             }
-            self::queueBatch('stats', $server, [], $chatId, $messageId, $userId, $id);
+            self::queueBatch('stats', $server, ['message_id' => $messageId], $chatId, $messageId, $userId, $id);
             return;
         }
 
