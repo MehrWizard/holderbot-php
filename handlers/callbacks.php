@@ -1386,12 +1386,15 @@ class CallbackHandlers {
                 break;
 
             case 'qr':
+                // Acknowledge the callback before the panel lookup. Token
+                // refresh and user retrieval can each require a network call;
+                // Telegram should stop showing the button spinner immediately.
+                tg_answer_callback($callbackId, "Generating QR code...");
                 $user = PanelManager::getUser($server, $username);
                 if (!$user || empty($user['subscription_url'])) {
-                    tg_answer_callback($callbackId, "No subscription link available for QR.", true);
+                    tg_edit_message($chatId, $messageId, "No subscription link available for QR.", Keyboards::userActions($serverId, $username, !empty($user['is_active']), $user['status'] ?? ''));
                     return;
                 }
-                tg_answer_callback($callbackId, "Generating QR code...");
                 BatchQueue::photo($chatId, $userId, $user['subscription_url'], Formatter::userInfo($server, $user), 'qr:'.$callbackId);
                 break;
 
