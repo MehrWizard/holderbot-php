@@ -72,9 +72,22 @@ final class BatchQueue
 
     public static function cancel(string $id): void
     {
-        if (!self::acquireJobLock($id)) throw new RuntimeException('Request is executing; retry cancellation after this step');
+        self::db()->prepare("UPDATE bot_queue SET cancel_requested=1 WHERE id=? AND status NOT IN ('completed','failed','cancelled')")->execute([$id]);
+        if (!self::acquireJobLock($id)) return;
         try {
-            self::db()->prepare("UPDATE bot_queue SET status='cancelled' WHERE id=? AND status NOT IN ('completed','failed','cancelled')")->execute([$id]);
+            $job = self::get($id);
+            if (!$job || in_array($job['status'], ['completed','failed','cancelled'], true)) return;
+            // A released lock can also mean the previous PHP process died.
+            // Preserve uncertain mutation evidence even when cancellation follows.
+            if (($job['active'] ?? '') === 'mutation' || ($job['status'] === 'inline_running' && in_array($job['kind'], ['create','recharge','revoke_qr'], true))) {
+                $job['status'] = 'failed';
+                $job['unconfirmed']++;
+                $job['error'] = 'Interrupted mutation: verify the panel before retrying.';
+            } else {
+                $job['status'] = 'cancelled';
+            }
+            self::save($job);
+            self::finalizeMessage($job);
         } finally { self::releaseJobLock($id); }
     }
 
@@ -145,6 +158,12 @@ final class BatchQueue
             if (!$current) return ['state' => 'missing', 'job' => $job, 'result' => null];
             if ($current['status'] !== 'inline') {
                 return ['state' => $current['status'], 'job' => $current, 'result' => null];
+            }
+            if (!empty($current['cancel_requested'])) {
+                $current['status'] = 'cancelled';
+                self::save($current);
+                self::finalizeMessage($current);
+                return ['state' => 'cancelled', 'job' => $current, 'result' => null];
             }
             $current['status'] = 'inline_running';
             $current['lease_until'] = time() + max(15, (int)($config['inline_lease_seconds'] ?? 120));
@@ -265,6 +284,7 @@ final class BatchQueue
     public static function describe(array $job): string
     {
         $label = self::label((string)$job['kind']);
+        if (!empty($job['cancel_requested']) && !in_array($job['status'], ['completed','failed','cancelled'], true)) return 'Cancellation requested. The current step may finish; remaining work will stop.';
         $status = (string)($job['status'] ?? 'running');
         if (!empty($job['params']['report_ready']) && $status !== 'completed') return 'Delivering report messages.';
         if ($status === 'completed') {
@@ -525,10 +545,12 @@ final class BatchQueue
         $old=RequestBudget::$deadline; RequestBudget::$deadline=microtime(true)+$seconds; $done=0;
         try { while($done<$steps&&microtime(true)<RequestBudget::$deadline-.1) {
             Storage::cacheSet('queue_heartbeat', time(), 604800);
-            $row=$db->query("SELECT * FROM bot_queue WHERE next_run<=UNIX_TIMESTAMP() AND status NOT IN ('completed','failed','cancelled') AND (status NOT IN ('inline','inline_running') OR lease_until<=UNIX_TIMESTAMP()) ORDER BY created_at LIMIT 1")->fetch();
+            $row=$db->query("SELECT * FROM bot_queue WHERE next_run<=UNIX_TIMESTAMP() AND status NOT IN ('completed','failed','cancelled') AND (status NOT IN ('inline','inline_running') OR lease_until<=UNIX_TIMESTAMP()) ORDER BY last_served, created_at, id LIMIT 1")->fetch();
             if(!$row)break;
             $job=self::decode($row);
-            if (!self::acquireJobLock((string)$job['id'])) { $done++; continue; }
+            $db->prepare('UPDATE bot_queue SET last_served=? WHERE id=?')->execute([microtime(true), $job['id']]);
+            $done++;
+            if (!self::acquireJobLock((string)$job['id'])) { continue; }
             $lockedId = (string)$job['id'];
             try {
                 $job = self::get($lockedId);
@@ -541,6 +563,9 @@ final class BatchQueue
                     self::save($job);
                     self::finalizeMessage($job);
                     continue;
+                }
+                if (!empty($job['cancel_requested'])) {
+                    $job['status']='cancelled'; self::save($job); self::finalizeMessage($job); continue;
                 }
                 $staleInline = in_array($job['status'], ['inline', 'inline_running'], true);
                 if ($staleInline) {
@@ -568,7 +593,6 @@ final class BatchQueue
                 $job['active'] = null;
                 self::save($job);
             } finally { self::releaseJobLock($lockedId); }
-            $done++;
         } }
         finally { $db->query("SELECT RELEASE_LOCK('holderbot-queue-worker')"); RequestBudget::$deadline=$old; }
         return $done;
@@ -586,7 +610,12 @@ final class BatchQueue
     {
         global $config;
         $days = max(1, $retentionDays ?? (int)($config['queue_retention_days'] ?? 7));
-        $stmt = self::db()->prepare("UPDATE bot_queue SET payload='{}' WHERE status IN ('completed','failed','cancelled') AND updated_at < FROM_UNIXTIME(?) AND payload <> '{}' LIMIT 100");
+        $cutoff = time() - $days * 86400;
+        foreach (['bot_queue_items', 'bot_queue_imports'] as $table) {
+            $cleanup = self::db()->prepare("DELETE FROM {$table} WHERE job_id IN (SELECT id FROM bot_queue WHERE status IN ('completed','failed','cancelled') AND updated_at < FROM_UNIXTIME(?)) LIMIT 1000");
+            $cleanup->execute([$cutoff]);
+        }
+        $stmt = self::db()->prepare("UPDATE bot_queue SET payload='{}' WHERE status IN ('completed','failed','cancelled') AND updated_at < FROM_UNIXTIME(?) AND payload <> '{}' AND NOT EXISTS (SELECT 1 FROM bot_queue_items WHERE job_id=bot_queue.id) AND NOT EXISTS (SELECT 1 FROM bot_queue_imports WHERE job_id=bot_queue.id) LIMIT 100");
         $stmt->execute([time() - $days * 86400]);
         return $stmt->rowCount();
     }

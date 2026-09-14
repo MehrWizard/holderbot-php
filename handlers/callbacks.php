@@ -44,7 +44,6 @@ class CallbackHandlers {
                 return;
             }
             tg_answer_callback($id, $action === 'job_cancel' ? 'Cancellation requested. Completed work is retained.' : null);
-            tg_edit_message($chatId, $messageId, BatchQueue::describe($job), BatchQueue::keyboard($job));
             return;
         }
 

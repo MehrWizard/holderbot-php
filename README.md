@@ -62,7 +62,7 @@ php queue.php inspect JOB_ID
 php queue.php cancel JOB_ID
 ```
 
-`/jobs` in Telegram lists recent jobs for the current chat. Jobs are deduplicated by submission identity, run in bounded worker slices, and retain success and uncertain-operation counts. Remote APIs do not provide a shared transaction, so uncertain mutations require manual review.
+`/jobs` in Telegram lists recent jobs for the current chat. Jobs are deduplicated by submission identity, rotate through bounded worker slices, and retain success and uncertain-operation counts. Cancellation stops remaining work after the current step; it cannot undo a panel request already sent. Expired job data is cleaned up incrementally. Remote APIs do not provide a shared transaction, so uncertain mutations require manual review.
 
 ## Verification
 
