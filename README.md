@@ -60,6 +60,7 @@ php queue.php health
 php queue.php attention
 php queue.php inspect JOB_ID
 php queue.php issues JOB_ID
+php queue.php reconcile JOB_ID
 php queue.php cancel JOB_ID
 ```
 

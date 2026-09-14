@@ -82,7 +82,8 @@ class PanelManager {
         ?string $note = null,
         array $selectedConfigs = [],
         string $dateType = 'fixed',
-        ?string $admin = null
+        ?string $admin = null,
+        ?callable $checkpoint = null
     ): ?array {
         $type = strtolower($server['type'] ?? 'marzban');
         $bytes = ($dataLimitGb > 0) ? (int)round($dataLimitGb * 1024 * 1024 * 1024) : 0;
@@ -153,6 +154,7 @@ class PanelManager {
         }
 
         if (!empty($admin)) {
+            if ($checkpoint) $checkpoint('assign_created_owner', $resp, ['owner_username'=>$admin]);
             if (!self::setOwner($server, $resp['username'], $admin)) {
                 throw new RuntimeException('User created, but ownership assignment was not confirmed. Review the panel before retrying.');
             }
@@ -229,10 +231,10 @@ class PanelManager {
         if (!$user) return null;
         $payload = self::rechargePayload($server, $username, $user, $dataLimitGb, $expireDays, $additive, $dateType);
         if ($resetUsage) {
-            if ($beforeWrite) $beforeWrite('reset_usage', $payload);
+            if ($beforeWrite) $beforeWrite('reset_usage', $payload, $user['raw']);
             if (!self::resetUsage($server, $username)) return null;
         }
-        if ($beforeWrite) $beforeWrite('apply_recharge', $payload);
+        if ($beforeWrite) $beforeWrite('apply_recharge', $payload, $user['raw']);
         $resp = $server['type'] === 'marzneshin'
             ? MarzneshinClient::modifyUser($server, $username, $payload)
             : MarzbanClient::modifyUser($server, $username, $payload);

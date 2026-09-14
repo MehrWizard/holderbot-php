@@ -1623,9 +1623,9 @@ class CallbackHandlers {
         Storage::clearState($userId);
         tg_answer_callback($callbackId, 'Creating user...');
         tg_edit_message($chatId, $messageId, 'Loading...');
-        $attempt = BatchQueue::executeInline($job, function () use ($server, $username, $dataLimit, $dateLimit, $stateData, $dateType, $chatId) {
+        $attempt = BatchQueue::executeInline($job, function (array &$running) use ($server, $username, $dataLimit, $dateLimit, $stateData, $dateType, $chatId) {
             $created = PanelManager::createUser(
-                $server, $username, $dataLimit, $dateLimit, null, $stateData['selected_configs'] ?? [], $dateType, $stateData['admin'] ?? null
+                $server, $username, $dataLimit, $dateLimit, null, $stateData['selected_configs'] ?? [], $dateType, $stateData['admin'] ?? null, BatchQueue::creationCheckpoint($running)
             );
             return $created;
         });

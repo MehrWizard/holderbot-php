@@ -8,6 +8,7 @@ for path in sorted(root.rglob('*.php')):
     subprocess.run(['php','-l',str(path)],check=True,stdout=subprocess.DEVNULL)
 print('PASS: PHP syntax',flush=True)
 subprocess.run(['php',str(root/'tests/workflows.php')],check=True)
+subprocess.run(['php',str(root/'tests/reconciliation.php')],check=True)
 subprocess.run(['php',str(root/'tests/panel_failures.php')],check=True)
 args=[sys.executable,str(root/'tests/compare_python.py')]
 if len(sys.argv)>1: args.append(sys.argv[1])

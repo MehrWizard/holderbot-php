@@ -8,7 +8,7 @@ import tempfile
 import time
 
 root = Path(__file__).resolve().parents[1]
-suites = {'queue_large':120,'queue_delivery':45,'queue_stats':45,'queue_monitor':45,'notifications':45,'queue_bulk':300}
+suites = {'queue_large':120,'queue_delivery':45,'queue_stats':45,'queue_monitor':45,'queue_reconciliation':45,'notifications':45,'queue_bulk':300}
 parser = argparse.ArgumentParser()
 parser.add_argument('--only', choices=suites, help='Run one suite after isolated schema checks')
 args = parser.parse_args()

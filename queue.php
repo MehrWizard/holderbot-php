@@ -20,6 +20,10 @@ try {
             echo "last_run={$health['last_run']} pending={$health['pending']} pending_notifications={$health['pending_notifications']} stale=" . ($health['stale'] ? 'yes' : 'no') . "\n";
             exit($health['stale'] ? 1 : 0);
         case 'work': echo BatchQueue::run()." steps processed\n"; break;
+        case 'reconcile':
+            $result=BatchQueue::reconcile($argv[2] ?? '');
+            echo 'Read-only comparison: '.$result['state']."\n";
+            break;
         case 'attention':
             $rows = Storage::db()->query("SELECT id,kind,status,error_text FROM bot_queue WHERE status IN ('failed') OR unconfirmed_count>0 ORDER BY updated_at DESC LIMIT 100")->fetchAll();
             foreach ($rows as $row) echo $row['id'].' '.$row['kind'].' '.$row['status'].' '.($row['error_text'] ?? '')."\n";

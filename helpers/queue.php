@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/request_budget.php';
 require_once __DIR__ . '/import_reader.php';
 require_once __DIR__ . '/notifications.php';
+require_once __DIR__ . '/reconciliation.php';
 
 /** Persistent batch queue backed by MySQL. Credentials are loaded at run time. */
 final class BatchQueue
@@ -245,11 +246,19 @@ final class BatchQueue
         $params = $job['params'];
         return PanelManager::chargeUser($server, (string)$params['username'], $params['data_limit'], (int)$params['date_limit'],
             !empty($params['reset']), !empty($params['additive']), (string)($params['date_type'] ?? 'fixed'),
-            function (string $phase, array $payload) use (&$job): void {
-                $job['params']['mutation_intent'] = ['username'=>$job['params']['username'], 'phase'=>$phase, 'payload'=>$payload];
+            function (string $phase, array $payload, array $before = []) use (&$job): void {
+                $job['params']['mutation_intent'] = ['username'=>$job['params']['username'], 'phase'=>$phase, 'payload'=>$payload, 'before'=>$before];
                 $job['active'] = 'mutation';
                 self::save($job);
             });
+    }
+
+    public static function creationCheckpoint(array &$job): Closure
+    {
+        return function(string $phase,array $before,array $payload)use(&$job):void {
+            $job['params']['mutation_intent']=['username'=>$before['username'],'phase'=>$phase,'before'=>$before,'payload'=>$payload];
+            $job['active']='mutation'; self::save($job);
+        };
     }
 
     /** Bounded, credential-free evidence for operator review. */
@@ -262,13 +271,42 @@ final class BatchQueue
         return ['intent'=>$job['params']['mutation_intent'] ?? null, 'items'=>$select->fetchAll()];
     }
 
+    public static function reconcile(string $id): array
+    {
+        if (!self::acquireJobLock($id)) return ['state'=>'busy'];
+        try {
+            $job=self::get($id);
+            if (!$job || $job['status']!=='failed' || (int)$job['unconfirmed']<1) return ['state'=>'not_uncertain'];
+            $server=Storage::getServer((int)$job['server_id']);
+            if (!$server || self::fingerprint($server)!==$job['server_fingerprint']) return ['state'=>'server_changed'];
+            $intent=$job['params']['mutation_intent'] ?? [];
+            $username=$intent['username'] ?? $job['params']['username'] ?? '';
+            if ($username==='') return ['state'=>'insufficient_evidence'];
+            $user=PanelManager::getUser($server,$username);
+            $comparison=$user ? MutationReconciliation::compare($server['type'],$intent,$user['raw']) : ['state'=>'read_unconfirmed'];
+            $job['params']['reconciliation']=['checked_at'=>time(),'attempts'=>(int)($job['params']['reconciliation']['attempts'] ?? 0)+1,'comparison'=>$comparison];
+            if (($comparison['state'] ?? '')==='desired_state_observed' && $job['kind']==='recharge') {
+                $job['status']='completed'; $job['success']=1; $job['cursor']=1; $job['total']=1; $job['unconfirmed']=0;
+                $job['active']=null; $job['error']=null;
+                $job['params']['notifications']=[['key'=>'reconciled','payload'=>[
+                    'message_id'=>(int)($job['params']['message_id'] ?? 0),
+                    'text'=>'Recharge reconciled: the panel currently matches the saved target values. No mutation was replayed.',
+                    'keyboard'=>self::keyboard($job),
+                ]]];
+                $job['params']['custom_result']=true;
+            }
+            self::save($job);
+            return $comparison;
+        } finally { self::releaseJobLock($id); }
+    }
+
     public static function revoke(array &$job, array $server): ?array
     {
         $username = (string)$job['params']['username'];
         $before = PanelManager::getUser($server, $username);
         if (!$before || empty($before['subscription_url'])) throw new RuntimeException('Cannot read subscription before revoke');
         $job['params']['mutation_intent'] = ['username'=>$username, 'phase'=>'revoke_subscription',
-            'payload'=>['previous_subscription_sha256'=>hash('sha256', $before['subscription_url'])]];
+            'before'=>$before['raw'] ?? [], 'payload'=>['previous_subscription_sha256'=>hash('sha256', $before['subscription_url'])]];
         $job['active'] = 'mutation';
         self::save($job);
         return PanelManager::revokeSub($server, $username);
@@ -662,7 +700,7 @@ final class BatchQueue
                 }
                 $job['params']['mutation_intent']['username'] = $name;
                 self::save($job);
-                $created = PanelManager::createUser($server, $name, (float)($item['datalimit']??$params['data_limit']??0), (int)($item['datelimit']??$params['date_limit']??0), null, $params['selected_configs']??[], (string)($params['date_type']??'fixed'), $params['admin']??null);
+                $created = PanelManager::createUser($server, $name, (float)($item['datalimit']??$params['data_limit']??0), (int)($item['datelimit']??$params['date_limit']??0), null, $params['selected_configs']??[], (string)($params['date_type']??'fixed'), $params['admin']??null, self::creationCheckpoint($job));
                 $ok = $created !== null;
                 if ($ok && !empty($created['subscription_url'])) {
                     $job['params']['notifications'] = [['key'=>'qr_'.$index,'payload'=>['photo'=>$created['subscription_url'],'text'=>Formatter::userInfo($server,$created)]]];
@@ -686,6 +724,13 @@ final class BatchQueue
         $old=RequestBudget::$deadline; RequestBudget::$deadline=microtime(true)+$seconds; $done=0;
         try {
             if ($onlyJob===null) NotificationOutbox::drain(1);
+            if ($onlyJob===null) {
+                $candidate=self::db()->query("SELECT id FROM bot_queue WHERE status='failed' AND unconfirmed_count>0 AND kind IN ('recharge','revoke_qr','create') AND JSON_EXTRACT(payload,'$.mutation_intent.before') IS NOT NULL AND COALESCE(JSON_EXTRACT(payload,'$.reconciliation.attempts'),0)<3 AND COALESCE(JSON_EXTRACT(payload,'$.reconciliation.checked_at'),0)<UNIX_TIMESTAMP()-60 ORDER BY updated_at LIMIT 1")->fetchColumn();
+                if ($candidate) {
+                    try { self::reconcile($candidate); }
+                    catch(Throwable $e) { error_log('Read-only reconciliation unavailable: '.$e->getMessage()); }
+                }
+            }
             while($done<$steps&&microtime(true)<RequestBudget::$deadline-.1) {
             if ($onlyJob === null) Storage::cacheSet('queue_heartbeat', time(), 604800);
             if ($onlyJob !== null) {

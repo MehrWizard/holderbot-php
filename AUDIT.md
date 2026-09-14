@@ -25,6 +25,8 @@ Reference: local Python v0.6.0. Python database migration is out of scope. Core 
 - [X] Treat failed ownership assignment after creation as a partial operation requiring review.
 - [X] Index pending queue items by job, status, and position.
 
+The upstream inventory (`python3 tests/parity_inventory.py /path/to/python`) enumerates 75 router handlers. This is an inventory, not a claim that all handlers have differential coverage.
+
 ## Remaining work and limits
 
 - [ ] Complete command, keyboard, wizard, and panel-workflow regression coverage against Python. Initial handler tests cover entry commands, deep links, Home, search, filtered pagination, stale owner callbacks, creation-wizard validation, template date workflows, failed quota edits, Unicode note limits, configuration selection and ownership failures; remaining workflows still need coverage.
@@ -32,7 +34,7 @@ Reference: local Python v0.6.0. Python database migration is out of scope. Core 
 - [ ] Validate live Telegram navigation, rendering, QR delivery, and final results.
 - [ ] Test backup restoration and external stopped-cron monitoring.
 
-Ambiguous recharge, reset, revoke, and other mutations still require operator review. Stored intent helps that review; matching remote values alone cannot prove which request applied them. No automatic mutation replay or operator resolution command is provided.
+Ambiguous recharge, reset, revoke, and other mutations still require operator review. Stored intent helps that review; matching remote values alone cannot prove which request applied them. No automatic mutation replay is permitted. `queue.php reconcile ID` performs a read-only comparison; cron checks at most one eligible uncertain request per slice, up to three times. Recharge is marked reconciled only when all saved target fields are observable and match; reset/revoke/partial-creation observations remain held when evidence cannot establish safe completion. Raw recharge/revoke baselines and confirmed creation state before ownership assignment are now persisted.
 
 Notifications remain pending until a send response is recorded. A crash before sending is retried by cron, including for completed jobs. A crash after Telegram accepts a message but before local acknowledgement can cause a duplicate on retry; exactly-once sending is not guaranteed. Completed mutations are never replayed to recover notifications. Imports remain limited to 8 MiB and 100,000 entries.
 
