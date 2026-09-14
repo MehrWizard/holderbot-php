@@ -94,10 +94,42 @@ final class BatchQueue
         return ['inline_keyboard'=>$rows];
     }
 
+    public static function label(string $kind): string
+    {
+        return [
+            'create' => 'user creation',
+            'import' => 'user import',
+            'delete' => 'user deletion',
+            'transfer' => 'ownership transfer',
+            'config' => 'configuration update',
+            'admin_status' => 'admin user status update',
+            'stats' => 'server statistics',
+            'access' => 'panel access refresh',
+            'monitor' => 'node monitoring',
+            'expiry' => 'expiry report',
+            'outbox' => 'message delivery',
+            'recharge' => 'user recharge',
+        ][$kind] ?? 'background operation';
+    }
+
     public static function describe(array $job): string
     {
-        $text = "Batch {$job['id']}\nOperation: {$job['kind']}\nStatus: {$job['status']}\nProcessed: {$job['cursor']}/{$job['total']}\nConfirmed: {$job['success']}\nNot confirmed: {$job['unconfirmed']}\nSkipped: {$job['skipped']}";
-        return $text . (!empty($job['error']) ? "\n".htmlspecialchars((string)$job['error'],ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8') : '');
+        $label = self::label((string)$job['kind']);
+        $status = (string)($job['status'] ?? 'running');
+        if ($status === 'completed') {
+            if ($job['kind'] === 'stats') return '📊 Server statistics updated.';
+            return '✅ ' . ucfirst($label) . ' completed.\nProcessed: ' . (int)$job['cursor'] . ' item(s).';
+        }
+        if ($status === 'failed') {
+            $text = '❌ ' . ucfirst($label) . ' failed.';
+            return $text . (!empty($job['error']) ? "\n" . htmlspecialchars((string)$job['error'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') : '');
+        }
+        if ($status === 'cancelled') return '⛔ ' . ucfirst($label) . ' cancelled.';
+
+        $text = '⏳ ' . ucfirst($label) . ' is running in the background.';
+        $total = (int)($job['total'] ?? 0);
+        if ($total > 0) $text .= "\nProcessed: " . (int)$job['cursor'] . "/{$total}.";
+        return $text . "\nUse Refresh status to check progress.";
     }
 
     private static function step(array &$job): void

@@ -42,7 +42,15 @@ class CommandHandlers {
             case '/jobs':
                 $jobs = BatchQueue::recent($chatId, (int)$userId);
                 $rows = [];
-                foreach ($jobs as $job) $rows[] = [['text'=>$job['kind'] . ' / ' . $job['status'] . ' / ' . substr($job['id'], 0, 8), 'callback_data'=>'job:' . $job['id']]];
+                foreach ($jobs as $job) {
+                    $status = match ($job['status']) {
+                        'completed' => 'completed',
+                        'failed' => 'failed',
+                        'cancelled' => 'cancelled',
+                        default => 'in progress',
+                    };
+                    $rows[] = [['text'=>ucfirst(BatchQueue::label((string)$job['kind'])) . ' — ' . $status, 'callback_data'=>'job:' . $job['id']]];
+                }
                 tg_send_message($chatId, $jobs ? 'Recent batches (up to 10):' : 'No batches found.', ['inline_keyboard'=>$rows]);
                 return true;
 

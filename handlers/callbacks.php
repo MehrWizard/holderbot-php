@@ -25,7 +25,10 @@ class CallbackHandlers {
                 tg_answer_callback($id, 'Job not found.', true);
                 return;
             }
-            if ($action === 'job_cancel') BatchQueue::cancel($jobId);
+            if ($action === 'job_cancel') {
+                BatchQueue::cancel($jobId);
+                $job = BatchQueue::get($jobId) ?? $job;
+            }
             tg_answer_callback($id, $action === 'job_cancel' ? 'Cancellation requested. Completed work is retained.' : null);
             tg_edit_message($chatId, $messageId, BatchQueue::describe($job), BatchQueue::keyboard($job));
             return;
@@ -1168,7 +1171,7 @@ class CallbackHandlers {
             return;
         }
         Storage::clearState($userId);
-        tg_answer_callback($callbackId, 'Batch queued.');
+        tg_answer_callback($callbackId, 'Processing in the background.');
         tg_edit_message($chatId, $messageId, BatchQueue::describe($job), BatchQueue::keyboard($job));
     }
 
