@@ -31,7 +31,7 @@ class Language {
                 'ASK_CONFIGS' => 'Select Configs:', 'FAILED_USERNAME' => '❌ Failed to create {username}.', 'RANDOM_USERNAME' => 'Random Username',
                 'USER_INFO' => "• <b>Username:</b> <code>{username}</code>\n• <b>Data Limit:</b> <code>{data_limit}</code>\n• <b>Date Limit:</b> <code>{expire_strategy}</code>\n• <b>Sub Url:</b> <code>{subscription_url}</code>\n",
                 'ASK_SURE' => 'Are your sure?', 'ASK_ADMIN' => 'Select admin:', 'ASK_NOTE' => 'Enter note text:', 'ASK_ADMIN_FROM' => 'Select from admin:',
-                'ASK_ADMIN_TO' => 'Select to admin:', 'ASK_USERNAME' => 'Enter Username:', 'START' => "Welcome to HolderBot 🤖 [<code>v0.6.0</code> by @ErfJabs]\n<b><a href='https://t.me/pingihostbot'>نصب پنل و انجام تانل به صورت کامل خودکار!</a></b>",
+                'ASK_ADMIN_TO' => 'Select to admin:', 'ASK_USERNAME' => 'Enter Username:', 'START' => "Welcome to HolderBot 🤖 [<code>v0.6.0</code> by @ErfJabs]",
             ],
             'keyboards' => [
                 'HOMES' => '🏛️ Home', 'SERVER' => '☁️ Server', 'CREATE' => '➕ Create', 'USERS' => '👤 Users', 'ACTIONS' => '🗄 Actions',

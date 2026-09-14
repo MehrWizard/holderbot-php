@@ -8,8 +8,7 @@ class Formatter {
     }
     public static function start(): string {
         require_once __DIR__ . '/../version.php';
-        return "Welcome to HolderBot 🤖 [<code>" . HOLDERBOT_VERSION . "</code> by @ErfJabs]\n" .
-            "<b><a href='https://t.me/pingihostbot'>نصب پنل و انجام تانل به صورت کامل خودکار!</a></b>";
+        return "Welcome to HolderBot 🤖 [<code>" . HOLDERBOT_VERSION . "</code> by @ErfJabs]";
     }
     public static function credentialsPrompt(): string {
         return "<b>Enter Marz Server Credentials:\n</b>• <code>Username [sudo]</code>\n• <code>Password [sudo]</code>\n• <code>Host [https://sub.domain.com:port]</code>\n\n<b>Example:</b>\n<code>erfan\nerfan\nhttps://panel.domain.com:443</code>";
