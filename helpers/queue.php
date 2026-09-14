@@ -236,6 +236,26 @@ final class BatchQueue
         ][$kind] ?? 'background operation';
     }
 
+    public static function loadingMessage(string $kind): string
+    {
+        return [
+            'create' => 'Creating users...',
+            'import' => 'Importing users...',
+            'delete' => 'Deleting users...',
+            'transfer' => 'Transferring user ownership...',
+            'config' => 'Updating user configurations...',
+            'admin_status' => 'Updating user statuses...',
+            'stats' => 'Loading server statistics...',
+            'access' => 'Refreshing panel access...',
+            'monitor' => 'Checking nodes...',
+            'expiry' => 'Preparing expiry report...',
+            'outbox' => 'Delivering message...',
+            'recharge' => 'Updating user...',
+            'qr' => 'Generating QR code...',
+            'revoke_qr' => 'Updating subscription...',
+        ][$kind] ?? 'Loading...';
+    }
+
     public static function describe(array $job): string
     {
         $label = self::label((string)$job['kind']);
@@ -252,8 +272,7 @@ final class BatchQueue
         }
         if ($status === 'cancelled') return '⛔ ' . ucfirst($label) . ' cancelled.';
 
-        if ($job['kind'] === 'stats') return '⏳ Loading server statistics...';
-        $text = '⏳ ' . ucfirst($label) . ' is running in the background.';
+        $text = '⏳ ' . self::loadingMessage((string)$job['kind']);
         $total = (int)($job['total'] ?? 0);
         if ($total > 0) $text .= "\nProcessed: " . (int)$job['cursor'] . "/{$total}.";
         return $text . "\nUse Refresh status to check progress.";
