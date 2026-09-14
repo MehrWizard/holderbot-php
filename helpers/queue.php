@@ -252,6 +252,7 @@ final class BatchQueue
         }
         if ($status === 'cancelled') return '⛔ ' . ucfirst($label) . ' cancelled.';
 
+        if ($job['kind'] === 'stats') return '⏳ Loading server statistics...';
         $text = '⏳ ' . ucfirst($label) . ' is running in the background.';
         $total = (int)($job['total'] ?? 0);
         if ($total > 0) $text .= "\nProcessed: " . (int)$job['cursor'] . "/{$total}.";

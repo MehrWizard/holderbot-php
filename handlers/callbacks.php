@@ -1200,7 +1200,7 @@ class CallbackHandlers {
             return;
         }
         Storage::clearState($userId);
-        tg_answer_callback($callbackId, 'Processing in the background.');
+        tg_answer_callback($callbackId, $job['kind'] === 'stats' ? 'Loading server statistics...' : 'Processing in the background.');
         tg_edit_message($chatId, $messageId, BatchQueue::describe($job), BatchQueue::keyboard($job));
     }
 
