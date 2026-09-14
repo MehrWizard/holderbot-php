@@ -564,17 +564,16 @@ final class PngWriter {
 
         // Build one scanline per QR module row, then repeat it vertically.
         // This avoids millions of per-pixel intdiv/string-concatenation calls
-        // on shared hosts while producing the same grayscale PNG bytes.
-        $quiet = str_repeat("\xFF", $quietZone * $moduleSize);
+        // on shared hosts while producing valid grayscale PNG bytes.
         $raw = '';
         for ($moduleRow = -$quietZone; $moduleRow < $n + $quietZone; $moduleRow++) {
-            $line = "\x00" . $quiet;
+            $line = "\x00";
             for ($moduleCol = -$quietZone; $moduleCol < $n + $quietZone; $moduleCol++) {
                 $dark = $moduleRow >= 0 && $moduleRow < $n && $moduleCol >= 0 && $moduleCol < $n
                     && (bool)$matrix[$moduleRow][$moduleCol];
                 $line .= str_repeat($dark ? "\x00" : "\xFF", $moduleSize);
             }
-            $line .= $quiet;
+            // The loop already includes quiet modules on both sides.
             $raw .= str_repeat($line, $moduleSize);
         }
 
