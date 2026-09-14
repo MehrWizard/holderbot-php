@@ -56,6 +56,7 @@ if ($argv[3]!=='fresh' && (Storage::getState(42)['step'] ?? '') !== 'legacy') th
         print('PASS: fresh, legacy, interrupted MySQL upgrades with 4 concurrent workers each')
         subprocess.run(['php', '-d', 'extension=pdo_mysql', str(root/'tests/queue_large.php'), str(port)], check=True, timeout=120)
         subprocess.run(['php', '-d', 'extension=pdo_mysql', str(root/'tests/queue_delivery.php'), str(port)], check=True, timeout=45)
+        subprocess.run(['php', '-d', 'extension=pdo_mysql', str(root/'tests/queue_stats.php'), str(port)], check=True, timeout=45)
     finally:
         server.terminate()
         server.wait(timeout=15)

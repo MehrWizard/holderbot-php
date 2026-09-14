@@ -122,7 +122,7 @@ final class BatchQueue
         string $submission
     ): array {
         global $config;
-        $allowed = ['create', 'recharge', 'qr', 'revoke_qr'];
+        $allowed = ['create', 'recharge', 'qr', 'revoke_qr', 'stats'];
         if (!in_array($kind, $allowed, true)) throw new InvalidArgumentException('Unsupported inline operation');
         $serverId = (int)($server['id'] ?? 0);
         $id = substr(hash('sha256', json_encode([$chatId, $userId, $submission, $kind, $serverId, $params], JSON_THROW_ON_ERROR)), 0, 32);
@@ -349,6 +349,7 @@ final class BatchQueue
         }
         if ($job['kind'] === 'stats') {
             $page = max(0, (int)($job['params']['page'] ?? 1) - 1);
+            if (($job['active'] ?? '') === 'scan') return 'Fetching statistics page ' . ($page + 1) . '. Pages saved: ' . $page . '.';
             return $page > 0
                 ? "⏳ Statistics scan in progress.\nPages scanned: {$page}."
                 : '⏳ Statistics scan queued; first page is pending.';
@@ -486,6 +487,8 @@ final class BatchQueue
                 $job['error'] = 'Stats request has no originating message';
                 return;
             }
+            $job['active'] = 'scan';
+            self::save($job);
             $stats = null;
             if (!is_array($stats)) {
                 $stats = $params['stats'] ?? PanelManager::statsForUsers($server, [], time());
@@ -599,25 +602,30 @@ final class BatchQueue
         if($ok) $job['success']++; else $job['unconfirmed']++; $job['cursor']++;
     }
 
-    public static function run(?float $seconds=null, ?int $steps=null): int
+    public static function run(?float $seconds=null, ?int $steps=null, ?string $onlyJob=null): int
     {
         global $config;
-        $steps=max(1,min(100,$steps??(int)($config['queue_steps']??10))); $seconds=max(.1,min(45.0,$seconds??(float)($config['queue_budget_seconds']??15.0))); $db=self::db(); $lock=$db->query("SELECT GET_LOCK('holderbot-queue-worker',1)"); if((int)$lock->fetchColumn()!==1)return 0;
-        Storage::cacheSet('queue_heartbeat', time(), 604800);
+        $steps=max(1,min(100,$steps??(int)($config['queue_steps']??10))); $seconds=max(.1,min(45.0,$seconds??(float)($config['queue_budget_seconds']??15.0))); $db=self::db();
+        if ($onlyJob !== null && (!preg_match('/^[a-f0-9]{32}$/D', $onlyJob) || (self::get($onlyJob)['kind'] ?? '') !== 'stats')) throw new InvalidArgumentException('Immediate scan requires a statistics job');
+        if ($onlyJob === null) { $lock=$db->query("SELECT GET_LOCK('holderbot-queue-worker',1)"); if((int)$lock->fetchColumn()!==1)return 0; }
+        if ($onlyJob === null) Storage::cacheSet('queue_heartbeat', time(), 604800);
         $old=RequestBudget::$deadline; RequestBudget::$deadline=microtime(true)+$seconds; $done=0;
         try { while($done<$steps&&microtime(true)<RequestBudget::$deadline-.1) {
-            Storage::cacheSet('queue_heartbeat', time(), 604800);
-            $row=$db->query("SELECT * FROM bot_queue WHERE next_run<=UNIX_TIMESTAMP() AND status NOT IN ('completed','failed','cancelled') AND (status NOT IN ('inline','inline_running') OR lease_until<=UNIX_TIMESTAMP()) ORDER BY last_served, created_at, id LIMIT 1")->fetch();
+            if ($onlyJob === null) Storage::cacheSet('queue_heartbeat', time(), 604800);
+            if ($onlyJob !== null) {
+                $select=$db->prepare("SELECT * FROM bot_queue WHERE id=? AND next_run<=UNIX_TIMESTAMP() AND status NOT IN ('completed','failed','cancelled')");
+                $select->execute([$onlyJob]); $row=$select->fetch();
+            } else $row=$db->query("SELECT * FROM bot_queue WHERE next_run<=UNIX_TIMESTAMP() AND status NOT IN ('completed','failed','cancelled') AND (status NOT IN ('inline','inline_running') OR lease_until<=UNIX_TIMESTAMP()) ORDER BY last_served, created_at, id LIMIT 1")->fetch();
             if(!$row)break;
             $job=self::decode($row);
             $db->prepare('UPDATE bot_queue SET last_served=? WHERE id=?')->execute([microtime(true), $job['id']]);
             $done++;
-            if (!self::acquireJobLock((string)$job['id'])) { continue; }
+            if (!self::acquireJobLock((string)$job['id'])) { if ($onlyJob !== null) break; continue; }
             $lockedId = (string)$job['id'];
             try {
                 $job = self::get($lockedId);
                 if (!$job || in_array($job['status'], ['completed', 'failed', 'cancelled'], true)) continue;
-                if (in_array($job['status'], ['inline', 'inline_running'], true) && (int)$job['lease_until'] > time()) continue;
+                if ($onlyJob === null && in_array($job['status'], ['inline', 'inline_running'], true) && (int)$job['lease_until'] > time()) continue;
                 if (($job['active'] ?? '') === 'mutation' || ($job['status'] === 'inline_running' && in_array($job['kind'], ['create', 'recharge', 'revoke_qr'], true))) {
                     $job['status'] = 'failed';
                     $job['unconfirmed']++;
@@ -633,7 +641,12 @@ final class BatchQueue
                 if ($staleInline) {
                     $job['status'] = 'running';
                     $job['lease_until'] = 0;
-                    $job['active'] = 'fallback';
+                    $job['active'] = null;
+                    self::save($job);
+                    if ($onlyJob === null) self::notifyFallback($job);
+                }
+                if ($onlyJob === null && !empty($job['params']['fallback_pending'])) {
+                    unset($job['params']['fallback_pending']);
                     self::save($job);
                     self::notifyFallback($job);
                 }
@@ -652,11 +665,13 @@ final class BatchQueue
                     }
                 }
                 $job['active'] = null;
+                if ($onlyJob !== null && !in_array($job['status'], ['completed','failed','cancelled'], true) && empty($job['params']['report_ready'])) $job['params']['fallback_pending'] = true;
+                else unset($job['params']['fallback_pending']);
                 self::save($job);
                 self::finalizeMessage($job);
             } finally { self::releaseJobLock($lockedId); }
         } }
-        finally { $db->query("SELECT RELEASE_LOCK('holderbot-queue-worker')"); RequestBudget::$deadline=$old; }
+        finally { if ($onlyJob === null) $db->query("SELECT RELEASE_LOCK('holderbot-queue-worker')"); RequestBudget::$deadline=$old; }
         return $done;
     }
 

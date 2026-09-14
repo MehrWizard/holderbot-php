@@ -15,10 +15,11 @@ Reference: local Python v0.6.0. Python database migration is out of scope. Core 
 - [X] Preserve the expiry scan time, report real worker heartbeat age, and clean expired data in bounded passes while retaining uncertain-operation evidence.
 - [X] Provide paginated CLI inspection of uncertain users and persisted mutation intent.
 
+- [X] Run small statistics requests immediately with a five-second budget; resume longer scans in cron without restarting saved pages.
+
 ## Remaining work and limits
 
 - [ ] Complete command, keyboard, wizard, and panel-workflow regression coverage against Python. Presentation fixtures alone do not establish parity.
-- [ ] Implement the immediate-first path for small statistics requests; statistics currently use the worker.
 - [ ] Exercise both panel types with isolated users, supported panel versions, and 16,000-user mutation workloads. Large import ingestion has been tested; remote mutation throughput has not.
 - [ ] Validate live Telegram navigation, rendering, QR delivery, and final results.
 - [ ] Test backup restoration and external stopped-cron monitoring.

@@ -1217,7 +1217,9 @@ class CallbackHandlers {
     private static function queueBatch(string $kind, array $server, array $params, int|string $chatId, int $messageId, int $userId, string $callbackId): void {
         try {
             $params['message_id'] = $messageId;
-            $job = BatchQueue::enqueue($kind, $server, $params, $chatId, $userId, 'message:' . $messageId);
+            $job = $kind === 'stats'
+                ? BatchQueue::enqueueInline($kind, $server, $params, $chatId, $userId, 'callback:' . $callbackId)
+                : BatchQueue::enqueue($kind, $server, $params, $chatId, $userId, 'message:' . $messageId);
         } catch (Throwable $e) {
             error_log('Batch submission failed: ' . $e->getMessage());
             tg_answer_callback($callbackId, 'Unable to queue this batch. Check queue storage and batch size.', true);
@@ -1225,6 +1227,12 @@ class CallbackHandlers {
         }
         Storage::clearState($userId);
         tg_answer_callback($callbackId, BatchQueue::loadingMessage((string)$job['kind']));
+        if ($kind === 'stats') {
+            if (in_array($job['status'], ['completed','failed','cancelled'], true)) return;
+            tg_edit_message($chatId, $messageId, BatchQueue::loadingMessage($kind), BatchQueue::keyboard($job));
+            BatchQueue::run(5.0, 100, $job['id']);
+            return;
+        }
         $description = BatchQueue::describe($job);
         if (!in_array($job['status'], ['completed', 'failed', 'cancelled'], true)) $description .= "\nUse Refresh status to check progress.";
         tg_edit_message($chatId, $messageId, $description, BatchQueue::keyboard($job));
