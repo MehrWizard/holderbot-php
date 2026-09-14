@@ -20,7 +20,7 @@ class PanelManager {
 class Formatter {
     public static function escape($text): string { return htmlspecialchars($text,ENT_QUOTES,'UTF-8'); }
     public static array $cards=[];
-    public static function statsCard($server,$stats): string { self::$cards[]=$stats; return 'stats'; }
+    public static function statsCard($server,$stats): string { self::$cards[]=$stats; return '<b>Stats</b> '.implode(',', $stats['today_expired'] ?? []); }
 }
 class Keyboards { public static function serverMenu(...$args): array { return []; } }
 function tg_replace_message(...$args): array { return ['ok'=>true]; }
@@ -64,4 +64,22 @@ $select->execute([$expiry['id']]);
 $text=json_decode($select->fetchColumn(),true)['text'];
 if (!str_contains($text,'https://t.me/test?start=user_'.$serverId.'_name_with_underscores')) throw new RuntimeException('Expiry report omitted user deep link');
 BatchQueue::cancel($expiry['id']);
+$store=new ReflectionMethod(BatchQueue::class,'storeReportPage');
+$prepare=new ReflectionMethod(BatchQueue::class,'prepareStatsDelivery');
+$short=BatchQueue::enqueueInline('stats',$server,['message_id'=>126],99,42,'short_report');
+$store->invoke(null,$short['id'],1,['<code>one</code>','<code>two</code>']);
+$shortText=$prepare->invokeArgs(null,[&$short,$server,['today_expired'=>[]]]);
+if(!str_contains($shortText,'one') || str_contains($shortText,'following report')) throw new RuntimeException('Short expiry list was split unnecessarily');
+$count=Storage::db()->prepare('SELECT COUNT(*) FROM bot_queue_items WHERE job_id=?'); $count->execute([$short['id']]);
+if((int)$count->fetchColumn()!==0) throw new RuntimeException('Short inline report left follow-up chunks');
+$long=BatchQueue::enqueueInline('stats',$server,['message_id'=>127],99,42,'long_report');
+$entries=[]; for($i=0;$i<300;$i++) $entries[]='<code>'.str_repeat('user_'.$i,4).'</code>';
+$store->invoke(null,$long['id'],1,$entries);
+$longText=$prepare->invokeArgs(null,[&$long,$server,['today_expired'=>[]]]);
+if(!str_contains($longText,"\nSee the following report messages for the complete list.")) throw new RuntimeException('Long report omitted its calculated footer');
+$chunks=Storage::db()->prepare('SELECT payload FROM bot_queue_items WHERE job_id=? ORDER BY position'); $chunks->execute([$long['id']]);
+$parts=$chunks->fetchAll(PDO::FETCH_COLUMN);
+if(count($parts)<2) throw new RuntimeException('Long report was not safely chunked');
+$length=new ReflectionMethod(BatchQueue::class,'telegramTextLength');
+foreach($parts as $part) if($length->invoke(null,json_decode($part,true)['text'])>4096) throw new RuntimeException('A follow-up report exceeds Telegram limits');
 echo "PASS: immediate statistics, cron continuation, read timeout recovery, heartbeat isolation; Telegram stubbed\n";

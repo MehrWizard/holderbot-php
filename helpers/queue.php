@@ -11,6 +11,7 @@ final class BatchQueue
 {
     public const PAGE_SIZE = 50;
     public const MAX_TARGETS = 100000;
+    private const TELEGRAM_TEXT_LIMIT = 4096;
 
     private static function db(): PDO { return Storage::db(); }
 
@@ -457,7 +458,8 @@ final class BatchQueue
         $insert = self::db()->prepare('INSERT IGNORE INTO bot_queue_items (job_id,position,username,payload) VALUES (?,?,?,?)');
         $chunks = []; $chunk = '';
         foreach ($entries as $entry) {
-            if ($chunk !== '' && strlen($chunk) + strlen($entry) + 1 > 3000) { $chunks[] = $chunk; $chunk = ''; }
+            $candidate=$chunk . ($chunk === '' ? '' : "\n") . $entry;
+            if ($chunk !== '' && self::telegramTextLength($candidate) > self::TELEGRAM_TEXT_LIMIT) { $chunks[] = $chunk; $chunk = ''; }
             $chunk .= ($chunk === '' ? '' : "\n") . $entry;
         }
         if ($chunk !== '') $chunks[] = $chunk;
@@ -465,6 +467,41 @@ final class BatchQueue
             $position = ($page - 1) * 1000 + $index;
             $insert->execute([$jobId, $position, 'report_' . $position, json_encode(['text'=>$entry], JSON_THROW_ON_ERROR)]);
         }
+    }
+
+    /** Telegram applies its text limit after parsing HTML entities and tags. */
+    private static function telegramTextLength(string $html): int
+    {
+        $plain=html_entity_decode(strip_tags($html),ENT_QUOTES|ENT_HTML5,'UTF-8');
+        if (function_exists('mb_convert_encoding')) return intdiv(strlen(mb_convert_encoding($plain,'UTF-16LE','UTF-8')),2);
+        if (function_exists('iconv')) {
+            $utf16=iconv('UTF-8','UTF-16LE//IGNORE',$plain);
+            if ($utf16!==false) return intdiv(strlen($utf16),2);
+        }
+        return strlen($plain);
+    }
+
+    private static function prepareStatsDelivery(array &$job, array $server, array $stats): string
+    {
+        $select=self::db()->prepare("SELECT payload FROM bot_queue_items WHERE job_id=? AND status='pending' ORDER BY position");
+        $select->execute([$job['id']]); $entries=[];
+        foreach($select->fetchAll(PDO::FETCH_COLUMN) as $payload) {
+            $text=(string)(json_decode((string)$payload,true,512,JSON_THROW_ON_ERROR)['text'] ?? '');
+            foreach(explode("\n",$text) as $entry) if($entry!=='') $entries[]=$entry;
+        }
+        $stats['today_expired']=$entries;
+        $full=Formatter::statsCard($server,$stats);
+        if(self::telegramTextLength($full)<=self::TELEGRAM_TEXT_LIMIT) {
+            self::db()->prepare('DELETE FROM bot_queue_items WHERE job_id=?')->execute([$job['id']]);
+            return $full;
+        }
+        $footer="\nSee the following report messages for the complete list.";
+        $stats['today_expired']=[$footer];
+        $summary=Formatter::statsCard($server,$stats);
+        if(self::telegramTextLength($summary)>self::TELEGRAM_TEXT_LIMIT) throw new LengthException('Statistics summary exceeds Telegram text limit');
+        self::db()->prepare('DELETE FROM bot_queue_items WHERE job_id=?')->execute([$job['id']]);
+        self::storeReportPage($job['id'],1,$entries);
+        return $summary;
     }
 
     private static function monitorStep(array &$job, array $server): void
@@ -626,10 +663,7 @@ final class BatchQueue
                     return;
                 }
             }
-            $hasReport = self::db()->prepare('SELECT 1 FROM bot_queue_items WHERE job_id=? LIMIT 1');
-            $hasReport->execute([$job['id']]);
-            $stats['today_expired'] = $hasReport->fetchColumn() ? ['See the following report messages for the complete list.'] : [];
-            $text = Formatter::statsCard($server, $stats);
+            $text=self::prepareStatsDelivery($job,$server,$stats);
             $job['params']['notifications']=[['key'=>'final','payload'=>['message_id'=>(int)$params['message_id'],'text'=>$text,'keyboard'=>Keyboards::serverMenu((int)$server['id'])]]];
             $job['params']['custom_result']=true;
             $job['params']['report_ready'] = true;
