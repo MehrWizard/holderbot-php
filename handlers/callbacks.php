@@ -16,12 +16,14 @@ class CallbackHandlers {
         if (str_starts_with($data, 'ref:')) $data = Storage::cacheGet($data) ?? '';
         $chatId = $callbackQuery['message']['chat']['id'] ?? 0;
         $messageId = $callbackQuery['message']['message_id'] ?? 0;
+        // Telegram supplies the original bot message's Unix timestamp here.
+        $GLOBALS['tg_callback_message'] = ['chat_id'=>$chatId,'message_id'=>$messageId,'date'=>(int)($callbackQuery['message']['date'] ?? 0)];
         $userId = $callbackQuery['from']['id'];
 
         if ($data === 'queue_home') {
             Storage::clearState($userId);
             tg_answer_callback($id);
-            self::renderHome($chatId, $messageId, true);
+            self::renderHome($chatId, $messageId);
             return;
         }
         if(str_starts_with($data,'home_page:')) {
@@ -61,8 +63,7 @@ class CallbackHandlers {
             $serverId = (int)substr($data, strlen('queue_back:'));
             Storage::clearState($userId);
             tg_answer_callback($id);
-            if ($messageId > 0) tg_delete_message($chatId, $messageId);
-            self::renderServerMenuFresh($chatId, $serverId);
+            self::renderServerMenu($chatId, $messageId, $serverId);
             return;
         }
         if(str_starts_with($data,'stats_back:')) {
@@ -465,7 +466,7 @@ class CallbackHandlers {
                 return; // Durable result delivery handles QR and the replacement message.
             }
             if ($action !== 'rvk') tg_answer_callback($id);
-            tg_replace_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
+            tg_edit_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
             return;
         }
 
@@ -1356,12 +1357,11 @@ class CallbackHandlers {
         return true;
     }
 
-    private static function renderHome(int|string $chatId, int $messageId, bool $fresh = false): void {
+    private static function renderHome(int|string $chatId, int $messageId): void {
         $servers = Storage::getServers();
         $text = Formatter::start();
         $kb = Keyboards::home($servers);
-        if ($fresh) tg_send_message($chatId, $text, $kb);
-        else tg_replace_message($chatId, $messageId, $text, $kb);
+        tg_edit_message($chatId, $messageId, $text, $kb);
     }
 
     private static function renderServerMenu(int|string $chatId, int $messageId, int $serverId): void {

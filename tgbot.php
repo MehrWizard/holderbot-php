@@ -76,6 +76,7 @@ function tgbot(string $method, array $params = []): ?array {
 
 function tg_pack_keyboard(?array $markup): ?array {
     if ($markup === null) return null;
+    $markup = Keyboards::navigationLast($markup);
     foreach ($markup['inline_keyboard'] as &$row) {
         foreach ($row as &$button) {
             $button['text'] = Language::replace('keyboards', $button['text']);
@@ -96,7 +97,8 @@ function tg_send_message(
     int|string $chatId,
     string $text,
     ?array $replyMarkup = null,
-    string $parseMode = 'HTML'
+    string $parseMode = 'HTML',
+    bool $cleanupTracked = true
 ): ?array {
     $params = [
         'chat_id' => $chatId,
@@ -108,13 +110,22 @@ function tg_send_message(
         $params['reply_markup'] = tg_pack_keyboard($replyMarkup);
     }
     $response = tgbot('sendMessage', $params);
-    MessageTracker::sent($chatId, $text, $replyMarkup, $response);
+    if ($cleanupTracked) MessageTracker::sent($chatId, $text, $replyMarkup, $response);
+    elseif (!empty($response['result']['message_id'])) MessageTracker::remember($chatId,(int)$response['result']['message_id']);
     return $response;
 }
 
 /**
  * Edit an existing message text and keyboard.
  */
+function tg_callback_message_is_old(int|string $chatId, int $messageId, ?array $source = null): bool {
+    $source ??= $GLOBALS['tg_callback_message'] ?? null;
+    return is_array($source) && (string)($source['chat_id'] ?? '') === (string)$chatId
+        && (int)($source['message_id'] ?? 0) === $messageId
+        && (int)($source['date'] ?? 0) > 0
+        && time() - (int)$source['date'] > 600;
+}
+
 function tg_edit_message(
     int|string $chatId,
     int $messageId,
@@ -123,6 +134,11 @@ function tg_edit_message(
     string $parseMode = 'HTML'
 ): ?array {
     if ($messageId <= 0) return tg_send_message($chatId, $text, $replyMarkup, $parseMode);
+    if (tg_callback_message_is_old($chatId,$messageId)) {
+        $replacement = Storage::cacheGet('replacement_' . $chatId . '_' . $messageId);
+        if (!$replacement) return tg_replace_message($chatId, $messageId, $text, $replyMarkup, $parseMode);
+        $messageId = (int)$replacement;
+    }
     $params = [
         'chat_id' => $chatId,
         'message_id' => $messageId,
@@ -136,11 +152,9 @@ function tg_edit_message(
     $response = tgbot('editMessageText', $params);
     if (!empty($response['ok'])) MessageTracker::remember($chatId, $messageId);
     if (empty($response['ok'])) {
-        // Telegram returns an error when the original message was deleted or
-        // can no longer be edited. Remove it if possible and deliver the
-        // replacement as a fresh message instead.
-        tg_delete_message($chatId, $messageId);
-        $sent = tg_send_message($chatId, $text, $replyMarkup, $parseMode);
+        // A missing or uneditable message still needs a usable reply. Keep
+        // recent messages intact; hard deletion is reserved for old callbacks.
+        $sent = tg_send_message($chatId, $text, $replyMarkup, $parseMode, false);
         if (!empty($sent['result']['message_id'])) Storage::cacheSet('replacement_' . $chatId . '_' . $messageId, (int)$sent['result']['message_id'], 604800);
         return $sent;
     }
@@ -155,13 +169,16 @@ function tg_replace_message(
     ?array $replyMarkup = null,
     string $parseMode = 'HTML'
 ): ?array {
+    $originalId=$messageId;
     for ($i = 0; $i < 100 && $messageId > 0; $i++) {
         $replacement = Storage::cacheGet('replacement_' . $chatId . '_' . $messageId);
         if (!$replacement || (int)$replacement === $messageId) break;
         $messageId = (int)$replacement;
     }
     if ($messageId > 0) tg_delete_message($chatId, $messageId);
-    return tg_send_message($chatId, $text, $replyMarkup, $parseMode);
+    $sent=tg_send_message($chatId, $text, $replyMarkup, $parseMode);
+    if ($originalId > 0 && !empty($sent['result']['message_id'])) Storage::cacheSet('replacement_' . $chatId . '_' . $originalId, (int)$sent['result']['message_id'], 604800);
+    return $sent;
 }
 
 /**

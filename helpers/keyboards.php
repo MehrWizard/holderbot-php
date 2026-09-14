@@ -4,6 +4,28 @@ declare(strict_types=1);
 /** Telegram layouts and labels from app/keys/manager.py. */
 class Keyboards {
     private const SELECTOR_PAGE=20;
+    /** Keep navigation in one final row, including keyboards assembled elsewhere. */
+    public static function navigationLast(array $markup): array {
+        if (!isset($markup['inline_keyboard']) || !is_array($markup['inline_keyboard'])) return $markup;
+        $rows=[]; $back=null; $home=null;
+        foreach ($markup['inline_keyboard'] as $row) {
+            $content=[];
+            foreach ($row as $button) {
+                $data=(string)($button['callback_data'] ?? '');
+                $label=(string)($button['text'] ?? '');
+                if ($data==='home' || $data==='queue_home') $home=$button;
+                elseif (str_starts_with($label,'◀️ Back') || $label==='Back') $back=$button;
+                else $content[]=$button;
+            }
+            if ($content) $rows[]=$content;
+        }
+        $navigation=[];
+        if ($back) $navigation[]=$back;
+        if ($home) $navigation[]=$home;
+        if ($navigation) $rows[]=$navigation;
+        $markup['inline_keyboard']=$rows;
+        return $markup;
+    }
     private static function button(string $text, string $data): array {
         return ['text' => $text, 'callback_data' => $data];
     }
@@ -11,7 +33,7 @@ class Keyboards {
         $rows = array_chunk($buttons, $width);
         $rows[] = [self::button('🏛️ Home', 'home')];
         if ($back && $back !== 'home') $rows[] = [self::button('◀️ Back', $back)];
-        return ['inline_keyboard' => $rows];
+        return self::navigationLast(['inline_keyboard' => $rows]);
     }
     public static function home(array $servers,int $page=1): array {
         $page=max(1,$page); $total=count($servers); $servers=array_slice($servers,($page-1)*self::SELECTOR_PAGE,self::SELECTOR_PAGE);
@@ -24,12 +46,12 @@ class Keyboards {
         return ['inline_keyboard' => $rows];
     }
     public static function serverMenu(int $serverId): array {
-        return ['inline_keyboard' => [
+        return self::navigationLast(['inline_keyboard' => [
             [self::button('👤 Users', "users:{$serverId}:1:all"), self::button('🗄 Actions', "act_menu:{$serverId}")],
             [self::button('📊 Stats', "stats:{$serverId}"), self::button('➕ Create User', "new_usr:{$serverId}")],
             [self::button('🔍 Search User', "srch_usr:{$serverId}")],
             [self::button('☁️ Server', "srv_cfg:{$serverId}"), self::button('🏛️ Home', 'home')],
-        ]];
+        ]]);
     }
     public static function stats(int $serverId): array {
         return ['inline_keyboard'=>[
@@ -62,7 +84,7 @@ class Keyboards {
         } else $rows[] = [self::button('🔍 Search User', "srch_usr:{$serverId}")];
         $rows[] = [self::button('➕ Create', "new_usr:{$serverId}"), self::button('🏛️ Home', 'home')];
         $rows[] = [self::button('◀️ Back', "srv:{$serverId}")];
-        return ['inline_keyboard' => $rows];
+        return self::navigationLast(['inline_keyboard' => $rows]);
     }
     public static function userActions(int $serverId, string $username, bool $isActive, string $status, ?string $backData = null): array {
         $actions = [
@@ -90,7 +112,7 @@ class Keyboards {
         $nav=[]; $token=rawurlencode($actionPrefix); $back=rawurlencode($backData ?: "srv:{$serverId}");
         if($page>1)$nav[]=self::button('⬅️',"admins_page:{$serverId}:".($page-1).':'.(int)$includeAll.":{$token}:{$back}");
         if($page*self::SELECTOR_PAGE<$total)$nav[]=self::button('➡️',"admins_page:{$serverId}:".($page+1).':'.(int)$includeAll.":{$token}:{$back}");
-        if($nav)array_splice($markup['inline_keyboard'],-2,0,[$nav]);
+        if($nav)array_splice($markup['inline_keyboard'],-1,0,[$nav]);
         return $markup;
     }
     public static function templatesMenu(array $templates,int $page=1): array {
@@ -100,7 +122,7 @@ class Keyboards {
         $rows = array_chunk($buttons, 2);
         $rows[] = [self::button('➕ Create', 'new_tmpl'), self::button('🏛️ Home', 'home')];
         $nav=[]; if($page>1)$nav[]=self::button('⬅️','tmpls:'.($page-1)); if($page*self::SELECTOR_PAGE<$total)$nav[]=self::button('➡️','tmpls:'.($page+1)); if($nav)$rows[]=$nav;
-        return ['inline_keyboard' => $rows];
+        return self::navigationLast(['inline_keyboard' => $rows]);
     }
     public static function templateActions(int $tmplId, bool $isActive = true): array {
         return self::rows([
@@ -175,13 +197,13 @@ class Keyboards {
         if($nav)$rows[]=$nav;
         $rows[] = [self::button('✔️ DONE', $doneCallback), self::button('🏛️ Home', 'home')];
         if ($cancelCallback !== 'home') $rows[] = [self::button('◀️ Back', $cancelCallback)];
-        return ['inline_keyboard' => $rows];
+        return self::navigationLast(['inline_keyboard' => $rows]);
     }
     public static function bulkServices(int $serverId,array $services,int $page=1): array {
         $page=max(1,$page);$total=count($services);$services=array_slice($services,($page-1)*self::SELECTOR_PAGE,self::SELECTOR_PAGE);$rows=[];
         foreach($services as $svc){$name=$svc['name']??($svc['remark']??('Service #'.$svc['id']));$rows[]=[self::button($name,"bulk_cfg:{$serverId}:".rawurlencode((string)$svc['id']))];}
         $nav=[];if($page>1)$nav[]=self::button('⬅️',"bulk_services_page:{$serverId}:".($page-1));if($page*self::SELECTOR_PAGE<$total)$nav[]=self::button('➡️',"bulk_services_page:{$serverId}:".($page+1));if($nav)$rows[]=$nav;
-        $rows[]=[self::button('🏛️ Home','home')];$rows[]=[self::button('◀️ Back',"srv:{$serverId}")];return ['inline_keyboard'=>$rows];
+        $rows[]=[self::button('🏛️ Home','home')];$rows[]=[self::button('◀️ Back',"srv:{$serverId}")];return self::navigationLast(['inline_keyboard'=>$rows]);
     }
     public static function cancel(string $backData = 'home'): array {
         return self::rows([], 2, $backData);

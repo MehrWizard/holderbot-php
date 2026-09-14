@@ -82,8 +82,9 @@ $count=count(PanelManager::$calls);
 command('/user 1abc name'); command('/start user_1abc_name');
 check(count(PanelManager::$calls)===$count,'Malformed server ID reached panel');
 Storage::setState(42,'create_user_name',[]); callback('home');
-check(Storage::getState(42)===null && end($events)[0]==='replace' && end($events)[1][2]==='Shared welcome','Home did not clear wizard and send replacement menu');
-callback('queue_home'); check(end($events)[0]==='send','Loading Home reused loading message');
+check(Storage::getState(42)===null && end($events)[0]==='edit' && end($events)[1][2]==='Shared welcome','Home did not clear wizard and edit menu');
+callback('queue_home'); check(end($events)[0]==='edit','Loading Home did not edit recent message');
+callback('queue_back:1'); check(end($events)[0]==='edit','Loading Back did not edit recent message');
 PanelManager::$users=array_fill(0,10,['username'=>'test','is_active'=>true]);
 callback('users:1:2:expired');
 check(end(PanelManager::$calls)===['list',3,10,null,'expired'],'User pagination did not use a page-safe exact look-ahead');
@@ -178,4 +179,11 @@ $admins=array_map(fn($i)=>'admin'.$i,range(1,45));
 check(count(array_filter(buttons(Keyboards::adminsSelector(1,$admins,'xfer_from')),fn($v)=>str_starts_with($v,'xfer_from:')))===20,'Admin selector is not bounded');
 $configs=array_map(fn($i)=>['id'=>$i,'name'=>'config'.$i],range(1,45));
 check(in_array('configs_page:1:2:usr_cfg:usr_cfg_done%3A1:srv%3A1',buttons(Keyboards::configSelector(1,$configs,[],'usr_cfg','usr_cfg_done:1','srv:1')),true),'Config selector has no next page');
+foreach ([Keyboards::usersList(1,[],1),Keyboards::configSelector(1,$configs,[],'usr_cfg','usr_cfg_done:1','srv:1'),Keyboards::cancel('srv:1'),Keyboards::navigationLast(['inline_keyboard'=>[[['text'=>'Home','callback_data'=>'queue_home']],[['text'=>'Back','callback_data'=>'queue_back:1']]]])] as $keyboard) {
+    $last=end($keyboard['inline_keyboard']);
+    check(count($last)===2 && str_contains($last[0]['text'],'Back') && str_contains($last[1]['text'],'Home'),'Back and Home must share the last row');
+}
+$homeOnly=Keyboards::cancel();$backOnly=Keyboards::stats(1);
+check(count(end($homeOnly['inline_keyboard']))===1,'Home-only keyboard needs one final navigation button');
+check(count(end($backOnly['inline_keyboard']))===1,'Back-only keyboard needs one final navigation button');
 echo "PASS: command, deep-link, Home, search, pagination and stale wizard workflows; external boundaries stubbed\n";

@@ -129,6 +129,19 @@ echo json_encode($out,JSON_THROW_ON_ERROR);
 '''
 result = subprocess.run(['php','-r',php,str(PHP)],input=json.dumps(fixtures),text=True,capture_output=True,check=True)
 actual = json.loads(result.stdout)
+def navigation_last(rows):
+    content=[]; back=None; home=None
+    for row in rows:
+        remaining=[]
+        for label in row:
+            if label == '🏛️ Home': home=label
+            elif label == '◀️ Back': back=label
+            else: remaining.append(label)
+        if remaining: content.append(remaining)
+    navigation=[label for label in (back,home) if label]
+    if navigation: content.append(navigation)
+    return content
 for index,(fixture,value) in enumerate(zip(fixtures,actual)):
-    assert value == fixture['expected'], f"Fixture {index} {fixture['kind']}:\nExpected: {fixture['expected']!r}\nActual: {value!r}"
+    expected=navigation_last(fixture['expected']) if fixture['kind']=='keyboard' else fixture['expected']
+    assert value == expected, f"Fixture {index} {fixture['kind']}:\nExpected: {expected!r}\nActual: {value!r}"
 print(f'PASS: {len(fixtures)} differential fixtures evaluated against original Python code')

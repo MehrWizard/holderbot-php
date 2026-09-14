@@ -7,6 +7,7 @@ root=Path(__file__).resolve().parents[1]
 for path in sorted(root.rglob('*.php')):
     subprocess.run(['php','-l',str(path)],check=True,stdout=subprocess.DEVNULL)
 print('PASS: PHP syntax',flush=True)
+subprocess.run(['php',str(root/'tests/telegram_message_age.php')],check=True)
 subprocess.run(['php',str(root/'tests/workflows.php')],check=True)
 subprocess.run(['php',str(root/'tests/reconciliation.php')],check=True)
 subprocess.run(['php',str(root/'tests/panel_failures.php')],check=True)
