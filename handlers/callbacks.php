@@ -833,6 +833,11 @@ class CallbackHandlers {
         // Edit Template Date Limit: tmpl_edit_date:<id> - shows the date-type selector first
         if (str_starts_with($data, 'tmpl_edit_date:')) {
             $tmplId = (int)substr($data, strlen('tmpl_edit_date:'));
+            if (!Storage::getTemplate($tmplId)) {
+                tg_answer_callback($id, "❌ Not Found.", true);
+                return;
+            }
+            Storage::setState($userId, 'tmpl_edit_datetype', ['tmpl_id'=>$tmplId]);
             tg_answer_callback($id);
             tg_edit_message(
                 $chatId,
@@ -847,7 +852,7 @@ class CallbackHandlers {
         if (str_starts_with($data, 'tmpl_add_dt:')) {
             $type = substr($data, strlen('tmpl_add_dt:'));
             $state = Storage::getState($userId);
-            if (empty($state['data']['remark'])) {
+            if (($state['step'] ?? '') !== 'tmpl_add_datetype' || empty($state['data']['remark']) || !in_array($type, ['fixed','onhold','unlimited'], true)) {
                 tg_answer_callback($id, "Session expired, please retry.", true);
                 return;
             }
@@ -856,8 +861,8 @@ class CallbackHandlers {
             tg_answer_callback($id);
             if ($type === 'unlimited') {
                 $tmplData['date_limit'] = 0;
-                Storage::clearState($userId);
                 Storage::saveTemplate($tmplData);
+                Storage::clearState($userId);
                 tg_edit_message($chatId, $messageId, "✅ Success.", Keyboards::cancel());
             } else {
                 Storage::setState($userId, 'tmpl_add_date', $tmplData);
@@ -871,6 +876,11 @@ class CallbackHandlers {
             $parts = explode(':', $data, 3);
             $tmplId = (int)($parts[1] ?? 0);
             $type = $parts[2] ?? 'fixed';
+            $state = Storage::getState($userId);
+            if (($state['step'] ?? '') !== 'tmpl_edit_datetype' || (int)($state['data']['tmpl_id'] ?? 0) !== $tmplId || !in_array($type, ['fixed','onhold','unlimited'], true)) {
+                tg_answer_callback($id, 'Session expired, please retry.', true);
+                return;
+            }
             $tmpl = Storage::getTemplate($tmplId);
             if (!$tmpl) {
                 tg_answer_callback($id, "❌ Not Found.", true);
@@ -881,6 +891,7 @@ class CallbackHandlers {
                 $tmpl['date_type'] = 'unlimited';
                 $tmpl['date_limit'] = 0;
                 Storage::saveTemplate($tmpl);
+                Storage::clearState($userId);
                 tg_edit_message($chatId, $messageId, "✅ Success.", Keyboards::cancel());
             } else {
                 Storage::setState($userId, 'tmpl_edit_date', ['tmpl_id' => $tmplId, 'date_type' => $type]);

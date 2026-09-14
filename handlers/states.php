@@ -402,9 +402,9 @@ class StateHandlers {
         }
 
         $data['date_limit'] = (int)$input;
-        Storage::clearState($userId);
 
         Storage::saveTemplate($data);
+        Storage::clearState($userId);
         tg_send_message(
             $chatId,
             "✅ Success.",

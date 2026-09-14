@@ -3,10 +3,19 @@ declare(strict_types=1);
 // Exercise real handlers and keyboard builders; only external boundaries are stubbed.
 class Storage {
     public static array $state=[];
+    public static array $templates=[1=>['id'=>1,'remark'=>'basic','date_type'=>'fixed','date_limit'=>30,'data_limit'=>10]];
+    public static bool $failSave=false;
+    public static function getTemplates(): array { return array_values(self::$templates); }
+    public static function getTemplate($id): ?array { return self::$templates[$id] ?? null; }
+    public static function saveTemplate($data): int {
+        if (self::$failSave) throw new RuntimeException('Simulated database failure');
+        $id=$data['id'] ?? count(self::$templates)+1;
+        self::$templates[$id]=$data+['id'=>$id]; return $id;
+    }
     public static function getServer(int $id): ?array { return $id===1 ? ['id'=>1,'remark'=>'test','type'=>'marzban'] : null; }
     public static function getServers(): array { return [self::getServer(1)]; }
     public static function getState($id): ?array { return self::$state[$id] ?? null; }
-    public static function setState($id,$step,$data): void { self::$state[$id]=compact('step','data'); }
+    public static function setState($id,$step,$data=[]): void { self::$state[$id]=compact('step','data'); }
     public static function clearState($id): void { unset(self::$state[$id]); }
     public static function cacheGet(...$args): mixed { return null; }
     public static function cacheSet(...$args): void {}
@@ -14,6 +23,8 @@ class Storage {
 class PanelManager {
     public static array $calls=[];
     public static array $users=[];
+    public static function modifyUserDataLimit($server,$username,$value): bool { self::$calls[]=['data',$username,$value]; return false; }
+    public static function modifyUserNote($server,$username,$value): bool { self::$calls[]=['note',$username,$value]; return true; }
     public static function getUsers($server,$page,$size,$search=null,$status=null): array { self::$calls[]=['list',$page,$size,$search,$status]; return self::$users; }
     public static function getUser($server,$username): array { self::$calls[]=['exact',$username]; return ['username'=>$username,'is_active'=>true,'status'=>'active']; }
 }
@@ -73,4 +84,39 @@ check(Storage::getState(42)['step']==='create_user_count','Zero count advanced w
 StateHandlers::handle($input+['text'=>'۰۲'],Storage::getState(42));
 check(Storage::getState(42)['step']==='create_user_suffix' && Storage::getState(42)['data']['count']===2,'Unicode count did not preserve bulk wizard state');
 callback('home'); check(Storage::getState(42)===null,'Home left bulk creation state active');
+callback('tmpl_edit_dt:1:unlimited');
+check(Storage::$templates[1]['date_type']==='fixed','Stale template edit changed data');
+callback('tmpl_edit_date:1'); callback('tmpl_edit_dt:1:invalid');
+check(Storage::getState(42)['step']==='tmpl_edit_datetype','Invalid date type advanced wizard');
+callback('tmpl_edit_dt:1:onhold');
+StateHandlers::handle($input+['text'=>'۷'],Storage::getState(42));
+check(Storage::$templates[1]['date_type']==='onhold' && Storage::$templates[1]['date_limit']===7,'Template duration edit lost selected strategy');
+callback('tmpl_edit_date:1'); callback('tmpl_edit_dt:1:unlimited');
+check(Storage::$templates[1]['date_limit']===0 && Storage::getState(42)===null,'Unlimited edit left wizard active');
+callback('new_tmpl');
+StateHandlers::handle($input+['text'=>'BASIC'],Storage::getState(42));
+check(Storage::getState(42)['step']==='tmpl_add_remark','Duplicate template name accepted');
+StateHandlers::handle($input+['text'=>'new_plan'],Storage::getState(42));
+callback('tmpl_add_dt:unlimited');
+check(count(Storage::$templates)===1,'Date button bypassed data-limit entry');
+StateHandlers::handle($input+['text'=>'۰'],Storage::getState(42));
+Storage::$failSave=true;
+try { callback('tmpl_add_dt:unlimited'); throw new LogicException('Save failure fixture not exercised'); }
+catch (RuntimeException $expected) {}
+check(Storage::getState(42)['step']==='tmpl_add_datetype','Failed save discarded creation state');
+Storage::$failSave=false; callback('tmpl_add_dt:unlimited');
+check(count(Storage::$templates)===2 && Storage::getState(42)===null,'Unlimited template creation failed');
+callback('tmpl_add_dt:unlimited'); check(count(Storage::$templates)===2,'Repeated template callback duplicated creation');
+Storage::setState(42,'user_mod_datalimit',['server_id'=>1,'username'=>'test_user']);
+$count=count(PanelManager::$calls);
+StateHandlers::handle($input+['text'=>'-1'],Storage::getState(42));
+check(count(PanelManager::$calls)===$count,'Negative quota reached panel');
+StateHandlers::handle($input+['text'=>'۰'],Storage::getState(42));
+check(end(PanelManager::$calls)===['data','test_user',0] && end($events)[1][1]==='❌ Failed','Failed unlimited quota edit reported success');
+Storage::setState(42,'user_mod_note',['server_id'=>1,'username'=>'test_user']);
+$count=count(PanelManager::$calls);
+StateHandlers::handle($input+['text'=>str_repeat('ی',501)],Storage::getState(42));
+check(count(PanelManager::$calls)===$count,'Oversized Unicode note reached panel');
+StateHandlers::handle($input+['text'=>str_repeat('ی',500)],Storage::getState(42));
+check(end(PanelManager::$calls)===['note','test_user',str_repeat('ی',500)],'Valid Unicode note rejected');
 echo "PASS: command, deep-link, Home, search, pagination and stale wizard workflows; external boundaries stubbed\n";
