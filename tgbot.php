@@ -140,7 +140,9 @@ function tg_edit_message(
         // can no longer be edited. Remove it if possible and deliver the
         // replacement as a fresh message instead.
         tg_delete_message($chatId, $messageId);
-        return tg_send_message($chatId, $text, $replyMarkup, $parseMode);
+        $sent = tg_send_message($chatId, $text, $replyMarkup, $parseMode);
+        if (!empty($sent['result']['message_id'])) Storage::cacheSet('replacement_' . $chatId . '_' . $messageId, (int)$sent['result']['message_id'], 604800);
+        return $sent;
     }
     return $response;
 }
@@ -153,6 +155,11 @@ function tg_replace_message(
     ?array $replyMarkup = null,
     string $parseMode = 'HTML'
 ): ?array {
+    for ($i = 0; $i < 100 && $messageId > 0; $i++) {
+        $replacement = Storage::cacheGet('replacement_' . $chatId . '_' . $messageId);
+        if (!$replacement || (int)$replacement === $messageId) break;
+        $messageId = (int)$replacement;
+    }
     if ($messageId > 0) tg_delete_message($chatId, $messageId);
     return tg_send_message($chatId, $text, $replyMarkup, $parseMode);
 }

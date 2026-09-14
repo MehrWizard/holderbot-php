@@ -7,7 +7,7 @@ PHP webhook implementation of [erfjab/holderbot](https://github.com/erfjab/holde
 | Area | Python | PHP |
 | --- | --- | --- |
 | Runtime | Long-running polling process | HTTPS webhook plus cron worker |
-| Storage | Python database layout | MySQL-only schema; migrate existing data before switching |
+| Storage | Python database layout | Fresh MySQL-only installation; Python database migration is out of scope |
 | Callback data | Python callback serialization | PHP callback identifiers; send `/start` after switching |
 | Configuration | Settings and `.env` | `config.php`; `.env` is not loaded automatically |
 | Node polling | Approximately 30 seconds | One-minute cron, or `cron.php --daemon` for a similar interval |
@@ -53,7 +53,7 @@ Optional queue settings in `config.php`:
 
 ## Queue operations
 
-The queue is reserved for work that can exceed webhook or shared-host limits: multi-user creation and imports, bulk deletion, transfers, configuration and admin-wide status changes, full statistics scans, monitoring, access refresh, expiry reports, and other scheduled work. Single-user edits, recharge, creation, and QR delivery run immediately. These short operations are persisted as inline jobs first; if the inline lease expires, cron safely takes over under a per-job MySQL lock and updates the original loading message. Statistics and expiry reports scan one panel page per worker slice, so panel size does not determine PHP memory use. Credentials are loaded from MySQL when a job runs and are not copied into queue payloads.
+The queue is reserved for work that can exceed webhook or shared-host limits: multi-user creation and imports, bulk deletion, transfers, configuration and admin-wide status changes, full statistics scans, monitoring, access refresh, expiry reports, and other scheduled work. Single-user edits, recharge, creation, and QR delivery run immediately. These short operations are persisted as inline jobs first; if the inline lease expires, cron safely takes over under a per-job MySQL lock and updates the original loading message. Statistics and expiry scans checkpoint each panel page; full report entries and bulk targets are stored in child MySQL rows. Imports are limited to 8 MiB and 100,000 entries, parsed incrementally, and validated before creation. Interrupted mutations stop for manual review instead of being replayed. Credentials are loaded from MySQL when a job runs and are not copied into queue payloads.
 
 ```bash
 php queue.php health
@@ -75,9 +75,8 @@ The available checks cover PHP syntax, Python presentation fixtures, QR compatib
 
 ## TODO
 
-- [ ] Run the MySQL migration and queue tests on the deployment host.
+- [X] Test concurrent PHP schema upgrades, 16,000-row import ingestion, and interrupted mutation recovery in isolated MySQL.
 - [ ] Validate live webhook delivery, Telegram rendering, panel versions, and large batches.
 - [ ] Test backup restoration and external queue/heartbeat monitoring.
-- [ ] Provide a migration tool for existing Python installations if required.
 
 Original author: [erfjab](https://github.com/erfjab). PHP repository: [MehrWizard/holderbot-php](https://github.com/MehrWizard/holderbot-php).

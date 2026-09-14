@@ -42,6 +42,12 @@ server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
 threading.Thread(target=server.serve_forever,daemon=True).start()
 php=r'''
 $config=['storage_type'=>'mysql'];
+// Cache double only: requests still exercise native cURL against the fake panel.
+class Storage {
+ private static array $cache=[];
+ public static function cacheGet(string $key): mixed { return self::$cache[$key] ?? null; }
+ public static function cacheSet(string $key, mixed $value, int $ttl): void { self::$cache[$key]=$value; }
+}
 require $argv[1].'/panels/panel_manager.php';
 $s=['id'=>1,'type'=>'marzban','remark'=>'test','base_url'=>$argv[2],'username'=>'sudo','password'=>'good'];
 foreach(['marzban','marzneshin'] as $kind) {

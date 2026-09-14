@@ -10,5 +10,5 @@ print('PASS: PHP syntax',flush=True)
 args=[sys.executable,str(root/'tests/compare_python.py')]
 if len(sys.argv)>1: args.append(sys.argv[1])
 subprocess.run(args,check=True)
-for test in ['qr_contract.py']:
+for test in ['qr_contract.py', 'http_contract.py']:
     subprocess.run([sys.executable,str(root/'tests'/test)],check=True,timeout=120)

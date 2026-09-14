@@ -65,10 +65,10 @@ class BackgroundTasks {
 
     /** Process one expiry-report page and return checkpoint state. */
     public static function expiryPage(array $server, array $state, ?int $now = null): array {
-        $now ??= time();
+        $now = (int)($state['now'] ?? $now ?? time());
         $page = max(1, (int)($state['page'] ?? 1));
         $total = (int)($state['total'] ?? 0);
-        $names = is_array($state['names'] ?? null) ? $state['names'] : [];
+        $names = [];
         $matched = (int)($state['matched'] ?? count($names));
         $users = PanelManager::getUsers($server, $page, PanelManager::pageSize($server), null, null, null, true);
         $total += count($users);
@@ -77,7 +77,7 @@ class BackgroundTasks {
             $hours = (int)((($user['expire_timestamp'] ?? 0) - $now) / 3600);
             if ($hours > 0 && $hours < 24) {
                 $matched++;
-                if (count($names) < 25) $names[] = (string)$user['username'];
+                $names[] = (string)$user['username'];
             }
         }
         return ['page' => $page + 1, 'total' => $total, 'names' => $names, 'matched' => $matched, 'done' => count($users) < PanelManager::pageSize($server), 'now' => $now];

@@ -35,7 +35,7 @@ class CallbackHandlers {
                 return;
             }
             if ($action === 'job_cancel') {
-                BatchQueue::cancel($jobId);
+                try { BatchQueue::cancel($jobId); } catch (RuntimeException $e) { tg_answer_callback($id, $e->getMessage(), true); return; }
                 $job = BatchQueue::get($jobId) ?? $job;
             } else {
                 $statusText = BatchQueue::describe($job);
@@ -328,7 +328,7 @@ class CallbackHandlers {
                     return;
                 }
                 if ($attempt['state'] !== 'completed') {
-                    tg_edit_message($chatId, $messageId, 'This request is already being processed.', BatchQueue::keyboard($attempt['job']));
+                    tg_edit_message($chatId, $messageId, BatchQueue::describe($attempt['job']), BatchQueue::keyboard($attempt['job']));
                     return;
                 }
                 $updated = $attempt['result'];
@@ -381,7 +381,7 @@ class CallbackHandlers {
                     return;
                 }
                 if ($attempt['state'] !== 'completed') {
-                    tg_edit_message($chatId, $messageId, 'This request is already being processed.', BatchQueue::keyboard($attempt['job']));
+                    tg_edit_message($chatId, $messageId, BatchQueue::describe($attempt['job']), BatchQueue::keyboard($attempt['job']));
                     return;
                 }
                 $ok = $attempt['result'] !== null;
@@ -1207,6 +1207,7 @@ class CallbackHandlers {
 
     private static function queueBatch(string $kind, array $server, array $params, int|string $chatId, int $messageId, int $userId, string $callbackId): void {
         try {
+            $params['message_id'] = $messageId;
             $job = BatchQueue::enqueue($kind, $server, $params, $chatId, $userId, 'message:' . $messageId);
         } catch (Throwable $e) {
             error_log('Batch submission failed: ' . $e->getMessage());
@@ -1335,7 +1336,7 @@ class CallbackHandlers {
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "Are your sure?" . htmlspecialchars($username) . "</code>?",
+                    "Are you sure? <code>" . Formatter::escape($username) . "</code>?",
                     Keyboards::confirm("act_confirm:tgl:{$serverId}:{$username}:yes", "act_confirm:tgl:{$serverId}:{$username}:no")
                 );
                 break;
@@ -1433,7 +1434,7 @@ class CallbackHandlers {
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "Are your sure?" . htmlspecialchars($username) . "</code> to 0?",
+                    "Are you sure? <code>" . Formatter::escape($username) . "</code> to 0?",
                     Keyboards::confirm("act_confirm:rst:{$serverId}:{$username}:yes", "act_confirm:rst:{$serverId}:{$username}:no")
                 );
                 break;
@@ -1443,7 +1444,7 @@ class CallbackHandlers {
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "Are your sure?" . htmlspecialchars($username) . "</code>. Old links will stop working. Continue?",
+                    "Are you sure? <code>" . Formatter::escape($username) . "</code>. Old links will stop working. Continue?",
                     Keyboards::confirm("act_confirm:rvk:{$serverId}:{$username}:yes", "act_confirm:rvk:{$serverId}:{$username}:no")
                 );
                 break;
@@ -1467,7 +1468,7 @@ class CallbackHandlers {
                 } elseif ($attempt['state'] === 'failed') {
                     tg_edit_message($chatId, $messageId, "No subscription link available for QR.", Keyboards::userActions($serverId, $username, false, ''));
                 } elseif ($attempt['state'] !== 'completed') {
-                    tg_edit_message($chatId, $messageId, 'This request is already being processed.', BatchQueue::keyboard($attempt['job']));
+                    tg_edit_message($chatId, $messageId, BatchQueue::describe($attempt['job']), BatchQueue::keyboard($attempt['job']));
                 }
                 /* The QR is delivered by the inline operation or its queue fallback. */
                 if ($attempt['state'] !== 'completed') {
@@ -1482,7 +1483,7 @@ class CallbackHandlers {
                 tg_edit_message(
                     $chatId,
                     $messageId,
-                    "Are your sure?" . htmlspecialchars($username) . "</code> from <b>{$server['remark']}</b>?",
+                    "Are you sure? <code>" . Formatter::escape($username) . "</code> from <b>{$server['remark']}</b>?",
                     $confirmKb
                 );
                 break;
@@ -1607,7 +1608,7 @@ class CallbackHandlers {
             return;
         }
         if ($attempt['state'] !== 'completed') {
-            tg_edit_message($chatId, $messageId, 'This request is already being processed.', BatchQueue::keyboard($attempt['job']));
+            tg_edit_message($chatId, $messageId, BatchQueue::describe($attempt['job']), BatchQueue::keyboard($attempt['job']));
             return;
         }
         $created = $attempt['result'];

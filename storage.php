@@ -128,6 +128,19 @@ class Storage {
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                 ");
 
+                self::$pdo->exec("CREATE TABLE IF NOT EXISTS bot_queue_items (
+                    job_id CHAR(32) NOT NULL,
+                    position INT NOT NULL,
+                    username VARCHAR(255) NOT NULL,
+                    payload JSON NULL,
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    PRIMARY KEY (job_id, position),
+                    UNIQUE KEY job_username (job_id, username)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+                self::$pdo->exec("CREATE TABLE IF NOT EXISTS bot_queue_imports (
+                    job_id CHAR(32) PRIMARY KEY,
+                    content MEDIUMBLOB NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
                 $stateColumns = self::$pdo->query('SHOW COLUMNS FROM bot_states')->fetchAll(PDO::FETCH_COLUMN);
                 if (!in_array('chat_id', $stateColumns, true)) {
                     self::$pdo->exec('ALTER TABLE bot_states ADD COLUMN chat_id BIGINT NOT NULL DEFAULT 0');

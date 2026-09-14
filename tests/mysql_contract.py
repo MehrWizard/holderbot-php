@@ -24,6 +24,19 @@ with tempfile.TemporaryDirectory(prefix='holderbot-mysql-') as tmp:
 $config=['storage_type'=>'mysql','mysql'=>['host'=>'127.0.0.1','port'=>(int)$argv[2],'database'=>$argv[3],'username'=>'root','password'=>'']];
 require $argv[1].'/storage.php';
 Storage::init();
+require $argv[1].'/helpers/queue.php';
+$server=['id'=>0,'type'=>'internal','base_url'=>'','username'=>''];
+$submission=bin2hex(random_bytes(8));
+$job=BatchQueue::enqueueInline('recharge',$server,[],99,42,$submission);
+$calls=0;
+$attempt=BatchQueue::executeInline($job,function()use(&$calls){$calls++;return null;});
+if ($attempt['state']!=='failed' || (int)$attempt['job']['success']!==0 || (int)$attempt['job']['unconfirmed']!==1) throw new RuntimeException('Unconfirmed mutation recorded as success');
+BatchQueue::executeInline($job,function()use(&$calls){$calls++;return true;});
+if ($calls!==1) throw new RuntimeException('Failed mutation replayed');
+$job=BatchQueue::enqueueInline('qr',$server,[],99,42,$submission.'cancel');
+BatchQueue::cancel($job['id']);
+BatchQueue::executeInline($job,function(){throw new RuntimeException('Cancelled job executed');});
+if (BatchQueue::get($job['id'])['status']!=='cancelled') throw new RuntimeException('Cancellation overwritten');
 Storage::setChatContext(99);
 Storage::setState(42, 'new_state', ['server_id'=>1]);
 if ((Storage::getState(42)['step'] ?? '') !== 'new_state') throw new RuntimeException('State write failed');
@@ -41,6 +54,7 @@ if ($argv[3]!=='fresh' && (Storage::getState(42)['step'] ?? '') !== 'legacy') th
                 out, err = worker.communicate(timeout=45)
                 assert worker.returncode == 0, err.decode()
         print('PASS: fresh, legacy, interrupted MySQL upgrades with 4 concurrent workers each')
+        subprocess.run(['php', '-d', 'extension=pdo_mysql', str(root/'tests/queue_large.php'), str(port)], check=True, timeout=120)
     finally:
         server.terminate()
         server.wait(timeout=15)
