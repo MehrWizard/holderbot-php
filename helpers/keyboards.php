@@ -40,8 +40,7 @@ class Keyboards {
         $buttons = [];
         foreach ($servers as $s) $buttons[] = self::button((($s['is_active'] ?? true) ? '✅ ' : '❌ ') . $s['remark'], "srv:{$s['id']}");
         $rows = array_chunk($buttons, 2);
-        $rows[] = [self::button('🗃 Templates', 'tmpls'), self::button('👀 Check Update', 'check_update')];
-        $rows[] = [self::button('➕ Add Server', 'add_srv')];
+        $rows[] = [self::button('🗃 Templates', 'tmpls'), self::button('➕ Add Server', 'add_srv')];
         $nav=[]; if($page>1)$nav[]=self::button('⬅️','home_page:'.($page-1)); if($page*self::SELECTOR_PAGE<$total)$nav[]=self::button('➡️','home_page:'.($page+1)); if($nav)$rows[]=$nav;
         return ['inline_keyboard' => $rows];
     }

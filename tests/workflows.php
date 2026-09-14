@@ -172,6 +172,8 @@ callback('stats:1');
 check($events[count($events)-2][0]==='edit' && $events[count($events)-2][1][2]==='cached stats' && end($events)[0]==='send' && end($events)[1][1]==='one,two','Stats button did not render the latest cache immediately');
 $many=array_map(fn($i)=>['id'=>$i,'remark'=>'item'.$i,'is_active'=>true],range(1,45));
 check(in_array('home_page:2',buttons(Keyboards::home($many)),true),'Server selector has no next page');
+$homeRows=Keyboards::home($many)['inline_keyboard'];
+check(array_map(fn($button)=>$button['callback_data'],$homeRows[10])===['tmpls','add_srv'],'Home actions must share one row without Check Update');
 check(in_array('home_page:1',buttons(Keyboards::home($many,2)),true),'Server selector has no previous page');
 $templates=array_map(fn($i)=>['id'=>$i,'remark'=>'template'.$i],range(1,45));
 check(in_array('tmpls:2',buttons(Keyboards::templatesMenu($templates)),true),'Template selector has no next page');
