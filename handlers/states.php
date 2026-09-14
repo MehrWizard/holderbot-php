@@ -307,7 +307,7 @@ class StateHandlers {
             tg_send_message($chatId, "❌ Not Found.", Keyboards::cancel());
             return true;
         }
-        $ok = PanelManager::modifyUserDataLimit($server, $username, (int)$input);
+        $ok = self::runUserMutation($server,$chatId,$userId,['username'=>$username,'operation'=>'data','value'=>(int)$input]);
         Storage::clearState($userId);
         tg_send_message($chatId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
         return true;
@@ -328,7 +328,7 @@ class StateHandlers {
             tg_send_message($chatId, "❌ Not Found.", Keyboards::cancel());
             return true;
         }
-        $ok = PanelManager::modifyUserDateLimit($server, $username, (int)$input);
+        $ok = self::runUserMutation($server,$chatId,$userId,['username'=>$username,'operation'=>'date','days'=>(int)$input,'date_type'=>'fixed']);
         Storage::clearState($userId);
         tg_send_message($chatId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
         return true;
@@ -348,7 +348,7 @@ class StateHandlers {
             tg_send_message($chatId, "❌ Not Found.", Keyboards::cancel());
             return true;
         }
-        $ok = PanelManager::modifyUserNote($server, $username, $note);
+        $ok = self::runUserMutation($server,$chatId,$userId,['username'=>$username,'operation'=>'note','note'=>$note]);
         Storage::clearState($userId);
         tg_send_message($chatId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
         return true;
@@ -615,11 +615,17 @@ class StateHandlers {
         }
         if (!$server) { tg_send_message($chatId, "❌ Not Found.", Keyboards::cancel()); return true; }
         Storage::clearState($userId);
-        $ok = PanelManager::updateDateLimit($server, $username, (int)$input, 'onhold');
+        $ok = self::runUserMutation($server,$chatId,$userId,['username'=>$username,'operation'=>'date','days'=>(int)$input,'date_type'=>'onhold']);
         tg_send_message($chatId,
             $ok ? "✅ Success." : "❌ Failed",
             Keyboards::cancel("usr:{$serverId}:{$username}")
         );
         return true;
+    }
+
+    private static function runUserMutation(array $server,int|string $chatId,int $userId,array $params): bool
+    {
+        $attempt=BatchQueue::submitUserMutation($server,$params,$chatId,$userId,'state:'.bin2hex(random_bytes(8)));
+        return $attempt['state']==='completed';
     }
 }

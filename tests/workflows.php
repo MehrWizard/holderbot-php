@@ -27,15 +27,33 @@ class PanelManager {
     public static function modifyUserDataLimit($server,$username,$value): bool { self::$calls[]=['data',$username,$value]; return false; }
     public static function modifyUserNote($server,$username,$value): bool { self::$calls[]=['note',$username,$value]; return true; }
     public static function getServices($server): array { return [['id'=>'one:tcp','name'=>'One'],['id'=>'two','name'=>'Two']]; }
+    public static function getAdmins($server): array { return ['new_admin','admin1','admin2']; }
     public static function updateUserConfigs($server,$username,$ids): bool { self::$calls[]=['configs',$username,$ids]; return false; }
     public static function setOwner($server,$username,$admin): bool { self::$calls[]=['owner',$username,$admin]; return false; }
     public static function getUsers($server,$page,$size,$search=null,$status=null): array { self::$calls[]=['list',$page,$size,$search,$status]; return self::$users; }
-    public static function getUser($server,$username): array { self::$calls[]=['exact',$username]; return ['username'=>$username,'is_active'=>true,'status'=>'active']; }
+    public static function getUser($server,$username): array { self::$calls[]=['exact',$username]; return ['username'=>$username,'is_active'=>true,'status'=>'active','service_ids'=>['one:tcp','two']]; }
 }
 class Formatter {
     public static function start(): string { return 'Shared welcome'; }
     public static function userCard($server,$user): string { return 'Card '.$user['username']; }
     public static function escape($text): string { return htmlspecialchars($text); }
+}
+class BatchQueue {
+    public static function cachedStats($id): ?array { $v=Storage::cacheGet('stats_result_'.$id); return is_array($v)?$v:null; }
+    public static function submitUserMutation($server,$p,$chatId=0,...$args): array {
+        $ok=match($p['operation']) {
+            'data'=>PanelManager::modifyUserDataLimit($server,$p['username'],$p['value']),
+            'note'=>PanelManager::modifyUserNote($server,$p['username'],$p['note']),
+            'owner'=>PanelManager::setOwner($server,$p['username'],$p['owner']),
+            'config'=>PanelManager::updateUserConfigs($server,$p['username'],$p['ids']),
+            default=>true,
+        };
+        tg_edit_message($chatId,(int)($p['message_id']??0),$ok?'✅ Success.':'❌ Failed');
+        return ['state'=>$ok?'completed':'failed','job'=>['status'=>$ok?'completed':'failed']];
+    }
+    public static function describe($job): string { return '❌ Failed'; }
+    public static function keyboard($job): array { return ['inline_keyboard'=>[]]; }
+    public static function fallbackMessage($job): string { return 'Loading...'; }
 }
 $events=[];
 function tg_send_message(...$args): array { global $events; $events[]=['send',$args]; return ['ok'=>true,'result'=>['message_id'=>100]]; }
@@ -68,7 +86,7 @@ check(Storage::getState(42)===null && end($events)[0]==='replace' && end($events
 callback('queue_home'); check(end($events)[0]==='send','Loading Home reused loading message');
 PanelManager::$users=array_fill(0,10,['username'=>'test','is_active'=>true]);
 callback('users:1:2:expired');
-check(end(PanelManager::$calls)===['list',2,10,null,'expired'],'List filter/page changed');
+check(end(PanelManager::$calls)===['list',3,10,null,'expired'],'User pagination did not use a page-safe exact look-ahead');
 $keys=buttons(end($events)[1][3]);
 check(in_array('users:1:1:expired',$keys,true) && in_array('users:1:3:expired',$keys,true),'Pagination lost filter');
 PanelManager::$users=[]; callback('users:1:3:expired');
@@ -138,6 +156,11 @@ $count=count(PanelManager::$calls); callback('cfg_save:1:second_user');
 check(count(PanelManager::$calls)===$count && end($events)[0]==='alert','Empty configs reached panel');
 callback('cfg_pick:second_user:all:1'); callback('cfg_save:1:second_user');
 check(end(PanelManager::$calls)===['configs','second_user',['one:tcp','two']] && end($events)[1][2]==='❌ Failed','Config failure reported success or wrong target');
+Storage::setState(42,'create_user_configs',['server_id'=>1,'selected_configs'=>[],'selector_page'=>1]);
+callback('usr_cfg:all:1');
+check(Storage::getState(42)['data']['selected_configs']===['one:tcp','two'],'Create-user Select All lost wizard state');
+callback('usr_cfg:none:1');
+check(Storage::getState(42)['data']['selected_configs']===[],'Create-user DeSelect All lost wizard state');
 Storage::setState(42,'user_mod_owner',['server_id'=>1,'username'=>'second_user']);
 $count=count(PanelManager::$calls); callback('set_own:first_user:1:new_admin');
 check(count(PanelManager::$calls)===$count && end($events)[0]==='alert','Old owner button mutated another user');
@@ -146,4 +169,13 @@ check(end(PanelManager::$calls)===['owner','second_user','new_admin'] && end($ev
 Storage::cacheSet('stats_result_1',['server_id'=>1,'text'=>'cached stats','chunks'=>['one,two'],'generated_at'=>time()],3600);
 callback('stats:1');
 check($events[count($events)-2][0]==='edit' && $events[count($events)-2][1][2]==='cached stats' && end($events)[0]==='send' && end($events)[1][1]==='one,two','Stats button did not render the latest cache immediately');
+$many=array_map(fn($i)=>['id'=>$i,'remark'=>'item'.$i,'is_active'=>true],range(1,45));
+check(in_array('home_page:2',buttons(Keyboards::home($many)),true),'Server selector has no next page');
+check(in_array('home_page:1',buttons(Keyboards::home($many,2)),true),'Server selector has no previous page');
+$templates=array_map(fn($i)=>['id'=>$i,'remark'=>'template'.$i],range(1,45));
+check(in_array('tmpls:2',buttons(Keyboards::templatesMenu($templates)),true),'Template selector has no next page');
+$admins=array_map(fn($i)=>'admin'.$i,range(1,45));
+check(count(array_filter(buttons(Keyboards::adminsSelector(1,$admins,'xfer_from')),fn($v)=>str_starts_with($v,'xfer_from:')))===20,'Admin selector is not bounded');
+$configs=array_map(fn($i)=>['id'=>$i,'name'=>'config'.$i],range(1,45));
+check(in_array('configs_page:1:2:usr_cfg:usr_cfg_done%3A1:srv%3A1',buttons(Keyboards::configSelector(1,$configs,[],'usr_cfg','usr_cfg_done:1','srv:1')),true),'Config selector has no next page');
 echo "PASS: command, deep-link, Home, search, pagination and stale wizard workflows; external boundaries stubbed\n";

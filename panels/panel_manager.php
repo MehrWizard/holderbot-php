@@ -39,11 +39,13 @@ class PanelManager {
 
     /** A failed lookup is distinct from a confirmed missing username. */
     public static function probeUser(array $server, string $username): array {
-        $users = self::getUsers($server, 1, 10, $username, null, null, true);
-        foreach ($users as $user) {
-            if (hash_equals((string)$user['username'], $username)) {
-                return ['confirmed' => true, 'user' => $user];
+        $size=self::pageSize($server);
+        for($page=1;;$page++) {
+            $users = self::getUsers($server,$page,$size,$username,null,null,true);
+            foreach ($users as $user) {
+                if (hash_equals((string)$user['username'], $username)) return ['confirmed'=>true,'user'=>$user];
             }
+            if(count($users)<$size) break;
         }
         return ['confirmed' => true, 'user' => null];
     }

@@ -10,6 +10,10 @@ final class MutationReconciliation
         $before=$intent['before'] ?? null;
         if (!is_array($before) || empty($intent['username']) || ($before['username'] ?? null)!==$intent['username']) return ['state'=>'insufficient_evidence'];
         $phase=$intent['phase'] ?? '';
+        if ($phase==='delete_user') {
+            if (($before['username'] ?? null)!==$intent['username']) return ['state'=>'insufficient_evidence'];
+            return ['state'=>$current===null?'desired_state_observed':'unchanged'];
+        }
         if ($phase==='create_user') {
             if (($before['_exists'] ?? null)!==false || $current===null) return ['state'=>'insufficient_evidence'];
             if (($current['username'] ?? null)!==$intent['username']) return ['state'=>'identity_conflict'];
@@ -41,6 +45,25 @@ final class MutationReconciliation
             return ['state'=>$mismatch?'creation_conflict':'desired_state_observed','mismatched'=>$mismatch];
         }
         if ($current===null || ($current['username'] ?? null)!==$intent['username']) return ['state'=>'insufficient_evidence'];
+        if ($phase==='modify_user') {
+            $expected=$intent['payload'] ?? []; $mismatch=[]; $missing=[];
+            foreach($expected as $key=>$value) {
+                $actual=match($key) {
+                    'owner_username'=>$type==='marzban' ? ($current['admin']['username'] ?? $current['owner'] ?? null) : ($current['owner_username'] ?? $current['admin_username'] ?? null),
+                    'enabled'=>$type==='marzban' ? (($current['status'] ?? null)==='active') : ($current['enabled'] ?? null),
+                    'service_ids'=>$current['service_ids'] ?? null,
+                    'selected_configs'=>self::marzbanConfigs($current),
+                    default=>$current[$key] ?? null,
+                };
+                if ($actual===null && !array_key_exists($key,$current) && !in_array($key,['owner_username','enabled','service_ids','selected_configs'],true)) { $missing[]=$key; continue; }
+                if(in_array($key,['service_ids','selected_configs'],true)) {
+                    $a=array_map('strval',(array)$actual); $b=array_map('strval',(array)$value); sort($a); sort($b);
+                    if($a!==$b)$mismatch[]=$key;
+                } elseif($actual!==$value && !(is_numeric($actual)&&is_numeric($value)&&(string)$actual===(string)$value)) $mismatch[]=$key;
+            }
+            if(!$expected || $missing) return ['state'=>'insufficient_evidence','missing'=>$missing];
+            return ['state'=>$mismatch?'conflict':'desired_state_observed','mismatched'=>$mismatch];
+        }
         if ($phase==='assign_created_owner') {
             $owner=$type==='marzban' ? ($current['admin']['username'] ?? $current['owner'] ?? null) : ($current['owner_username'] ?? $current['admin_username'] ?? null);
             if ($owner===null || empty($intent['payload']['owner_username'])) return ['state'=>'insufficient_evidence'];
@@ -79,5 +102,12 @@ final class MutationReconciliation
             return ['state'=>$now>$old?'reset_marker_changed':'unchanged'];
         }
         return ['state'=>'manual_review'];
+    }
+
+    private static function marzbanConfigs(array $raw): array
+    {
+        $out=[];
+        foreach(($raw['inbounds'] ?? []) as $items) foreach((array)$items as $tag) $out[]=(string)$tag;
+        return $out;
     }
 }

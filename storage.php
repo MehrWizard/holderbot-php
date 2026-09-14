@@ -263,6 +263,7 @@ class Storage {
                     $server['cached_token'] ?? null, $server['token_expires_at'] ?? null,
                     $server['id']
                 ]);
+                self::cacheDelete('stats_result_'.(int)$server['id']);
                 return (int)$server['id'];
         }
 
@@ -281,7 +282,9 @@ class Storage {
 
     public static function deleteServer(int $id): bool {
         $stmt = self::db()->prepare("DELETE FROM servers WHERE id = ?");
-        return $stmt->execute([$id]);
+        $ok=$stmt->execute([$id]);
+        if($ok) self::cacheDelete('stats_result_'.$id);
+        return $ok;
     }
 
     // =========================================================================
@@ -374,5 +377,8 @@ class Storage {
     public static function cacheSet(string $key, mixed $value, int $ttlSeconds = 3600): void {
         $stmt = self::db()->prepare("INSERT INTO bot_cache (cache_key, cache_value, expires_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE cache_value=VALUES(cache_value), expires_at=VALUES(expires_at)");
         $stmt->execute([$key, json_encode($value, JSON_THROW_ON_ERROR), time() + $ttlSeconds]);
+    }
+    public static function cacheDelete(string $key): void {
+        self::db()->prepare('DELETE FROM bot_cache WHERE cache_key=?')->execute([$key]);
     }
 }

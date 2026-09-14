@@ -30,5 +30,18 @@ foreach(['marzban','marzneshin'] as $type) {
     $payload['owner_username']='alice';
     $withoutOwner=$payload; unset($withoutOwner['owner_username']);
     check(MutationReconciliation::compare($type,['username'=>'test','phase'=>'create_user','before'=>$created,'payload'=>$payload],['username'=>'test']+$withoutOwner),'creation_conflict');
+    $raw=$type==='marzban'?['username'=>'test','status'=>'disabled','admin'=>['username'=>'old'],'inbounds'=>['vless'=>['old']]]:['username'=>'test','enabled'=>false,'owner_username'=>'old','service_ids'=>[1]];
+    foreach([
+        ['enabled'=>true],['owner_username'=>'alice'],[$type==='marzban'?'selected_configs':'service_ids'=>$type==='marzban'?['new']:[2]],['data_limit'=>500],['note'=>'updated']
+    ] as $wanted) {
+        $current=$raw;
+        foreach($wanted as $key=>$value) {
+            if($key==='enabled') $type==='marzban'?$current['status']='active':$current['enabled']=$value;
+            elseif($key==='owner_username') $type==='marzban'?$current['admin']=['username'=>$value]:$current[$key]=$value;
+            elseif($key==='selected_configs') $current['inbounds']=['vless'=>$value]; else $current[$key]=$value;
+        }
+        check(MutationReconciliation::compare($type,['username'=>'test','phase'=>'modify_user','before'=>$raw,'payload'=>$wanted],$current),'desired_state_observed');
+    }
+    check(MutationReconciliation::compare($type,['username'=>'test','phase'=>'delete_user','before'=>$raw,'payload'=>[]],null),'desired_state_observed');
 }
 echo "PASS: adapter-specific read-only reconciliation, concurrent conflicts and missing evidence\n";

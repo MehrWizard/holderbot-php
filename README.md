@@ -19,9 +19,9 @@ Telegram and panel APIs still require JSON at their HTTP boundaries. The applica
 ## Patched compatibility issues
 
 - Restored Python menus, cards, prompts, pagination, templates, inline results, and text overrides.
-- Fixed callback parsing, long usernames, numeric server IDs, stale wizard actions, and chat-scoped wizard state.
+- Fixed callback parsing, long usernames, numeric server IDs, stale confirmations and selectors, and chat-scoped wizard state.
 - Fixed Marzban and Marzneshin credential validation, token-cache identity, user creation, date changes, recharge, ownership, and config updates.
-- Fixed destructive batch pagination so users are not skipped while the panel changes.
+- Fixed destructive batch pagination and bounded all large selectors without skipping users at page boundaries.
 - Added Unicode digit handling, HTML escaping, bounded input validation, and correct empty API responses.
 - Added full QR versions 1–40, in-memory QR uploads, optional backgrounds, MySQL migrations, and persistent queue processing.
 - Repaired known upstream defects in additive recharge, template updates, inline owner handling, and credential-edit validation.
@@ -53,7 +53,7 @@ Optional queue settings in `config.php`:
 
 ## Queue operations
 
-The queue is reserved for work that can exceed webhook or shared-host limits: multi-user creation and imports, bulk deletion, transfers, configuration and admin-wide status changes, full statistics scans, monitoring, access refresh, expiry reports, and other scheduled work. Single-user edits, recharge, creation, and QR delivery run immediately. Statistics get a five-second immediate attempt; longer scans continue in cron from saved pages. The latest completed statistics summary and its message chunks are cached in MySQL; opening Stats uses that cache, while Refresh Stats starts a new scan. These short operations are persisted as inline jobs first; if the inline lease expires, cron safely takes over under a per-job MySQL lock and updates the original loading message. Statistics and expiry scans checkpoint each panel page; full report entries and bulk targets are stored in child MySQL rows. Imports are limited to 8 MiB and 100,000 entries, parsed incrementally, and validated before creation. Interrupted mutations stop for manual review instead of being replayed. Credentials are loaded from MySQL when a job runs and are not copied into queue payloads.
+The queue is reserved for work that can exceed webhook or shared-host limits: multi-user creation and imports, bulk deletion, transfers, configuration and admin-wide status changes, full statistics scans, monitoring, access refresh, expiry reports, and other scheduled work. Single-user edits, recharge, creation, and QR delivery run immediately. Statistics get a five-second immediate attempt; longer scans continue in cron from saved pages. The latest completed statistics summary and its message chunks are cached in MySQL; opening Stats uses that cache, while Refresh Stats starts a new scan. Mutations are journaled before the panel request. If PHP is interrupted, cron compares the saved before-state and intended result with the panel and completes only an exact match; ambiguous results remain held for review and are never replayed. Statistics and expiry scans checkpoint each panel page; full report entries and bulk targets are stored in child MySQL rows. Imports are limited to 8 MiB and 100,000 entries, parsed incrementally, and validated before creation. Credentials are loaded from MySQL when a job runs and are not copied into queue payloads.
 
 ```bash
 php queue.php health
@@ -64,7 +64,7 @@ php queue.php reconcile JOB_ID
 php queue.php cancel JOB_ID
 ```
 
-`/jobs` in Telegram lists recent jobs for the current chat. Jobs are deduplicated by submission identity, rotate through bounded worker slices, and retain success and uncertain-operation counts. Cancellation stops remaining work after the current step; it cannot undo a panel request already sent. Expired job data is cleaned up incrementally; uncertain-operation evidence is retained. Results and pending notifications commit together in MySQL. Cron retries interrupted or temporary delivery failures without rerunning panel work; permanent Telegram rejections close delivery. A crash after Telegram accepts a message can cause a duplicate on retry. Report delivery advances one recipient per step. Node monitoring checkpoints each node and checks restart results. Remote APIs do not provide a shared transaction, so uncertain mutations require manual review. `issues` shows the last mutation target, persisted recharge values or revoke baseline hash, and up to 50 uncertain users per page.
+`/jobs` in Telegram lists recent jobs for the current chat. Jobs are deduplicated by submission identity, rotate through bounded worker slices, and retain success and uncertain-operation counts. Cancellation stops remaining work after the current step; it cannot undo a panel request already sent. Expired job data is cleaned up incrementally; uncertain-operation evidence is retained. Results and pending notifications commit together in MySQL. Cron retries interrupted or temporary delivery failures without rerunning panel work; permanent Telegram rejections close delivery. A crash after Telegram accepts a message can cause a duplicate on retry. Report delivery advances one recipient per step. Node monitoring checkpoints each node and checks restart results. Remote APIs do not provide a shared transaction, so conflicting or unobservable outcomes require manual review. `issues` shows the last mutation target, saved intent, and up to 50 uncertain users per page.
 
 ## Verification
 

@@ -4,7 +4,7 @@
  */
 
 declare(strict_types=1);
-require_once __DIR__ . '/../helpers/queue.php';
+if(!class_exists('BatchQueue')) require_once __DIR__ . '/../helpers/queue.php';
 
 class CommandHandlers {
     /**

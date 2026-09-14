@@ -10,6 +10,9 @@ foreach(['marzban','marzneshin'] as $type) {
     $next=0;
     $transport=function($server,$method,$endpoint,$payload)use(&$next,$type) {
         $expected=($type==='marzban'?'/api/user/':'/api/users/').'large_'.$next;
+        if($method==='GET' && $endpoint===$expected) return $type==='marzban'
+            ? ['username'=>'large_'.$next,'status'=>'active','data_limit'=>0,'used_traffic'=>0]
+            : ['username'=>'large_'.$next,'enabled'=>true,'is_active'=>true,'expire_strategy'=>'never','data_limit'=>0,'used_traffic'=>0,'service_ids'=>[]];
         if($method!=='DELETE' || $endpoint!==$expected) throw new LogicException('Skipped or repeated bulk target: '.$endpoint.' expected '.$expected);
         $next++; return ['success'=>true];
     };

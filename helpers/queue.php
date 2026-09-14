@@ -95,7 +95,7 @@ final class BatchQueue
             if (!$job || in_array($job['status'], ['completed','failed','cancelled'], true)) return;
             // A released lock can also mean the previous PHP process died.
             // Preserve uncertain mutation evidence even when cancellation follows.
-            if (($job['active'] ?? '') === 'mutation' || ($job['status'] === 'inline_running' && in_array($job['kind'], ['create','recharge','revoke_qr'], true))) {
+            if (($job['active'] ?? '') === 'mutation' || ($job['status'] === 'inline_running' && in_array($job['kind'], ['create','recharge','reset','user_mutation','revoke_qr'], true))) {
                 $job['status'] = 'failed';
                 $job['unconfirmed']++;
                 $job['error'] = 'Interrupted mutation: verify the panel before retrying.';
@@ -120,8 +120,8 @@ final class BatchQueue
         try {
             $existing = $db->prepare('SELECT * FROM bot_queue WHERE id=? OR submission_key=?'); $existing->execute([$id,$submissionKey]);
             if ($row = $existing->fetch()) return self::decode($row);
-            $status = in_array($kind, ['delete','transfer','config'], true) ? 'discovering' : 'running';
-        $total = in_array($kind, ['admin_status','outbox','recharge'], true) ? 1 : (in_array($kind, ['create','import'], true) ? max(1,$targetCount) : 0);
+            $status = in_array($kind, ['delete','transfer','config','admin_status'], true) ? 'discovering' : 'running';
+            $total = in_array($kind, ['outbox','recharge'], true) ? 1 : (in_array($kind, ['create','import'], true) ? max(1,$targetCount) : 0);
             $insert = $db->prepare('INSERT INTO bot_queue (id,kind,server_id,server_fingerprint,chat_id,user_id,submission_key,status,payload,total,notification_status) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
             $insert->execute([$id,$kind,$serverId,self::fingerprint($server),$chatId,$userId,$submissionKey,$status,json_encode($params, JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),$total,$userId ? 'pending' : 'suppressed']);
             return self::get($id) ?? throw new RuntimeException('Queue insert failed');
@@ -138,7 +138,7 @@ final class BatchQueue
         string $submission
     ): array {
         global $config;
-        $allowed = ['create', 'recharge', 'reset', 'qr', 'revoke_qr', 'stats'];
+        $allowed = ['create', 'recharge', 'reset', 'user_mutation', 'qr', 'revoke_qr', 'stats'];
         if (!in_array($kind, $allowed, true)) throw new InvalidArgumentException('Unsupported inline operation');
         $serverId = (int)($server['id'] ?? 0);
         $id = substr(hash('sha256', json_encode([$chatId, $userId, $submission, $kind, $serverId, $params], JSON_THROW_ON_ERROR)), 0, 32);
@@ -194,6 +194,7 @@ final class BatchQueue
                 $current['success'] = 1;
                 $current['active'] = null;
                 $current['lease_until'] = 0;
+                if(in_array($current['kind'],['create','recharge','reset','user_mutation','revoke_qr'],true)) self::invalidateStats((int)$current['server_id']);
                 self::resultNotices($current, is_array($result) ? $result : []);
                 self::save($current);
                 self::finalizeMessage($current);
@@ -206,7 +207,7 @@ final class BatchQueue
                 self::save($current);
                 return ['state' => 'failed', 'job' => $current, 'result' => null, 'error' => $e->getMessage()];
             } catch (Throwable $e) {
-                $current['status'] = in_array($current['kind'], ['create', 'recharge', 'reset', 'revoke_qr'], true) ? 'failed' : 'running';
+                $current['status'] = in_array($current['kind'], ['create', 'recharge', 'reset', 'user_mutation', 'revoke_qr'], true) ? 'failed' : 'running';
                 if ($current['status'] === 'failed') $current['unconfirmed'] = 1;
                 $current['next_run'] = time();
                 $current['lease_until'] = 0;
@@ -235,7 +236,7 @@ final class BatchQueue
             $notices[]=['key'=>'photo','payload'=>['photo'=>$result['subscription_url'],'text'=>Formatter::userInfo($server,$result)]];
         }
         $text=match($job['kind']) { 'create'=>'✅ User created.', 'qr'=>'QR request processed.', default=>'✅ Success.' };
-        $back=isset($job['params']['username']) && $job['kind']!=='create' ? 'usr:'.$job['server_id'].':'.$job['params']['username'] : 'srv:'.$job['server_id'];
+        $back=isset($job['params']['username']) && $job['kind']!=='create' && ($job['params']['operation']??'')!=='delete' ? 'usr:'.$job['server_id'].':'.$job['params']['username'] : 'srv:'.$job['server_id'];
         $notices[]=['key'=>'final','payload'=>['message_id'=>(int)$job['params']['message_id'],'text'=>$text,'keyboard'=>Keyboards::cancel($back)]];
         $job['params']['notifications']=$notices;
         $job['params']['custom_result']=true;
@@ -259,6 +260,7 @@ final class BatchQueue
         return function(string $phase,array $before,array $payload)use(&$job):void {
             $job['params']['mutation_intent']=['username'=>$before['username'],'phase'=>$phase,'before'=>$before,'payload'=>$payload];
             $job['active']='mutation'; self::save($job);
+            if($phase==='assign_created_owner') self::invalidateStats((int)$job['server_id']);
         };
     }
 
@@ -289,10 +291,18 @@ final class BatchQueue
             $comparison=!empty($probe['confirmed']) ? MutationReconciliation::compare($server['type'],$intent,$user['raw'] ?? null) : ['state'=>'read_unconfirmed'];
             $job['params']['reconciliation']=['checked_at'=>time(),'attempts'=>(int)($job['params']['reconciliation']['attempts'] ?? 0)+1,'comparison'=>$comparison];
             $resolved=in_array($comparison['state'] ?? '',['desired_state_observed','subscription_changed','reset_marker_changed'],true);
-            if ($resolved && in_array($job['kind'],['recharge','reset','revoke_qr','create'],true)) {
+            $position=$intent['position'] ?? null;
+            if($resolved && $position!==null && in_array($job['kind'],['delete','transfer','config','admin_status'],true)) {
+                self::db()->prepare("UPDATE bot_queue_items SET status='succeeded' WHERE job_id=? AND position=? AND status='uncertain'")->execute([$job['id'],(int)$position]);
+                $job['status']='running'; $job['cursor']=max((int)$job['cursor'],(int)$position+1); $job['success']++;
+                $job['unconfirmed']=max(0,(int)$job['unconfirmed']-1); $job['active']=null; $job['error']=null;
+                self::invalidateStats((int)$job['server_id']);
+            }
+            if ($resolved && in_array($job['kind'],['recharge','reset','user_mutation','revoke_qr','create'],true)) {
                 $job['status']='completed'; $job['success']=1; $job['cursor']=1; $job['total']=1; $job['unconfirmed']=0;
                 $job['active']=null; $job['error']=null;
-                $label=match($job['kind']) {'create'=>'User creation','reset'=>'Usage reset','revoke_qr'=>'Subscription revocation',default=>'Recharge'};
+                self::invalidateStats((int)$job['server_id']);
+                $label=match($job['kind']) {'create'=>'User creation','reset'=>'Usage reset','user_mutation'=>'User update','revoke_qr'=>'Subscription revocation',default=>'Recharge'};
                 $job['params']['notifications']=[['key'=>'reconciled','payload'=>[
                     'message_id'=>(int)($job['params']['message_id'] ?? 0),
                     'text'=>$label.' reconciled: the panel currently matches the saved target values. No mutation was replayed.',
@@ -325,6 +335,47 @@ final class BatchQueue
         $job['params']['mutation_intent']=['username'=>$username,'phase'=>'reset_usage','before'=>$before['raw'],'payload'=>[]];
         $job['active']='mutation'; self::save($job);
         return PanelManager::resetUsage($server,$username);
+    }
+
+    public static function mutateUser(array &$job,array $server): bool
+    {
+        $p=$job['params']; $username=(string)($p['username'] ?? ''); $operation=(string)($p['operation'] ?? '');
+        $before=PanelManager::getUser($server,$username);
+        if(!$before) throw new RuntimeException('Cannot read user before mutation');
+        $raw=$before['raw']; $expected=[];
+        $call=match($operation) {
+            'status'=>fn()=>PanelManager::setStatus($server,$username,(bool)$p['active']),
+            'data'=>fn()=>PanelManager::modifyUserDataLimit($server,$username,(float)$p['value']),
+            'date'=>fn()=>PanelManager::updateDateLimit($server,$username,(int)$p['days'],(string)$p['date_type']),
+            'note'=>fn()=>PanelManager::modifyUserNote($server,$username,(string)$p['note']),
+            'owner'=>fn()=>PanelManager::setOwner($server,$username,(string)$p['owner']),
+            'config'=>fn()=>PanelManager::updateUserConfigs($server,$username,$p['ids']),
+            'delete'=>function()use($server,$username){return PanelManager::deleteUser($server,$username);},
+            default=>throw new InvalidArgumentException('Unsupported user mutation'),
+        };
+        $phase=$operation==='delete'?'delete_user':'modify_user';
+        if($operation!=='delete') {
+            match($operation) {
+                'status'=>$expected=['enabled'=>(bool)$p['active']],
+                'data'=>$expected=['data_limit'=>(int)round((float)$p['value']*1024**3)],
+                'date'=>$expected=PanelManager::datePayload($server,$username,(int)$p['days'],(string)$p['date_type']),
+                'note'=>$expected=['note'=>(string)$p['note']],
+                'owner'=>$expected=['owner_username'=>(string)$p['owner']],
+                'config'=>$expected=[$server['type']==='marzneshin'?'service_ids':'selected_configs'=>array_values($p['ids'])],
+            };
+        }
+        $job['params']['mutation_intent']=['username'=>$username,'phase'=>$phase,'before'=>$raw,'payload'=>$expected];
+        $job['active']='mutation'; self::save($job);
+        $ok=$call();
+        return $ok;
+    }
+
+    public static function invalidateStats(int $serverId): void { Storage::cacheDelete('stats_result_'.$serverId); }
+
+    public static function submitUserMutation(array $server,array $params,int|string $chatId,int $userId,string $submission): array
+    {
+        $job=self::enqueueInline('user_mutation',$server,$params,$chatId,$userId,$submission);
+        return self::executeInline($job,fn(array &$running)=>self::mutateUser($running,$server));
     }
 
     private static function notifyFallback(array $job): void
@@ -736,7 +787,7 @@ final class BatchQueue
         if ($job['cursor'] >= $job['total']) { $job['status']='completed'; return; }
         $index=(int)$job['cursor']; $username=$params['targets'][$index]??($params['username']??''); $ok=true;
         $itemPosition = null;
-        if (in_array($job['kind'], ['delete','transfer','config'], true) && !isset($params['targets'])) {
+        if (in_array($job['kind'], ['delete','transfer','config','admin_status'], true) && !isset($params['targets'])) {
             $select = self::db()->prepare("SELECT position,username FROM bot_queue_items WHERE job_id=? AND status='pending' ORDER BY position LIMIT 1");
             $select->execute([$job['id']]);
             $target = $select->fetch();
@@ -744,16 +795,25 @@ final class BatchQueue
             $username = $target['username']; $itemPosition = (int)$target['position'];
         }
 
-        $job['params']['mutation_intent'] = ['username'=>$username, 'phase'=>$job['kind'], 'position'=>$itemPosition ?? $index];
+        $before=null; $expected=[];
+        if(in_array($job['kind'],['delete','transfer','config','admin_status'],true)) {
+            $before=PanelManager::getUser($server,$username);
+            if(!$before) throw new RuntimeException('Cannot read user before bulk mutation');
+            $expected=match($job['kind']) {
+                'transfer'=>['owner_username'=>(string)$params['to_admin']],
+                'admin_status'=>['enabled'=>(bool)$params['active']],
+                default=>[],
+            };
+        }
+        $job['params']['mutation_intent'] = ['username'=>$username,'phase'=>$job['kind']==='delete'?'delete_user':'modify_user','position'=>$itemPosition ?? $index,'before'=>$before['raw'] ?? [],'payload'=>$expected];
         $job['active'] = 'mutation';
-        self::save($job);
         switch ($job['kind']) {
-            case 'delete': $ok=PanelManager::deleteUser($server,$username); break;
-            case 'transfer': $ok=PanelManager::setOwner($server,$username,(string)$params['to_admin']); break;
-            case 'admin_status': $ok=!empty($params['active']) ? PanelManager::activateAdminUsers($server,(string)$params['admin']) : PanelManager::disableAdminUsers($server,(string)$params['admin']); break;
+            case 'delete': self::save($job); $ok=PanelManager::deleteUser($server,$username); break;
+            case 'transfer': self::save($job); $ok=PanelManager::setOwner($server,$username,(string)$params['to_admin']); break;
+            case 'admin_status': self::save($job); $ok=PanelManager::setStatus($server,$username,(bool)$params['active']); break;
             case 'recharge': $ok=(bool)self::recharge($job,$server); break;
             case 'config':
-                $user=PanelManager::getUser($server,$username); if(!$user) throw new RuntimeException('Cannot read user config'); $serviceId=(string)$params['service_id']; $ids=$user['service_ids']??[]; $newIds=!empty($params['add'])?array_merge($ids,[$serviceId]):array_values(array_filter($ids,fn($id)=>(string)$id!==$serviceId)); $ok=PanelManager::updateUserConfigs($server,$username,$newIds); break;
+                $serviceId=(string)$params['service_id']; $ids=$before['service_ids']??[]; $newIds=!empty($params['add'])?array_values(array_unique(array_merge($ids,[$serviceId]))):array_values(array_filter($ids,fn($id)=>(string)$id!==$serviceId)); $job['params']['mutation_intent']['payload']=[$server['type']==='marzneshin'?'service_ids':'selected_configs'=>$newIds]; self::save($job); $ok=PanelManager::updateUserConfigs($server,$username,$newIds); break;
             case 'create':
                 $item=$params['uploaded_json'][$index]??null; $name=$item['username']??(($params['username']??'user').($job['total']>1?(string)((int)($params['usersuffix']??1)+$index):''));
                 if (!empty($params['import_rows'])) {
@@ -778,7 +838,9 @@ final class BatchQueue
         if ($itemPosition !== null) {
             self::db()->prepare('UPDATE bot_queue_items SET status=? WHERE job_id=? AND position=?')->execute([$ok ? 'succeeded' : 'uncertain', $job['id'], $itemPosition]);
         }
-        if($ok) $job['success']++; else $job['unconfirmed']++; $job['cursor']++;
+        if($ok) { $job['success']++; if(in_array($job['kind'],['delete','transfer','config','admin_status','create','recharge'],true) && empty($job['params']['stats_invalidated'])) { self::invalidateStats((int)$server['id']); $job['params']['stats_invalidated']=true; } }
+        else { $job['unconfirmed']++; $job['status']='failed'; $job['error']='Panel did not confirm the mutation; reconciliation is required.'; if($itemPosition!==null)self::db()->prepare("UPDATE bot_queue_items SET status='uncertain' WHERE job_id=? AND position=?")->execute([$job['id'],$itemPosition]); }
+        $job['cursor']++;
     }
 
     public static function run(?float $seconds=null, ?int $steps=null, ?string $onlyJob=null): int
@@ -792,7 +854,7 @@ final class BatchQueue
         try {
             if ($onlyJob===null) NotificationOutbox::drain(1);
             if ($onlyJob===null) {
-                $candidate=self::db()->query("SELECT id FROM bot_queue WHERE status='failed' AND unconfirmed_count>0 AND kind IN ('recharge','reset','revoke_qr','create') AND JSON_EXTRACT(payload,'$.mutation_intent.before') IS NOT NULL AND COALESCE(JSON_EXTRACT(payload,'$.reconciliation.attempts'),0)<3 AND COALESCE(JSON_EXTRACT(payload,'$.reconciliation.checked_at'),0)<UNIX_TIMESTAMP()-60 ORDER BY updated_at LIMIT 1")->fetchColumn();
+                $candidate=self::db()->query("SELECT id FROM bot_queue WHERE status='failed' AND unconfirmed_count>0 AND kind IN ('recharge','reset','user_mutation','revoke_qr','create','delete','transfer','config','admin_status') AND JSON_EXTRACT(payload,'$.mutation_intent.before') IS NOT NULL AND COALESCE(JSON_EXTRACT(payload,'$.reconciliation.attempts'),0)<3 AND COALESCE(JSON_EXTRACT(payload,'$.reconciliation.checked_at'),0)<UNIX_TIMESTAMP()-60 ORDER BY updated_at LIMIT 1")->fetchColumn();
                 if ($candidate) {
                     try { self::reconcile($candidate); }
                     catch(Throwable $e) { error_log('Read-only reconciliation unavailable: '.$e->getMessage()); }
@@ -817,10 +879,12 @@ final class BatchQueue
                 $job = self::get($lockedId);
                 if (!$job || in_array($job['status'], ['completed', 'failed', 'cancelled'], true)) continue;
                 if ($onlyJob === null && in_array($job['status'], ['inline', 'inline_running'], true) && (int)$job['lease_until'] > time()) continue;
-                if (($job['active'] ?? '') === 'mutation' || ($job['status'] === 'inline_running' && in_array($job['kind'], ['create', 'recharge', 'reset', 'revoke_qr'], true))) {
+                if (($job['active'] ?? '') === 'mutation' || ($job['status'] === 'inline_running' && in_array($job['kind'], ['create', 'recharge', 'reset', 'user_mutation', 'revoke_qr'], true))) {
                     $job['status'] = 'failed';
                     $job['unconfirmed']++;
                     $job['error'] = 'Interrupted mutation: verify the panel before retrying.';
+                    $position=$job['params']['mutation_intent']['position'] ?? null;
+                    if($position!==null) $db->prepare("UPDATE bot_queue_items SET status='uncertain' WHERE job_id=? AND position=?")->execute([$job['id'],(int)$position]);
                     self::save($job);
                     self::finalizeMessage($job);
                     continue;
@@ -849,6 +913,8 @@ final class BatchQueue
                         $job['unconfirmed']++;
                         $job['status']='failed';
                         $job['error']='Outcome uncertain; verify the panel. ' . $e->getMessage();
+                        $position=$job['params']['mutation_intent']['position'] ?? null;
+                        if($position!==null) self::db()->prepare("UPDATE bot_queue_items SET status='uncertain' WHERE job_id=? AND position=?")->execute([$job['id'],(int)$position]);
                     } else {
                         $job['next_run']=time()+30;
                         $job['params']['read_failures']=(int)($job['params']['read_failures']??0)+1;

@@ -24,6 +24,10 @@ Reference: local Python v0.6.0. Python database migration is out of scope.
 - [X] Checkpoint node monitoring one node at a time, report unconfirmed restarts accurately, and deliver reports through bounded recipient steps.
 - [X] Treat failed ownership assignment after creation as a partial operation requiring review.
 - [X] Index pending queue items by job, status, and position.
+- [X] Journal every single-user and bulk mutation with its before-state and intended result, then reconcile interrupted work through read-only panel checks.
+- [X] Bind destructive confirmations and selectors to the current server, user, template, admin, action, and wizard state.
+- [X] Paginate server, template, admin, service, configuration, and user selectors without skipping exact page boundaries.
+- [X] Invalidate cached statistics after user mutations and server changes.
 
 The source contract executes presentation logic from the original Python tree and pins all 75 router handlers, including decorators, messages, keyboards, state transitions, CRUD calls, and panel calls. PHP workflow tests exercise the corresponding command, callback, wizard, validation, and failure surfaces.
 
@@ -34,7 +38,7 @@ The source contract executes presentation logic from the original Python tree an
 - [ ] Validate live Telegram navigation, rendering, QR delivery, and final results.
 - [ ] Test backup restoration and external stopped-cron monitoring.
 
-Creation, recharge, reset, and revoke persist their adapter-specific before-state and intended result before the remote write. `queue.php reconcile ID` only reads the panel; cron checks at most one eligible uncertain request per slice, up to three times. A job completes automatically only when every required observable field matches. Conflicts and insufficient evidence remain held for review, and reconciliation never replays a mutation.
+Creation, recharge, reset, revoke, user edits, deletion, transfer, configuration changes, and bulk status changes persist their adapter-specific before-state and intended result before the remote write. `queue.php reconcile ID` only reads the panel; cron checks at most one eligible uncertain request per slice, up to three times. A job completes automatically only when every required observable field matches. Conflicts and insufficient evidence remain held for review, and reconciliation never replays a mutation.
 
 Notifications remain pending until a send response is recorded. A crash before sending is retried by cron, including for completed jobs. A crash after Telegram accepts a message but before local acknowledgement can cause a duplicate on retry; exactly-once sending is not guaranteed. Completed mutations are never replayed to recover notifications. Imports remain limited to 8 MiB and 100,000 entries.
 
