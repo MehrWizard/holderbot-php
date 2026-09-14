@@ -56,8 +56,8 @@ return [
     ],
 
     // Queue execution limits. Queue records and payloads are stored in MySQL.
-    'queue_budget_seconds' => 15,
-    'queue_steps' => 10,
+    'queue_budget_seconds' => 55,
+    'scan_page_size' => 1000,
     'queue_retention_days' => 7,
     'inline_lease_seconds' => 120,
 

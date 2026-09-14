@@ -45,11 +45,13 @@ For process-supervised hosting, use `php cron.php --daemon`. Do not run both mod
 Optional queue settings in `config.php`:
 
 ```php
-'queue_budget_seconds' => 15,
-'queue_steps' => 10,
+'queue_budget_seconds' => 55,
+'scan_page_size' => 1000,
 'queue_retention_days' => 7,
 'inline_lease_seconds' => 120,
 ```
+
+Full-panel scans and bulk discovery request up to 1,000 users per page by default. The worker has no fixed step cap: with the default 55-second budget, it starts another step only while at least 30 seconds remain. Increase `queue_budget_seconds` only if your cron host permits longer executions; overlapping cron runs are skipped by the database lock.
 
 ## Queue operations
 

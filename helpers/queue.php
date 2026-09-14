@@ -9,7 +9,6 @@ require_once __DIR__ . '/reconciliation.php';
 /** Persistent batch queue backed by MySQL. Credentials are loaded at run time. */
 final class BatchQueue
 {
-    public const PAGE_SIZE = 50;
     public const MAX_TARGETS = 100000;
     private const TELEGRAM_TEXT_LIMIT = 4096;
 
@@ -764,16 +763,17 @@ final class BatchQueue
         }
         if ($job['status'] === 'discovering') {
             $job['active'] = 'discovering';
-            $users = PanelManager::getUsers($server,(int)($params['page']??1),self::PAGE_SIZE,null,$params['status']??null,$params['admin']??null,true);
+            $pageSize = PanelManager::pageSize($server);
+            $users = PanelManager::getUsers($server,(int)($params['page']??1),$pageSize,null,$params['status']??null,$params['admin']??null,true);
             $insert = self::db()->prepare('INSERT IGNORE INTO bot_queue_items (job_id,position,username) VALUES (?,?,?)');
-            $offset = ((int)($params['page'] ?? 1) - 1) * self::PAGE_SIZE;
+            $offset = ((int)($params['page'] ?? 1) - 1) * $pageSize;
             foreach ($users as $i => $user) $insert->execute([$job['id'], $offset + $i, $user['username']]);
             $params['page'] = (int)($params['page'] ?? 1) + 1;
             $job['params'] = $params;
             $count = self::db()->prepare('SELECT COUNT(*) FROM bot_queue_items WHERE job_id=?');
             $count->execute([$job['id']]);
             $job['total'] = (int)$count->fetchColumn();
-            if (count($users) < self::PAGE_SIZE) $job['status'] = 'running';
+            if (count($users) < $pageSize) $job['status'] = 'running';
             return;
         }
         if (isset($params['delivery'])) {
@@ -848,7 +848,10 @@ final class BatchQueue
     public static function run(?float $seconds=null, ?int $steps=null, ?string $onlyJob=null): int
     {
         global $config;
-        $steps=max(1,min(100,$steps??(int)($config['queue_steps']??10))); $seconds=max(.1,min(45.0,$seconds??(float)($config['queue_budget_seconds']??15.0))); $db=self::db();
+        $steps=$steps === null ? PHP_INT_MAX : max(1,$steps);
+        $seconds=max(.1,min(300.0,$seconds??(float)($config['queue_budget_seconds']??55.0)));
+        $minRemaining=$onlyJob === null && $steps === PHP_INT_MAX && $seconds > 30.0 ? 30.0 : .1;
+        $db=self::db();
         if ($onlyJob !== null && (!preg_match('/^[a-f0-9]{32}$/D', $onlyJob) || (self::get($onlyJob)['kind'] ?? '') !== 'stats')) throw new InvalidArgumentException('Immediate scan requires a statistics job');
         if ($onlyJob === null) { $lock=$db->query("SELECT GET_LOCK('holderbot-queue-worker',1)"); if((int)$lock->fetchColumn()!==1)return 0; }
         if ($onlyJob === null) Storage::cacheSet('queue_heartbeat', time(), 604800);
@@ -862,14 +865,14 @@ final class BatchQueue
                     catch(Throwable $e) { error_log('Read-only reconciliation unavailable: '.$e->getMessage()); }
                 }
             }
-            while($done<$steps&&microtime(true)<RequestBudget::$deadline-.1) {
+            while($done<$steps&&microtime(true)<RequestBudget::$deadline-$minRemaining) {
             if ($onlyJob === null) Storage::cacheSet('queue_heartbeat', time(), 604800);
             if ($onlyJob !== null) {
                 $select=$db->prepare("SELECT * FROM bot_queue WHERE id=? AND next_run<=UNIX_TIMESTAMP() AND status NOT IN ('completed','failed','cancelled')");
                 $select->execute([$onlyJob]); $row=$select->fetch();
             } else $row=$db->query("SELECT * FROM bot_queue WHERE next_run<=UNIX_TIMESTAMP() AND status NOT IN ('completed','failed','cancelled') AND (status NOT IN ('inline','inline_running') OR lease_until<=UNIX_TIMESTAMP()) ORDER BY last_served, created_at, id LIMIT 1")->fetch();
             if(!$row) {
-                if ($onlyJob===null) $done+=NotificationOutbox::drain(max(0,$steps-$done));
+                if ($onlyJob===null) $done+=NotificationOutbox::drain(min(100,max(0,$steps-$done)));
                 break;
             }
             $job=self::decode($row);

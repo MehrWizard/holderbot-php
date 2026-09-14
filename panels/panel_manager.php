@@ -685,11 +685,12 @@ class PanelManager {
     }
 
     /**
-     * Per-panel page size used for full-table scans (matches the original
-     * bot's server.size_value: 100 for Marzneshin, 25 for Marzban).
+     * Bounded page size for full-table scans. Panels may have different response
+     * limits, so operators can lower this if their panel or host needs it.
      */
     public static function pageSize(array $server): int {
-        return strtolower($server['type'] ?? 'marzban') === 'marzneshin' ? 100 : 25;
+        global $config;
+        return max(1, min(5000, (int)($config['scan_page_size'] ?? 1000)));
     }
 
     public static function getBotUsername(): string {
