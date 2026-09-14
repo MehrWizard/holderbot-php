@@ -153,7 +153,9 @@ class PanelManager {
         }
 
         if (!empty($admin)) {
-            self::setOwner($server, $resp['username'], $admin);
+            if (!self::setOwner($server, $resp['username'], $admin)) {
+                throw new RuntimeException('User created, but ownership assignment was not confirmed. Review the panel before retrying.');
+            }
         }
 
         return self::normalizeUser($server, $resp);
@@ -672,12 +674,13 @@ class PanelManager {
     /**
      * Get nodes status.
      */
-    public static function getNodes(array $server): array {
+    public static function getNodes(array $server, bool $strict = false): array {
         $type = strtolower($server['type'] ?? 'marzban');
         $raw = ($type === 'marzneshin')
             ? MarzneshinClient::getNodes($server)
             : MarzbanClient::getNodes($server);
 
+        if ($strict && !is_array($raw)) throw new RuntimeException('Unable to read panel nodes');
         return is_array($raw) ? $raw : [];
     }
 

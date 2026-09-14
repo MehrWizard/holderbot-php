@@ -13,7 +13,7 @@ with tempfile.TemporaryDirectory(prefix='holderbot-mysql-') as tmp:
     with socket.socket() as probe:
         probe.bind(('127.0.0.1', 0))
         port = probe.getsockname()[1]
-    server = subprocess.Popen(['mariadbd', '--no-defaults', '--datadir='+data, '--socket='+tmp+'/db.sock', '--pid-file='+tmp+'/db.pid', '--bind-address=127.0.0.1', '--port='+str(port), '--skip-grant-tables'], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    server = subprocess.Popen(['mariadbd', '--no-defaults', '--datadir='+data, '--socket='+tmp+'/db.sock', '--pid-file='+tmp+'/db.pid', '--bind-address=127.0.0.1', '--port='+str(port), '--skip-grant-tables', '--innodb-flush-log-at-trx-commit=2'], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:
         for _ in range(100):
             try:
@@ -57,6 +57,8 @@ if ($argv[3]!=='fresh' && (Storage::getState(42)['step'] ?? '') !== 'legacy') th
         subprocess.run(['php', '-d', 'extension=pdo_mysql', str(root/'tests/queue_large.php'), str(port)], check=True, timeout=120)
         subprocess.run(['php', '-d', 'extension=pdo_mysql', str(root/'tests/queue_delivery.php'), str(port)], check=True, timeout=45)
         subprocess.run(['php', '-d', 'extension=pdo_mysql', str(root/'tests/queue_stats.php'), str(port)], check=True, timeout=45)
+        subprocess.run(['php', '-d', 'extension=pdo_mysql', str(root/'tests/queue_monitor.php'), str(port)], check=True, timeout=45)
+        subprocess.run(['php', '-d', 'extension=pdo_mysql', str(root/'tests/queue_bulk.php'), str(port)], check=True, timeout=300)
     finally:
         server.terminate()
         server.wait(timeout=15)

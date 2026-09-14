@@ -18,12 +18,16 @@ class PanelManager {
     public static function statsForUsers($server,$users,...$args): array { return ['total'=>count($users),'today_expired'=>[]]; }
 }
 class Formatter {
+    public static function escape($text): string { return htmlspecialchars($text,ENT_QUOTES,'UTF-8'); }
     public static array $cards=[];
     public static function statsCard($server,$stats): string { self::$cards[]=$stats; return 'stats'; }
 }
 class Keyboards { public static function serverMenu(...$args): array { return []; } }
 function tg_replace_message(...$args): array { return ['ok'=>true]; }
 function tg_edit_message(...$args): array { return ['ok'=>true]; }
+class BackgroundTasks {
+    public static function expiryPage(...$args): array { return ['page'=>2,'names'=>['name_with_underscores'],'done'=>true,'matched'=>1,'total'=>1]; }
+}
 $serverId=Storage::saveServer(['remark'=>'statistics','type'=>'marzban','base_url'=>'http://example.invalid','username'=>'test','password'=>'test']);
 $server=Storage::getServer($serverId);
 $other=new PDO('mysql:host=127.0.0.1;port='.(int)$argv[1].';dbname=fresh','root','');
@@ -53,4 +57,11 @@ if (BatchQueue::get($retry['id'])['status']==='failed' || BatchQueue::get($retry
 Storage::db()->prepare('UPDATE bot_queue SET next_run=0 WHERE id=?')->execute([$retry['id']]);
 BatchQueue::run(2,10);
 if (BatchQueue::get($retry['id'])['status']!=='completed') throw new RuntimeException('Timed-out scan did not recover');
+$expiry=BatchQueue::enqueue('expiry',$server,['recipients'=>[]],0,0,'expiry_links');
+BatchQueue::run(2,1);
+$select=Storage::db()->prepare('SELECT payload FROM bot_queue_items WHERE job_id=? AND position=0');
+$select->execute([$expiry['id']]);
+$text=json_decode($select->fetchColumn(),true)['text'];
+if (!str_contains($text,'https://t.me/test?start=user_'.$serverId.'_name_with_underscores')) throw new RuntimeException('Expiry report omitted user deep link');
+BatchQueue::cancel($expiry['id']);
 echo "PASS: immediate statistics, cron continuation, read timeout recovery, heartbeat isolation; Telegram stubbed\n";

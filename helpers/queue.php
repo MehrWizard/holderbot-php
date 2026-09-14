@@ -386,6 +386,56 @@ final class BatchQueue
         }
     }
 
+    private static function monitorStep(array &$job, array $server): void
+    {
+        if (empty($server['node_monitoring'])) { $job['status']='cancelled'; return; }
+        if (empty($job['params']['nodes_staged'])) {
+            $nodes = PanelManager::getNodes($server, true);
+            $insert = self::db()->prepare("INSERT IGNORE INTO bot_queue_items(job_id,position,username,payload,status) VALUES(?,?,?,?,'node_pending')");
+            self::db()->beginTransaction();
+            try {
+                foreach ($nodes as $i=>$node) {
+                    if (!isset($node['id'])) throw new InvalidArgumentException('Panel returned a node without an ID');
+                    $insert->execute([$job['id'],$i,'node_'.$node['id'],json_encode($node,JSON_THROW_ON_ERROR)]);
+                }
+                $job['total']=count($nodes); $job['params']['nodes_staged']=true;
+                self::save($job); self::db()->commit();
+            } catch (Throwable $e) { self::db()->rollBack(); throw $e; }
+            return;
+        }
+        $select=self::db()->prepare("SELECT position,payload FROM bot_queue_items WHERE job_id=? AND status='node_pending' ORDER BY position LIMIT 1");
+        $select->execute([$job['id']]); $item=$select->fetch();
+        if (!$item) { $job['params']['report_ready']=true; return; }
+        $node=json_decode($item['payload'],true,512,JSON_THROW_ON_ERROR);
+        $text=null;
+        if (!PanelManager::isNodeOk($node,$server['type'])) {
+            // Bound upstream diagnostic text before HTML escaping.
+            $field=static function($value): string {
+                preg_match('/\A.{0,250}/us',(string)$value,$match);
+                return Formatter::escape($match[0] ?? '');
+            };
+            $text='<b>Node error</b> — '.$field($server['remark'])."\n".
+                '<b>Node Remark:</b> <code>'.$field($node['name'] ?? $node['remark'] ?? '')."</code>\n".
+                '<b>Node Address:</b> <code>'.$field($node['address'] ?? '')."</code>\n".
+                '<b>Node Message:</b> <code>'.$field($node['message'] ?? 'None').'</code>';
+            if (!empty($server['node_restart'])) {
+                $job['params']['mutation_intent']=['phase'=>'node_restart','node_id'=>(int)$node['id']];
+                $job['active']='mutation'; self::save($job);
+                $ok=PanelManager::restartNode($server,(int)$node['id']);
+                $text.="\n<b>Restart:</b> ".($ok ? 'Confirmed' : 'Not confirmed; review the panel.');
+                if (!$ok) $job['unconfirmed']++;
+            }
+        }
+        self::db()->beginTransaction();
+        try {
+            self::db()->prepare('UPDATE bot_queue_items SET payload=?,status=? WHERE job_id=? AND position=?')->execute([
+                json_encode(['text'=>$text],JSON_THROW_ON_ERROR),$text===null ? 'node_done' : 'pending',$job['id'],$item['position'],
+            ]);
+            $job['active']=null; $job['cursor']++; $job['success']++;
+            self::save($job); self::db()->commit();
+        } catch (Throwable $e) { self::db()->rollBack(); throw $e; }
+    }
+
     private static function step(array &$job): void
     {
         $params = $job['params']; $server = $job['server_id']>0 ? Storage::getServer((int)$job['server_id']) : null;
@@ -515,12 +565,16 @@ final class BatchQueue
             $job['success'] = 1; $job['total'] = 1; $job['cursor'] = 1; return;
         }
         if ($job['kind'] === 'monitor') {
-            BackgroundTasks::monitorNodes([$server], $params['recipients'] ?? []);
-            $job['success'] = 1; $job['total'] = 1; $job['cursor'] = 1; $job['status'] = 'completed'; return;
+            self::monitorStep($job, $server);
+            return;
         }
         if ($job['kind'] === 'expiry') {
             $scan = BackgroundTasks::expiryPage($server, $params['scan'] ?? [], (int)($params['now'] ?? time()));
-            self::storeReportPage($job['id'], $scan['page'] - 1, array_map(fn($name) => '<code>' . Formatter::escape($name) . '</code>', $scan['names']));
+            $botUsername = PanelManager::getBotUsername();
+            self::storeReportPage($job['id'], $scan['page'] - 1, array_map(function($name) use ($botUsername, $server) {
+                $label = '<code>' . Formatter::escape($name) . '</code>';
+                return $botUsername === '' ? $label : '<a href="https://t.me/' . Formatter::escape($botUsername) . '?start=user_' . (int)$server['id'] . '_' . rawurlencode($name) . '">' . $label . '</a>';
+            }, $scan['names']));
             $scan['names'] = [];
             if (!$scan['done']) {
                 $params['scan'] = $scan;

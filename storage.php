@@ -168,6 +168,10 @@ class Storage {
                 $queueColumns = self::$pdo->query('SHOW COLUMNS FROM bot_queue')->fetchAll(PDO::FETCH_COLUMN);
                 if (!in_array('cancel_requested', $queueColumns, true)) self::$pdo->exec('ALTER TABLE bot_queue ADD COLUMN cancel_requested TINYINT NOT NULL DEFAULT 0');
                 if (!in_array('last_served', $queueColumns, true)) self::$pdo->exec('ALTER TABLE bot_queue ADD COLUMN last_served DOUBLE NOT NULL DEFAULT 0, ADD INDEX queue_fair (last_served)');
+                $itemIndexes = self::$pdo->query('SHOW INDEX FROM bot_queue_items')->fetchAll(PDO::FETCH_ASSOC);
+                if (!in_array('queue_item_status', array_column($itemIndexes, 'Key_name'), true)) {
+                    self::$pdo->exec('ALTER TABLE bot_queue_items ADD INDEX queue_item_status (job_id,status,position)');
+                }
 
                 // Seed optional servers from config.php once. Credentials remain
                 // under operator control and are persisted in MySQL for runtime use.

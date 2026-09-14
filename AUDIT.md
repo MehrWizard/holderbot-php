@@ -20,10 +20,15 @@ Reference: local Python v0.6.0. Python database migration is out of scope. Core 
 
 - [X] Run small statistics requests immediately with a five-second budget; resume longer scans in cron without restarting saved pages.
 
+- [X] Preserve user deep links in paginated expiry reports.
+- [X] Checkpoint node monitoring one node at a time, report unconfirmed restarts accurately, and deliver reports through bounded recipient steps.
+- [X] Treat failed ownership assignment after creation as a partial operation requiring review.
+- [X] Index pending queue items by job, status, and position.
+
 ## Remaining work and limits
 
 - [ ] Complete command, keyboard, wizard, and panel-workflow regression coverage against Python. Initial handler tests cover entry commands, deep links, Home, search, filtered pagination, stale owner callbacks, creation-wizard validation, template date workflows, failed quota edits, Unicode note limits, configuration selection and ownership failures; remaining workflows still need coverage.
-- [ ] Exercise both panel types with isolated users, supported panel versions, and 16,000-user mutation workloads. Large import ingestion has been tested; remote mutation throughput has not.
+- [ ] Exercise both panel types with isolated users, supported panel versions, and 16,000-user mutation workloads. Local import ingestion and a 16,000-target worker test per adapter are covered; remote mutation throughput remains untested.
 - [ ] Validate live Telegram navigation, rendering, QR delivery, and final results.
 - [ ] Test backup restoration and external stopped-cron monitoring.
 
@@ -33,4 +38,4 @@ Notification delivery is best effort. A process crash between saving a delivery 
 
 ## Local verification
 
-Passed: PHP syntax; 36 differential presentation fixtures; QR matrices for all 40 versions; 36 local HTTP requests across both clients; isolated MySQL fresh and interrupted upgrades with four concurrent workers; 16,000-row import ingestion; mutation process-exit recovery; cancellation and scheduling; bounded cleanup and delivery; persisted mutation intent and paginated issue inspection. Telegram calls are stubbed in database tests.
+Passed: PHP syntax; 36 differential presentation fixtures; QR matrices for all 40 versions; 36 local HTTP requests across both clients; isolated MySQL fresh and interrupted upgrades with four concurrent workers; 16,000-row import ingestion; mutation process-exit recovery; cancellation and scheduling; bounded cleanup and delivery; persisted mutation intent and paginated issue inspection. Telegram calls are stubbed in database tests. The large mutation test uses stubbed panel transport and relaxed commit flushing in its disposable database; it does not measure live throughput or power-loss durability.
