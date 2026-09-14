@@ -191,6 +191,17 @@ final class BatchQueue
         catch (Throwable $e) { error_log('Unable to update inline fallback message: ' . $e->getMessage()); }
     }
 
+    private static function finalizeMessage(array $job): void
+    {
+        if (!in_array($job['status'], ['completed', 'failed', 'cancelled'], true)) return;
+        $messageId = (int)($job['params']['message_id'] ?? 0);
+        if ($messageId <= 0 || (string)$job['chat_id'] === '0') return;
+        if ($job['status'] === 'completed' && in_array($job['kind'], ['stats', 'qr', 'revoke_qr'], true)) return;
+        if ($job['kind'] === 'create' && !empty($job['params']['send_qr']) && $job['status'] === 'completed') return;
+        try { tg_replace_message($job['chat_id'], $messageId, self::describe($job), self::keyboard($job)); }
+        catch (Throwable $e) { error_log('Unable to deliver final job result: ' . $e->getMessage()); }
+    }
+
     public static function message(int|string $chatId, int $userId, string $text, string $key, ?array $keyboard=null): array
     { return self::enqueue('outbox',['id'=>0,'type'=>'internal','base_url'=>'','username'=>''],['text'=>$text,'keyboard'=>$keyboard],$chatId,$userId,$key); }
 
@@ -276,9 +287,8 @@ final class BatchQueue
             if ($messageId <= 0 || $username === '') throw new InvalidArgumentException('QR request is incomplete');
             $user = PanelManager::getUser($server, $username);
             if (!$user || empty($user['subscription_url'])) throw new InvalidArgumentException('No subscription link available for QR');
-            $response = QrGenerator::sendQrPhoto($job['chat_id'], $user['subscription_url'], Formatter::userInfo($server, $user));
-            if (is_array($response) && array_key_exists('ok', $response) && !$response['ok']) throw new RuntimeException('QR delivery failed');
-            tg_edit_message($job['chat_id'], $messageId, '✅ QR code sent.', Keyboards::cancel('usr:' . $server['id'] . ':' . $username));
+            QrGenerator::sendQrPhoto($job['chat_id'], $user['subscription_url'], Formatter::userInfo($server, $user));
+            tg_replace_message($job['chat_id'], $messageId, '✅ QR code sent.', Keyboards::cancel('usr:' . $server['id'] . ':' . $username));
             $job['success']=1; $job['total']=1; $job['cursor']=1; $job['status']='completed'; return;
         }
         if ($job['kind'] === 'revoke_qr') {
@@ -288,10 +298,9 @@ final class BatchQueue
             $updated = PanelManager::revokeSub($server, $username);
             if (!$updated) throw new RuntimeException('Subscription revoke failed');
             if (!empty($updated['subscription_url'])) {
-                $response = QrGenerator::sendQrPhoto($job['chat_id'], $updated['subscription_url'], Formatter::userInfo($server, $updated));
-                if (is_array($response) && array_key_exists('ok', $response) && !$response['ok']) throw new RuntimeException('QR delivery failed');
+                QrGenerator::sendQrPhoto($job['chat_id'], $updated['subscription_url'], Formatter::userInfo($server, $updated));
             }
-            tg_edit_message($job['chat_id'], $messageId, '✅ Success.', Keyboards::cancel('usr:' . $server['id'] . ':' . $username));
+            tg_replace_message($job['chat_id'], $messageId, '✅ Success.', Keyboards::cancel('usr:' . $server['id'] . ':' . $username));
             $job['success']=1; $job['total']=1; $job['cursor']=1; $job['status']='completed'; return;
         }
         if ($job['kind'] === 'stats') {
@@ -306,8 +315,7 @@ final class BatchQueue
                 Storage::cacheSet('stats_' . $server['id'], $stats, 30);
             }
             $text = Formatter::statsCard($server, $stats);
-            $response = tg_edit_message($job['chat_id'], (int)$params['message_id'], $text, Keyboards::serverMenu((int)$server['id']));
-            if (empty($response['ok'])) throw new RuntimeException('Unable to deliver statistics');
+            tg_replace_message($job['chat_id'], (int)$params['message_id'], $text, Keyboards::serverMenu((int)$server['id']));
             $job['success'] = 1; $job['total'] = 1; $job['cursor'] = 1; $job['status'] = 'completed'; return;
         }
         if ($job['kind'] === 'monitor') {
@@ -337,12 +345,11 @@ final class BatchQueue
                 $ok = $created !== null;
                 if ($ok && !empty($params['send_qr'])) {
                     if (!empty($created['subscription_url'])) {
-                        $response = QrGenerator::sendQrPhoto($job['chat_id'], $created['subscription_url'], Formatter::userInfo($server, $created));
-                        if (is_array($response) && array_key_exists('ok', $response) && !$response['ok']) throw new RuntimeException('QR delivery failed');
+                        QrGenerator::sendQrPhoto($job['chat_id'], $created['subscription_url'], Formatter::userInfo($server, $created));
                     }
                     $messageId = (int)($params['message_id'] ?? 0);
                     if ($messageId > 0) {
-                        tg_edit_message($job['chat_id'], $messageId, '✅ User created.', Keyboards::cancel('srv:' . $server['id']));
+                        tg_replace_message($job['chat_id'], $messageId, '✅ User created.', Keyboards::cancel('srv:' . $server['id']));
                         tg_send_message($job['chat_id'], "Let's back...", Keyboards::cancel('srv:' . $server['id']));
                     }
                 }
@@ -351,7 +358,7 @@ final class BatchQueue
         }
         if ($job['kind'] === 'recharge') {
             $messageId = (int)($params['message_id'] ?? 0);
-            if ($messageId > 0) tg_edit_message($job['chat_id'], $messageId, $ok ? '✅ Success.' : '❌ Failed', Keyboards::cancel('usr:' . $server['id'] . ':' . (string)$params['username']));
+            if ($messageId > 0) tg_replace_message($job['chat_id'], $messageId, $ok ? '✅ Success.' : '❌ Failed', Keyboards::cancel('usr:' . $server['id'] . ':' . (string)$params['username']));
         }
         if($ok) $job['success']++; else $job['unconfirmed']++; $job['cursor']++;
     }
@@ -377,6 +384,7 @@ final class BatchQueue
                 }
                 try{self::step($job);unset($job['params']['read_failures']);}
                 catch(Throwable $e){$job['error']=$e->getMessage();if($e instanceof InvalidArgumentException){$job['status']='failed';}else{$job['next_run']=time()+30;$job['params']['read_failures']=(int)($job['params']['read_failures']??0)+1;if($job['params']['read_failures']>=3)$job['status']='failed';}}
+                self::finalizeMessage($job);
                 self::save($job);
             } finally { self::releaseJobLock((string)$job['id']); }
             $done++;

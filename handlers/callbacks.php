@@ -318,7 +318,7 @@ class CallbackHandlers {
                     return;
                 }
                 $updated = $attempt['result'];
-                tg_edit_message($chatId, $messageId, $updated ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
+                tg_replace_message($chatId, $messageId, $updated ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
             } else {
                 tg_answer_callback($id, "❌ Not Found.", true);
             }
@@ -373,7 +373,7 @@ class CallbackHandlers {
                 $ok = $attempt['result'] !== null;
             }
             if ($action !== 'rvk') tg_answer_callback($id);
-            tg_edit_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
+            tg_replace_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
             return;
         }
 
@@ -1448,6 +1448,7 @@ class CallbackHandlers {
                 if ($attempt['state'] !== 'completed') {
                     return;
                 }
+                tg_replace_message($chatId, $messageId, '✅ QR code sent.', Keyboards::cancel("usr:{$serverId}:{$username}"));
                 break;
 
             case 'del':
@@ -1572,8 +1573,7 @@ class CallbackHandlers {
                 $server, $username, $dataLimit, $dateLimit, null, $stateData['selected_configs'] ?? [], $dateType, $stateData['admin'] ?? null
             );
             if ($created && !empty($created['subscription_url'])) {
-                $response = QrGenerator::sendQrPhoto($chatId, $created['subscription_url'], Formatter::userInfo($server, $created));
-                if (is_array($response) && array_key_exists('ok', $response) && !$response['ok']) throw new RuntimeException('QR delivery failed');
+                QrGenerator::sendQrPhoto($chatId, $created['subscription_url'], Formatter::userInfo($server, $created));
             }
             return $created;
         });
@@ -1589,7 +1589,7 @@ class CallbackHandlers {
         if (!$created) {
             tg_send_message($chatId, '❌ Failed to create ' . Formatter::escape($username) . '.');
         } else {
-            tg_edit_message($chatId, $messageId, '✅ User created.', Keyboards::cancel("srv:{$serverId}"));
+            tg_replace_message($chatId, $messageId, '✅ User created.', Keyboards::cancel("srv:{$serverId}"));
         }
         tg_send_message($chatId, "Let's back...", Keyboards::cancel("srv:{$serverId}"));
     }

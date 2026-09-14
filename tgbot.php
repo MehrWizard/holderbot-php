@@ -135,7 +135,26 @@ function tg_edit_message(
     }
     $response = tgbot('editMessageText', $params);
     if (!empty($response['ok'])) MessageTracker::remember($chatId, $messageId);
+    if (empty($response['ok'])) {
+        // Telegram returns an error when the original message was deleted or
+        // can no longer be edited. Remove it if possible and deliver the
+        // replacement as a fresh message instead.
+        tg_delete_message($chatId, $messageId);
+        return tg_send_message($chatId, $text, $replyMarkup, $parseMode);
+    }
     return $response;
+}
+
+/** Delete a previous status/loading message and deliver the final result fresh. */
+function tg_replace_message(
+    int|string $chatId,
+    int $messageId,
+    string $text,
+    ?array $replyMarkup = null,
+    string $parseMode = 'HTML'
+): ?array {
+    if ($messageId > 0) tg_delete_message($chatId, $messageId);
+    return tg_send_message($chatId, $text, $replyMarkup, $parseMode);
 }
 
 /**
