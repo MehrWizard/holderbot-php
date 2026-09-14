@@ -37,6 +37,17 @@ class PanelManager {
         return self::normalizeUser($server, $raw);
     }
 
+    /** A failed lookup is distinct from a confirmed missing username. */
+    public static function probeUser(array $server, string $username): array {
+        $users = self::getUsers($server, 1, 10, $username, null, null, true);
+        foreach ($users as $user) {
+            if (hash_equals((string)$user['username'], $username)) {
+                return ['confirmed' => true, 'user' => $user];
+            }
+        }
+        return ['confirmed' => true, 'user' => null];
+    }
+
     /**
      * Get a paginated list of users with optional status and admin filters.
      */
@@ -121,6 +132,13 @@ class PanelManager {
             if ($note !== null && $note !== '') {
                 $payload['note'] = $note;
             }
+            if ($checkpoint) {
+                $probe = self::probeUser($server, $username);
+                if ($probe['user'] !== null) throw new InvalidArgumentException('Username already exists');
+                $intentPayload=$payload;
+                if ($admin !== null && $admin !== '') $intentPayload['owner_username']=$admin;
+                $checkpoint('create_user', ['username'=>$username, '_exists'=>false], $intentPayload);
+            }
             $resp = MarzneshinClient::request($server, 'POST', '/api/users', $payload);
         } else {
             // Marzban
@@ -146,6 +164,16 @@ class PanelManager {
 
             $status = ($dateType === 'onhold') ? 'on_hold' : 'active';
             $onHoldDuration = ($dateType === 'onhold') ? ($expireDays * 86400) : null;
+            if ($checkpoint) {
+                $probe = self::probeUser($server, $username);
+                if ($probe['user'] !== null) throw new InvalidArgumentException('Username already exists');
+                $checkpoint('create_user', ['username'=>$username, '_exists'=>false], [
+                    'username'=>$username, 'data_limit'=>$bytes, 'expire'=>$expireTimestamp,
+                    'status'=>$status, 'on_hold_expire_duration'=>$onHoldDuration,
+                    'note'=>$note, 'selected_configs'=>array_values($selectedConfigs),
+                    'owner_username'=>$admin,
+                ]);
+            }
             $resp = MarzbanClient::createUser($server, $username, $bytes, $expireTimestamp, $inbounds, $proxies, $note, $status, $onHoldDuration);
         }
 

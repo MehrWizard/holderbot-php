@@ -369,7 +369,15 @@ class CallbackHandlers {
             if ($action === 'tgl') {
                 $user = PanelManager::getUser($server, $username);
                 $ok = $user && PanelManager::setStatus($server, $username, !$user['is_active']);
-            } elseif ($action === 'rst') $ok = PanelManager::resetUsage($server, $username);
+            } elseif ($action === 'rst') {
+                $job=BatchQueue::enqueueInline('reset',$server,['username'=>$username,'message_id'=>$messageId],$chatId,$userId,'callback:'.$id);
+                tg_answer_callback($id,'Resetting usage...');
+                tg_edit_message($chatId,$messageId,'Loading...');
+                $attempt=BatchQueue::executeInline($job,fn(array &$running)=>BatchQueue::reset($running,$server));
+                if ($attempt['state']==='queued') tg_edit_message($chatId,$messageId,BatchQueue::fallbackMessage($attempt['job']),BatchQueue::keyboard($attempt['job']));
+                elseif ($attempt['state']!=='completed') tg_edit_message($chatId,$messageId,BatchQueue::describe($attempt['job']),BatchQueue::keyboard($attempt['job']));
+                return;
+            }
             elseif ($action === 'rvk') {
                 $job = BatchQueue::enqueueInline('revoke_qr', $server, [
                     'username' => $username, 'message_id' => $messageId,

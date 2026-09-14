@@ -108,7 +108,7 @@ final class BatchQueue
 
     public static function enqueue(string $kind, array $server, array $params, int|string $chatId, int $userId, string $submission): array
     {
-        $allowed = ['delete','transfer','config','create','admin_status','stats','expiry','access','monitor','outbox','import','recharge','qr','revoke_qr'];
+        $allowed = ['delete','transfer','config','create','admin_status','stats','expiry','access','monitor','outbox','import','recharge','reset','qr','revoke_qr'];
         if (!in_array($kind, $allowed, true)) throw new InvalidArgumentException('Unsupported queue operation');
         $targetCount = max((int)($params['count'] ?? 1), count($params['uploaded_json'] ?? []));
         if ($kind === 'create' && $targetCount > self::MAX_TARGETS) throw new LengthException('Too many targets');
@@ -137,7 +137,7 @@ final class BatchQueue
         string $submission
     ): array {
         global $config;
-        $allowed = ['create', 'recharge', 'qr', 'revoke_qr', 'stats'];
+        $allowed = ['create', 'recharge', 'reset', 'qr', 'revoke_qr', 'stats'];
         if (!in_array($kind, $allowed, true)) throw new InvalidArgumentException('Unsupported inline operation');
         $serverId = (int)($server['id'] ?? 0);
         $id = substr(hash('sha256', json_encode([$chatId, $userId, $submission, $kind, $serverId, $params], JSON_THROW_ON_ERROR)), 0, 32);
@@ -205,7 +205,7 @@ final class BatchQueue
                 self::save($current);
                 return ['state' => 'failed', 'job' => $current, 'result' => null, 'error' => $e->getMessage()];
             } catch (Throwable $e) {
-                $current['status'] = in_array($current['kind'], ['create', 'recharge', 'revoke_qr'], true) ? 'failed' : 'running';
+                $current['status'] = in_array($current['kind'], ['create', 'recharge', 'reset', 'revoke_qr'], true) ? 'failed' : 'running';
                 if ($current['status'] === 'failed') $current['unconfirmed'] = 1;
                 $current['next_run'] = time();
                 $current['lease_until'] = 0;
@@ -282,15 +282,19 @@ final class BatchQueue
             $intent=$job['params']['mutation_intent'] ?? [];
             $username=$intent['username'] ?? $job['params']['username'] ?? '';
             if ($username==='') return ['state'=>'insufficient_evidence'];
-            $user=PanelManager::getUser($server,$username);
-            $comparison=$user ? MutationReconciliation::compare($server['type'],$intent,$user['raw']) : ['state'=>'read_unconfirmed'];
+            try { $probe=PanelManager::probeUser($server,$username); }
+            catch(Throwable) { $probe=['confirmed'=>false,'user'=>null]; }
+            $user=$probe['user'] ?? null;
+            $comparison=!empty($probe['confirmed']) ? MutationReconciliation::compare($server['type'],$intent,$user['raw'] ?? null) : ['state'=>'read_unconfirmed'];
             $job['params']['reconciliation']=['checked_at'=>time(),'attempts'=>(int)($job['params']['reconciliation']['attempts'] ?? 0)+1,'comparison'=>$comparison];
-            if (($comparison['state'] ?? '')==='desired_state_observed' && $job['kind']==='recharge') {
+            $resolved=in_array($comparison['state'] ?? '',['desired_state_observed','subscription_changed','reset_marker_changed'],true);
+            if ($resolved && in_array($job['kind'],['recharge','reset','revoke_qr','create'],true)) {
                 $job['status']='completed'; $job['success']=1; $job['cursor']=1; $job['total']=1; $job['unconfirmed']=0;
                 $job['active']=null; $job['error']=null;
+                $label=match($job['kind']) {'create'=>'User creation','reset'=>'Usage reset','revoke_qr'=>'Subscription revocation',default=>'Recharge'};
                 $job['params']['notifications']=[['key'=>'reconciled','payload'=>[
                     'message_id'=>(int)($job['params']['message_id'] ?? 0),
-                    'text'=>'Recharge reconciled: the panel currently matches the saved target values. No mutation was replayed.',
+                    'text'=>$label.' reconciled: the panel currently matches the saved target values. No mutation was replayed.',
                     'keyboard'=>self::keyboard($job),
                 ]]];
                 $job['params']['custom_result']=true;
@@ -310,6 +314,16 @@ final class BatchQueue
         $job['active'] = 'mutation';
         self::save($job);
         return PanelManager::revokeSub($server, $username);
+    }
+
+    public static function reset(array &$job, array $server): bool
+    {
+        $username=(string)$job['params']['username'];
+        $before=PanelManager::getUser($server,$username);
+        if (!$before) throw new RuntimeException('Cannot read user before usage reset');
+        $job['params']['mutation_intent']=['username'=>$username,'phase'=>'reset_usage','before'=>$before['raw'],'payload'=>[]];
+        $job['active']='mutation'; self::save($job);
+        return PanelManager::resetUsage($server,$username);
     }
 
     private static function notifyFallback(array $job): void
@@ -725,7 +739,7 @@ final class BatchQueue
         try {
             if ($onlyJob===null) NotificationOutbox::drain(1);
             if ($onlyJob===null) {
-                $candidate=self::db()->query("SELECT id FROM bot_queue WHERE status='failed' AND unconfirmed_count>0 AND kind IN ('recharge','revoke_qr','create') AND JSON_EXTRACT(payload,'$.mutation_intent.before') IS NOT NULL AND COALESCE(JSON_EXTRACT(payload,'$.reconciliation.attempts'),0)<3 AND COALESCE(JSON_EXTRACT(payload,'$.reconciliation.checked_at'),0)<UNIX_TIMESTAMP()-60 ORDER BY updated_at LIMIT 1")->fetchColumn();
+                $candidate=self::db()->query("SELECT id FROM bot_queue WHERE status='failed' AND unconfirmed_count>0 AND kind IN ('recharge','reset','revoke_qr','create') AND JSON_EXTRACT(payload,'$.mutation_intent.before') IS NOT NULL AND COALESCE(JSON_EXTRACT(payload,'$.reconciliation.attempts'),0)<3 AND COALESCE(JSON_EXTRACT(payload,'$.reconciliation.checked_at'),0)<UNIX_TIMESTAMP()-60 ORDER BY updated_at LIMIT 1")->fetchColumn();
                 if ($candidate) {
                     try { self::reconcile($candidate); }
                     catch(Throwable $e) { error_log('Read-only reconciliation unavailable: '.$e->getMessage()); }
@@ -750,7 +764,7 @@ final class BatchQueue
                 $job = self::get($lockedId);
                 if (!$job || in_array($job['status'], ['completed', 'failed', 'cancelled'], true)) continue;
                 if ($onlyJob === null && in_array($job['status'], ['inline', 'inline_running'], true) && (int)$job['lease_until'] > time()) continue;
-                if (($job['active'] ?? '') === 'mutation' || ($job['status'] === 'inline_running' && in_array($job['kind'], ['create', 'recharge', 'revoke_qr'], true))) {
+                if (($job['active'] ?? '') === 'mutation' || ($job['status'] === 'inline_running' && in_array($job['kind'], ['create', 'recharge', 'reset', 'revoke_qr'], true))) {
                     $job['status'] = 'failed';
                     $job['unconfirmed']++;
                     $job['error'] = 'Interrupted mutation: verify the panel before retrying.';

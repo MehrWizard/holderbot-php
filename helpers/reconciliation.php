@@ -4,12 +4,43 @@ declare(strict_types=1);
 /** Read-only comparison. Never sends a mutation or infers success from absent fields. */
 final class MutationReconciliation
 {
-    public static function compare(string $type, array $intent, array $current): array
+    public static function compare(string $type, array $intent, ?array $current): array
     {
         if (!in_array($type,['marzban','marzneshin'],true)) return ['state'=>'unsupported'];
         $before=$intent['before'] ?? null;
-        if (!is_array($before) || empty($intent['username']) || ($before['username'] ?? null)!==$intent['username'] || ($current['username'] ?? null)!==$intent['username']) return ['state'=>'insufficient_evidence'];
+        if (!is_array($before) || empty($intent['username']) || ($before['username'] ?? null)!==$intent['username']) return ['state'=>'insufficient_evidence'];
         $phase=$intent['phase'] ?? '';
+        if ($phase==='create_user') {
+            if (($before['_exists'] ?? null)!==false || $current===null) return ['state'=>'insufficient_evidence'];
+            if (($current['username'] ?? null)!==$intent['username']) return ['state'=>'identity_conflict'];
+            $expected=$intent['payload'] ?? []; $mismatch=[];
+            foreach (['data_limit','expire','status','on_hold_expire_duration','expire_strategy','expire_date','usage_duration','note'] as $key) {
+                if (!array_key_exists($key,$expected) || $expected[$key]===null) continue;
+                if (!array_key_exists($key,$current)) { $mismatch[]=$key; continue; }
+                $actual=$current[$key]; $value=$expected[$key];
+                if (in_array($key,['expire_date'],true) && $actual!==null) {
+                    try { $actual=(new DateTimeImmutable($actual))->getTimestamp(); $value=(new DateTimeImmutable($value))->getTimestamp(); }
+                    catch(Throwable) { $mismatch[]=$key; continue; }
+                }
+                if ($actual!==$value && !(is_numeric($actual)&&is_numeric($value)&&(string)$actual===(string)$value)) $mismatch[]=$key;
+            }
+            if (!empty($expected['owner_username'])) {
+                $owner=$type==='marzban' ? ($current['admin']['username'] ?? $current['owner'] ?? null) : ($current['owner_username'] ?? $current['admin_username'] ?? null);
+                if ($owner!==$expected['owner_username']) $mismatch[]='owner_username';
+            }
+            if ($type==='marzneshin' && array_key_exists('service_ids',$expected)) {
+                $wanted=array_map('strval',$expected['service_ids']); $actual=array_map('strval',$current['service_ids'] ?? []);
+                sort($wanted); sort($actual); if ($wanted!==$actual) $mismatch[]='service_ids';
+            }
+            if ($type==='marzban' && !empty($expected['selected_configs'])) {
+                $actual=[];
+                foreach (($current['inbounds'] ?? []) as $items) foreach ((array)$items as $tag) $actual[]=(string)$tag;
+                $wanted=array_map('strval',$expected['selected_configs']); sort($wanted); sort($actual);
+                if ($wanted!==$actual) $mismatch[]='selected_configs';
+            }
+            return ['state'=>$mismatch?'creation_conflict':'desired_state_observed','mismatched'=>$mismatch];
+        }
+        if ($current===null || ($current['username'] ?? null)!==$intent['username']) return ['state'=>'insufficient_evidence'];
         if ($phase==='assign_created_owner') {
             $owner=$type==='marzban' ? ($current['admin']['username'] ?? $current['owner'] ?? null) : ($current['owner_username'] ?? $current['admin_username'] ?? null);
             if ($owner===null || empty($intent['payload']['owner_username'])) return ['state'=>'insufficient_evidence'];

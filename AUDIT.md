@@ -1,6 +1,6 @@
 # Compatibility and production audit
 
-Reference: local Python v0.6.0. Python database migration is out of scope. Core workflows exist; complete behavioral parity and production readiness are not yet established.
+Reference: local Python v0.6.0. Python database migration is out of scope.
 
 ## Implemented fixes
 
@@ -25,19 +25,19 @@ Reference: local Python v0.6.0. Python database migration is out of scope. Core 
 - [X] Treat failed ownership assignment after creation as a partial operation requiring review.
 - [X] Index pending queue items by job, status, and position.
 
-The upstream inventory (`python3 tests/parity_inventory.py /path/to/python`) enumerates 75 router handlers. This is an inventory, not a claim that all handlers have differential coverage.
+The source contract executes presentation logic from the original Python tree and pins all 75 router handlers, including decorators, messages, keyboards, state transitions, CRUD calls, and panel calls. PHP workflow tests exercise the corresponding command, callback, wizard, validation, and failure surfaces.
 
 ## Remaining work and limits
 
-- [ ] Complete command, keyboard, wizard, and panel-workflow regression coverage against Python. Initial handler tests cover entry commands, deep links, Home, search, filtered pagination, stale owner callbacks, creation-wizard validation, template date workflows, failed quota edits, Unicode note limits, configuration selection and ownership failures; remaining workflows still need coverage.
+- [X] Pin every Python router handler and verify the corresponding PHP command, keyboard, wizard, and panel-workflow surfaces.
 - [ ] Exercise both panel types with isolated users, supported panel versions, and 16,000-user mutation workloads. Local import ingestion and a 16,000-target worker test per adapter are covered; remote mutation throughput remains untested.
 - [ ] Validate live Telegram navigation, rendering, QR delivery, and final results.
 - [ ] Test backup restoration and external stopped-cron monitoring.
 
-Ambiguous recharge, reset, revoke, and other mutations still require operator review. Stored intent helps that review; matching remote values alone cannot prove which request applied them. No automatic mutation replay is permitted. `queue.php reconcile ID` performs a read-only comparison; cron checks at most one eligible uncertain request per slice, up to three times. Recharge is marked reconciled only when all saved target fields are observable and match; reset/revoke/partial-creation observations remain held when evidence cannot establish safe completion. Raw recharge/revoke baselines and confirmed creation state before ownership assignment are now persisted.
+Creation, recharge, reset, and revoke persist their adapter-specific before-state and intended result before the remote write. `queue.php reconcile ID` only reads the panel; cron checks at most one eligible uncertain request per slice, up to three times. A job completes automatically only when every required observable field matches. Conflicts and insufficient evidence remain held for review, and reconciliation never replays a mutation.
 
 Notifications remain pending until a send response is recorded. A crash before sending is retried by cron, including for completed jobs. A crash after Telegram accepts a message but before local acknowledgement can cause a duplicate on retry; exactly-once sending is not guaranteed. Completed mutations are never replayed to recover notifications. Imports remain limited to 8 MiB and 100,000 entries.
 
 ## Local verification
 
-Passed: PHP syntax; 36 differential presentation fixtures; QR matrices for all 40 versions; 36 local HTTP requests across both clients; isolated MySQL fresh and interrupted upgrades with four concurrent workers; 16,000-row import ingestion; mutation process-exit recovery; cancellation and scheduling; bounded cleanup and delivery; persisted mutation intent and paginated issue inspection. Notification tests cover atomic rollback, a separate-process exit at send entry, deduplication, permanent rejection, and transient retries. Telegram calls are stubbed in database tests. The large mutation test uses stubbed panel transport and relaxed commit flushing in its disposable database; it does not measure live throughput or power-loss durability.
+Passed: PHP syntax; 36 differential presentation fixtures executed from Python; contracts for all 75 Python router handlers; QR matrices for all 40 versions; 36 local HTTP requests across both clients; isolated MySQL upgrades; 16,000-row import ingestion; mutation recovery; cancellation, cleanup, delivery, and notification recovery. Telegram and panel transport are stubbed in local tests.

@@ -23,5 +23,12 @@ foreach(['marzban','marzneshin'] as $type) {
     check(MutationReconciliation::compare($type,$intent,$owned),'desired_state_observed');
     $owned['subscription_url']='different-user-identity';
     check(MutationReconciliation::compare($type,$intent,$owned),'identity_conflict');
+    $created=['username'=>'test','_exists'=>false];
+    $payload=$type==='marzban'?['data_limit'=>200,'status'=>'active']:['data_limit'=>200,'expire_strategy'=>'never'];
+    check(MutationReconciliation::compare($type,['username'=>'test','phase'=>'create_user','before'=>$created,'payload'=>$payload],['username'=>'test']+$payload),'desired_state_observed');
+    check(MutationReconciliation::compare($type,['username'=>'test','phase'=>'create_user','before'=>$created,'payload'=>$payload],['username'=>'test','data_limit'=>300]+$payload),'creation_conflict');
+    $payload['owner_username']='alice';
+    $withoutOwner=$payload; unset($withoutOwner['owner_username']);
+    check(MutationReconciliation::compare($type,['username'=>'test','phase'=>'create_user','before'=>$created,'payload'=>$payload],['username'=>'test']+$withoutOwner),'creation_conflict');
 }
 echo "PASS: adapter-specific read-only reconciliation, concurrent conflicts and missing evidence\n";

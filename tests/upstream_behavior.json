@@ -1,0 +1,1380 @@
+{
+  "app/routers/actions/items/admin.py:action": {
+    "calls": [
+      "BotKeys.cancel",
+      "ClinetManager.get_users",
+      "ClinetManager.set_owner",
+      "callback.message.answer",
+      "callback.message.edit_text",
+      "crud.get_server"
+    ],
+    "constants": [
+      "MessageTexts.FAILED",
+      "MessageTexts.NOT_FOUND"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(AdminActionsForm.CONFIRM), SelectCB.filter(F.types.is_(Pages.ACTIONS) & F.action.is_(Actions.INFO)))"
+    ]
+  },
+  "app/routers/actions/items/admin.py:confrimaction": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_SURE",
+      "MessageTexts.NOT_FOUND"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(AdminActionsForm.TO), SelectCB.filter(F.types.is_(Pages.ACTIONS) & F.action.is_(Actions.INFO)))"
+    ]
+  },
+  "app/routers/actions/items/admin.py:fromadmin": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "ClinetManager.get_admins",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_ADMIN_FROM",
+      "MessageTexts.NOT_FOUND"
+    ],
+    "decorators": [
+      "router.callback_query(SelectCB.filter(F.types.is_(Pages.ACTIONS) & F.action.is_(Actions.INFO) & F.select.in_([ActionTypes.TRANSFER_USERS.value])))"
+    ]
+  },
+  "app/routers/actions/items/admin.py:toadmin": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "ClinetManager.get_admins",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_ADMIN_TO",
+      "MessageTexts.NOT_FOUND"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(AdminActionsForm.FROM), SelectCB.filter(F.types.is_(Pages.ACTIONS) & F.action.is_(Actions.INFO)))"
+    ]
+  },
+  "app/routers/actions/items/configs.py:action": {
+    "calls": [
+      "BotKeys.cancel",
+      "ClinetManager.get_users",
+      "ClinetManager.modify_user",
+      "callback.message.answer",
+      "callback.message.edit_text",
+      "crud.get_server"
+    ],
+    "constants": [
+      "MessageTexts.NOT_FOUND"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(ConfigsActionsForm.CONFIGS), SelectCB.filter(F.types.is_(Pages.ACTIONS) & F.action.is_(Actions.INFO)))"
+    ]
+  },
+  "app/routers/actions/items/configs.py:admin": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "ClinetManager.get_configs",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ITEMS",
+      "MessageTexts.NOT_FOUND"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(ConfigsActionsForm.ADMINS), SelectCB.filter(F.types.is_(Pages.ACTIONS) & F.action.is_(Actions.INFO)))"
+    ]
+  },
+  "app/routers/actions/items/configs.py:select": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "ClinetManager.get_admins",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_ADMIN",
+      "MessageTexts.NOT_FOUND"
+    ],
+    "decorators": [
+      "router.callback_query(SelectCB.filter(F.types.is_(Pages.ACTIONS) & F.action.is_(Actions.INFO) & F.select.in_([ActionTypes.ADD_CONFIG.value, ActionTypes.DELETE_CONFIG.value])))"
+    ]
+  },
+  "app/routers/actions/items/users.py:action": {
+    "calls": [
+      "BotKeys.cancel",
+      "ClinetManager.activated_users",
+      "ClinetManager.disabled_users",
+      "ClinetManager.get_users",
+      "ClinetManager.remove_user",
+      "callback.message.answer",
+      "callback.message.edit_text",
+      "crud.get_server"
+    ],
+    "constants": [
+      "MessageTexts.FAILED",
+      "MessageTexts.NOT_FOUND",
+      "MessageTexts.SUCCESS"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(UsersActionsForm.USERS), SelectCB.filter(F.types.is_(Pages.ACTIONS) & F.action.is_(Actions.INFO)))"
+    ]
+  },
+  "app/routers/actions/items/users.py:admins": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ITEMS",
+      "MessageTexts.NOT_FOUND"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(UsersActionsForm.ADMINS), SelectCB.filter(F.types.is_(Pages.ACTIONS) & F.action.is_(Actions.INFO)))"
+    ]
+  },
+  "app/routers/actions/items/users.py:select": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "ClinetManager.get_admins",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_ADMIN",
+      "MessageTexts.NOT_FOUND"
+    ],
+    "decorators": [
+      "router.callback_query(SelectCB.filter(F.types.is_(Pages.ACTIONS) & F.action.is_(Actions.INFO) & F.select.in_([ActionTypes.DELETE_LIMITED_USERS.value, ActionTypes.DELETE_EXPIRED_USERS.value, ActionTypes.ACTIVATED_USERS.value, ActionTypes.DISABLED_USERS.value, ActionTypes.DELETE_USERS.value])))"
+    ]
+  },
+  "app/routers/actions/menu.py:data": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "callback.message.edit_text",
+      "crud.get_server"
+    ],
+    "constants": [
+      "MessageTexts.ITEMS",
+      "MessageTexts.NOT_FOUND",
+      "ServerTypes.MARZNESHIN",
+      "ServerTypes.MARZNESHIN.value"
+    ],
+    "decorators": [
+      "router.callback_query(PageCB.filter(F.page.is_(Pages.ACTIONS) & F.action.is_(Actions.LIST)))"
+    ]
+  },
+  "app/routers/base.py:home": {
+    "calls": [
+      "BotKeys.home",
+      "callback.message.answer",
+      "crud.get_servers"
+    ],
+    "constants": [
+      "MessageTexts.START"
+    ],
+    "decorators": [
+      "router.callback_query(PageCB.filter(F.page.is_(Pages.HOME)))"
+    ]
+  },
+  "app/routers/base.py:menu": {
+    "calls": [
+      "BotKeys.menu",
+      "callback.message.edit_text"
+    ],
+    "constants": [
+      "MessageTexts.MENU"
+    ],
+    "decorators": [
+      "router.callback_query(PageCB.filter(F.page.is_(Pages.MENU) & F.action.is_(Actions.LIST)))"
+    ]
+  },
+  "app/routers/base.py:start": {
+    "calls": [
+      "BotKeys.home",
+      "BotKeys.selector",
+      "ClinetManager.get_user",
+      "crud.get_server",
+      "crud.get_servers",
+      "message.answer"
+    ],
+    "constants": [
+      "MessageTexts.NOT_FOUND",
+      "MessageTexts.START"
+    ],
+    "decorators": [
+      "router.message(Command(commands=['start']))"
+    ]
+  },
+  "app/routers/base.py:updatechecker": {
+    "calls": [
+      "callback.answer"
+    ],
+    "constants": [],
+    "decorators": [
+      "router.callback_query(PageCB.filter(F.page.is_(Pages.UPDATE) & F.action.is_(Actions.INFO)))"
+    ]
+  },
+  "app/routers/inline.py:get": {
+    "calls": [
+      "ClinetManager.get_users",
+      "crud.get_server",
+      "crud.get_servers",
+      "query.answer"
+    ],
+    "constants": [
+      "MessageTexts.USER_INFO",
+      "MessageTexts.USER_INFO.format"
+    ],
+    "decorators": [
+      "router.inline_query()"
+    ]
+  },
+  "app/routers/servers/create.py:create": {
+    "calls": [
+      "BotKeys.cancel",
+      "callback.message.edit_text",
+      "state.set_state"
+    ],
+    "constants": [
+      "MessageTexts.ASK_REMARK",
+      "ServerCreateForm.REMARK"
+    ],
+    "decorators": [
+      "router.callback_query(PageCB.filter(F.page.is_(Pages.SERVERS) & F.action.is_(Actions.CREATE)))"
+    ]
+  },
+  "app/routers/servers/create.py:data": {
+    "calls": [
+      "BotKeys.cancel",
+      "ClinetManager.generate_access",
+      "crud.create_server",
+      "crud.upsert_server_access",
+      "message.answer"
+    ],
+    "constants": [
+      "MessageTexts.FAILED",
+      "MessageTexts.INVALID_DATA",
+      "MessageTexts.SUCCESS",
+      "MessageTexts.WRONG_PATTERN",
+      "ServerCreateForm.DATA",
+      "ServerTypes.MARZBAN",
+      "ServerTypes.MARZBAN.value",
+      "ServerTypes.MARZNESHIN",
+      "ServerTypes.MARZNESHIN.value"
+    ],
+    "decorators": [
+      "router.message(StateFilter(ServerCreateForm.DATA))"
+    ]
+  },
+  "app/routers/servers/create.py:remark": {
+    "calls": [
+      "BotKeys.selector",
+      "crud.get_server",
+      "message.answer",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_TYPES",
+      "MessageTexts.DUPLICATE",
+      "MessageTexts.WRONG_STR",
+      "ServerCreateForm.REMARK",
+      "ServerCreateForm.TYPES",
+      "ServerTypes.MARZBAN",
+      "ServerTypes.MARZNESHIN"
+    ],
+    "decorators": [
+      "router.message(StateFilter(ServerCreateForm.REMARK))"
+    ]
+  },
+  "app/routers/servers/create.py:types": {
+    "calls": [
+      "BotKeys.cancel",
+      "callback.message.edit_text",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_MARZ_DATA",
+      "ServerCreateForm.DATA",
+      "ServerCreateForm.TYPES"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(ServerCreateForm.TYPES), SelectCB.filter(F.types.is_(Pages.SERVERS) & F.action.is_(Actions.CREATE)))"
+    ]
+  },
+  "app/routers/servers/data.py:data": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.modify",
+      "callback.message.edit_text",
+      "crud.get_server"
+    ],
+    "constants": [
+      "MessageTexts.NOT_FOUND",
+      "ServerModify.DATA",
+      "ServerModify.EXPIRED_STATS",
+      "ServerModify.NODE_AUTORESTART",
+      "ServerModify.NODE_MONITORING",
+      "ServerModify.REMARK",
+      "ServerModify.REMOVE"
+    ],
+    "decorators": [
+      "router.callback_query(PageCB.filter(F.page.is_(Pages.SERVERS) & F.action.is_(Actions.INFO)))"
+    ]
+  },
+  "app/routers/servers/modify.py:finish_modify": {
+    "calls": [
+      "BotKeys.cancel",
+      "ClinetManager.generate_access",
+      "crud.get_server",
+      "crud.modify_server",
+      "crud.upsert_server_access",
+      "message.answer"
+    ],
+    "constants": [
+      "MessageTexts.DUPLICATE",
+      "MessageTexts.FAILED",
+      "MessageTexts.INVALID_DATA",
+      "MessageTexts.SUCCESS",
+      "MessageTexts.WRONG_PATTERN",
+      "MessageTexts.WRONG_STR",
+      "ServerModify.DATA",
+      "ServerModify.DATA.value",
+      "ServerModify.REMARK",
+      "ServerModify.REMARK.value",
+      "ServerModifyForm.ALL",
+      "ServerTypes.MARZNESHIN",
+      "ServerTypes.MARZNESHIN.value"
+    ],
+    "decorators": [
+      "router.message(StateFilter(ServerModifyForm.ALL))"
+    ]
+  },
+  "app/routers/servers/modify.py:remove": {
+    "calls": [
+      "BotKeys.cancel",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "crud.modify_server",
+      "crud.remove_server"
+    ],
+    "constants": [
+      "MessageTexts.FAILED",
+      "MessageTexts.NOT_FOUND",
+      "MessageTexts.SUCCESS",
+      "ServerModify.EXPIRED_STATS",
+      "ServerModify.EXPIRED_STATS.value",
+      "ServerModify.NODE_AUTORESTART",
+      "ServerModify.NODE_AUTORESTART.value",
+      "ServerModify.NODE_MONITORING",
+      "ServerModify.NODE_MONITORING.value",
+      "ServerModify.REMOVE",
+      "ServerModify.REMOVE.value",
+      "ServerModifyForm.CONFIRM"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(ServerModifyForm.CONFIRM), SelectCB.filter(F.types.is_(Pages.SERVERS) & F.action.is_(Actions.MODIFY)))"
+    ]
+  },
+  "app/routers/servers/modify.py:start_modify": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_MARZ_DATA",
+      "MessageTexts.ASK_REMARK",
+      "MessageTexts.ASK_SURE",
+      "MessageTexts.NOT_FOUND",
+      "ServerModify.DATA",
+      "ServerModify.EXPIRED_STATS",
+      "ServerModify.NODE_AUTORESTART",
+      "ServerModify.NODE_MONITORING",
+      "ServerModify.REMARK",
+      "ServerModify.REMOVE",
+      "ServerModifyForm.ALL",
+      "ServerModifyForm.CONFIRM"
+    ],
+    "decorators": [
+      "router.callback_query(PageCB.filter(F.page.is_(Pages.SERVERS) & F.action.is_(Actions.MODIFY)))"
+    ]
+  },
+  "app/routers/stats/show.py:show_stats": {
+    "calls": [
+      "BotKeys.cancel",
+      "ClinetManager.get_users",
+      "callback.message.edit_text",
+      "crud.get_server"
+    ],
+    "constants": [
+      "MessageTexts.NOT_FOUND"
+    ],
+    "decorators": [
+      "router.callback_query(PageCB.filter(F.page.is_(Pages.STATS) & F.action.is_(Actions.LIST)))"
+    ]
+  },
+  "app/routers/templates/create.py:create": {
+    "calls": [
+      "BotKeys.cancel",
+      "callback.message.edit_text",
+      "state.set_state"
+    ],
+    "constants": [
+      "MessageTexts.ASK_REMARK",
+      "TemplateCreateForm.REMARK"
+    ],
+    "decorators": [
+      "router.callback_query(PageCB.filter(F.page.is_(Pages.TEMPLATES) & F.action.is_(Actions.CREATE)))"
+    ]
+  },
+  "app/routers/templates/create.py:data": {
+    "calls": [
+      "BotKeys.selector",
+      "message.answer",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.MENU",
+      "MessageTexts.WRONG_INT",
+      "TemplateCreateForm.DATA_LIMIT",
+      "TemplateCreateForm.DATE_TYPES"
+    ],
+    "decorators": [
+      "router.message(StateFilter(TemplateCreateForm.DATA_LIMIT))"
+    ]
+  },
+  "app/routers/templates/create.py:datelimit": {
+    "calls": [
+      "BotKeys.cancel",
+      "crud.create_template",
+      "message.answer"
+    ],
+    "constants": [
+      "MessageTexts.FAILED",
+      "MessageTexts.SUCCESS",
+      "MessageTexts.WRONG_INT",
+      "TemplateCreateForm.DATE_LIMIT"
+    ],
+    "decorators": [
+      "router.message(StateFilter(TemplateCreateForm.DATE_LIMIT))"
+    ]
+  },
+  "app/routers/templates/create.py:datetypes": {
+    "calls": [
+      "BotKeys.cancel",
+      "callback.message.edit_text",
+      "crud.create_template",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_DATE_LIMIT",
+      "MessageTexts.FAILED",
+      "MessageTexts.SUCCESS",
+      "TemplateCreateForm.DATE_LIMIT",
+      "TemplateCreateForm.DATE_TYPES"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(TemplateCreateForm.DATE_TYPES), SelectCB.filter(F.types.is_(Pages.TEMPLATES) & F.action.is_(Actions.CREATE)))"
+    ]
+  },
+  "app/routers/templates/create.py:remark": {
+    "calls": [
+      "BotKeys.cancel",
+      "crud.get_template",
+      "message.answer",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_DATA_LIMT",
+      "MessageTexts.DUPLICATE",
+      "MessageTexts.WRONG_STR",
+      "TemplateCreateForm.DATA_LIMIT",
+      "TemplateCreateForm.REMARK"
+    ],
+    "decorators": [
+      "router.message(StateFilter(TemplateCreateForm.REMARK))"
+    ]
+  },
+  "app/routers/templates/data.py:data": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "callback.message.edit_text",
+      "crud.get_template"
+    ],
+    "constants": [
+      "MessageTexts.NOT_FOUND",
+      "TemplateModify.ACTIVATED",
+      "TemplateModify.DATA_LIMIT",
+      "TemplateModify.DATE_LIMIT",
+      "TemplateModify.DISABLED",
+      "TemplateModify.REMARK",
+      "TemplateModify.REMOVE"
+    ],
+    "decorators": [
+      "router.callback_query(PageCB.filter(F.page.is_(Pages.TEMPLATES) & F.action.is_(Actions.INFO)))"
+    ]
+  },
+  "app/routers/templates/menu.py:menu": {
+    "calls": [
+      "BotKeys.lister",
+      "callback.message.edit_text",
+      "crud.get_templates"
+    ],
+    "constants": [
+      "MessageTexts.ITEMS"
+    ],
+    "decorators": [
+      "router.callback_query(PageCB.filter(F.page.is_(Pages.TEMPLATES) & F.action.is_(Actions.LIST)))"
+    ]
+  },
+  "app/routers/templates/modify/confirm.py:confirmend": {
+    "calls": [
+      "BotKeys.cancel",
+      "callback.message.edit_text",
+      "crud.modify_template",
+      "crud.remove_template"
+    ],
+    "constants": [
+      "MessageTexts.FAILED",
+      "MessageTexts.SUCCESS",
+      "TemplateModify.ACTIVATED",
+      "TemplateModify.DISABLED",
+      "TemplateModify.REMOVE",
+      "TemplateModifyForm.CONFIRM"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(TemplateModifyForm.CONFIRM), SelectCB.filter(F.types.is_(Pages.TEMPLATES) & F.action.is_(Actions.MODIFY) & F.select.in_([YesOrNot.YES, YesOrNot.NO])))"
+    ]
+  },
+  "app/routers/templates/modify/confirm.py:confirmstart": {
+    "calls": [
+      "BotKeys.selector",
+      "callback.message.edit_text",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_SURE",
+      "TemplateModify.ACTIVATED",
+      "TemplateModify.ACTIVATED.value",
+      "TemplateModify.DISABLED",
+      "TemplateModify.DISABLED.value",
+      "TemplateModify.REMOVE",
+      "TemplateModify.REMOVE.value",
+      "TemplateModifyForm.CONFIRM"
+    ],
+    "decorators": [
+      "router.callback_query(SelectCB.filter(F.types.is_(Pages.TEMPLATES) & F.action.is_(Actions.MODIFY) & F.select.in_([TemplateModify.ACTIVATED.value, TemplateModify.DISABLED.value, TemplateModify.REMOVE.value])))"
+    ]
+  },
+  "app/routers/templates/modify/datalimit.py:dateend": {
+    "calls": [
+      "BotKeys.cancel",
+      "crud.modify_template",
+      "message.answer"
+    ],
+    "constants": [
+      "MessageTexts.FAILED",
+      "MessageTexts.SUCCESS",
+      "MessageTexts.WRONG_INT",
+      "TemplateModifyForm.DATA_LIMIT"
+    ],
+    "decorators": [
+      "router.message(StateFilter(TemplateModifyForm.DATA_LIMIT))"
+    ]
+  },
+  "app/routers/templates/modify/datalimit.py:datestart": {
+    "calls": [
+      "BotKeys.cancel",
+      "callback.message.edit_text",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_DATA_LIMT",
+      "TemplateModify.DATA_LIMIT",
+      "TemplateModify.DATA_LIMIT.value",
+      "TemplateModifyForm.DATA_LIMIT"
+    ],
+    "decorators": [
+      "router.callback_query(SelectCB.filter(F.types.is_(Pages.TEMPLATES) & F.action.is_(Actions.MODIFY) & F.select.in_([TemplateModify.DATA_LIMIT.value])))"
+    ]
+  },
+  "app/routers/templates/modify/datelimit.py:dateend": {
+    "calls": [
+      "BotKeys.cancel",
+      "crud.modify_template",
+      "message.answer"
+    ],
+    "constants": [
+      "MessageTexts.FAILED",
+      "MessageTexts.SUCCESS",
+      "MessageTexts.WRONG_INT",
+      "TemplateModifyForm.DATE_LIMIT"
+    ],
+    "decorators": [
+      "router.message(StateFilter(TemplateModifyForm.DATE_LIMIT))"
+    ]
+  },
+  "app/routers/templates/modify/datelimit.py:datelimit": {
+    "calls": [
+      "BotKeys.cancel",
+      "callback.message.edit_text",
+      "crud.modify_template",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_DATE_LIMIT",
+      "MessageTexts.FAILED",
+      "MessageTexts.SUCCESS",
+      "TemplateModifyForm.DATE_LIMIT",
+      "TemplateModifyForm.DATE_TYPE"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(TemplateModifyForm.DATE_TYPE), SelectCB.filter(F.types.is_(Pages.TEMPLATES) & F.action.is_(Actions.MODIFY)))"
+    ]
+  },
+  "app/routers/templates/modify/datelimit.py:selecttype": {
+    "calls": [
+      "BotKeys.selector",
+      "callback.message.edit_text",
+      "state.set_state"
+    ],
+    "constants": [
+      "MessageTexts.MENU",
+      "TemplateModify.DATE_LIMIT",
+      "TemplateModify.DATE_LIMIT.value",
+      "TemplateModifyForm.DATE_TYPE"
+    ],
+    "decorators": [
+      "router.callback_query(SelectCB.filter(F.types.is_(Pages.TEMPLATES) & F.action.is_(Actions.MODIFY) & F.select.in_([TemplateModify.DATE_LIMIT.value])))"
+    ]
+  },
+  "app/routers/templates/modify/remark.py:finish_modify": {
+    "calls": [
+      "BotKeys.cancel",
+      "crud.get_template",
+      "crud.modify_template",
+      "message.answer"
+    ],
+    "constants": [
+      "MessageTexts.DUPLICATE",
+      "MessageTexts.FAILED",
+      "MessageTexts.SUCCESS",
+      "MessageTexts.WRONG_STR",
+      "TemplateModifyForm.INPUT"
+    ],
+    "decorators": [
+      "router.message(StateFilter(TemplateModifyForm.INPUT))"
+    ]
+  },
+  "app/routers/templates/modify/remark.py:start_modify": {
+    "calls": [
+      "BotKeys.cancel",
+      "callback.message.edit_text",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_REMARK",
+      "TemplateModify.REMARK",
+      "TemplateModify.REMARK.value",
+      "TemplateModifyForm.INPUT"
+    ],
+    "decorators": [
+      "router.callback_query(SelectCB.filter(F.types.is_(Pages.TEMPLATES) & F.action.is_(Actions.MODIFY) & F.select.in_([TemplateModify.REMARK.value])))"
+    ]
+  },
+  "app/routers/users/create.py:adminselect": {
+    "calls": [
+      "BotKeys.selector",
+      "callback.message.edit_text",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_REMARK",
+      "MessageTexts.CREATE_WITH_JSON",
+      "MessageTexts.RANDOM_USERNAME",
+      "UserCreateForm.ADMIN",
+      "UserCreateForm.USERNAME"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(UserCreateForm.ADMIN), SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.CREATE)))"
+    ]
+  },
+  "app/routers/users/create.py:configs": {
+    "calls": [
+      "BotKeys.selector",
+      "callback.message.edit_text",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_CONFIGS",
+      "UserCreateForm.CONFIGS"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(UserCreateForm.CONFIGS), SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.CREATE) & F.done.is_(False)))"
+    ]
+  },
+  "app/routers/users/create.py:createusers": {
+    "calls": [
+      "BotKeys.cancel",
+      "ClinetManager.create_user",
+      "ClinetManager.set_owner",
+      "callback.answer",
+      "callback.message.answer",
+      "callback.message.answer_photo",
+      "callback.message.edit_text",
+      "crud.get_server"
+    ],
+    "constants": [
+      "MessageTexts.FAILED_USERNAME",
+      "MessageTexts.FAILED_USERNAME.format",
+      "MessageTexts.LETS_BACK",
+      "MessageTexts.NOT_FOUND",
+      "MessageTexts.NOT_FOUND_CONFIGS",
+      "MessageTexts.USER_INFO",
+      "MessageTexts.USER_INFO.format",
+      "UserCreateForm.CONFIGS"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(UserCreateForm.CONFIGS), SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.CREATE) & F.done.is_(True)))"
+    ]
+  },
+  "app/routers/users/create.py:data": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "ClinetManager.get_admins",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_ADMIN",
+      "MessageTexts.NOT_FOUND",
+      "UserCreateForm.ADMIN"
+    ],
+    "decorators": [
+      "router.callback_query(PageCB.filter(F.page.is_(Pages.USERS) & F.action.is_(Actions.CREATE)))"
+    ]
+  },
+  "app/routers/users/create.py:datalimit": {
+    "calls": [
+      "BotKeys.selector",
+      "message.answer",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.MENU",
+      "MessageTexts.WRONG_INT",
+      "UserCreateForm.DATA_LIMIT",
+      "UserCreateForm.DATE_TYPE"
+    ],
+    "decorators": [
+      "router.message(StateFilter(UserCreateForm.DATA_LIMIT))"
+    ]
+  },
+  "app/routers/users/create.py:datelimit": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "ClinetManager.get_configs",
+      "crud.get_server",
+      "message.answer",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_CONFIGS",
+      "MessageTexts.NOT_FOUND",
+      "MessageTexts.WRONG_INT",
+      "UserCreateForm.CONFIGS",
+      "UserCreateForm.DATE_LIMIT"
+    ],
+    "decorators": [
+      "router.message(StateFilter(UserCreateForm.DATE_LIMIT))"
+    ]
+  },
+  "app/routers/users/create.py:datetypes": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "ClinetManager.get_configs",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_CONFIGS",
+      "MessageTexts.ASK_DATE_LIMIT",
+      "MessageTexts.NOT_FOUND",
+      "UserCreateForm.CONFIGS",
+      "UserCreateForm.DATE_LIMIT",
+      "UserCreateForm.DATE_TYPE"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(UserCreateForm.DATE_TYPE), SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.CREATE)))"
+    ]
+  },
+  "app/routers/users/create.py:json_input": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "ClinetManager.get_configs",
+      "crud.get_server",
+      "message.answer",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_CONFIGS",
+      "MessageTexts.INVALID_JSON",
+      "MessageTexts.NOT_FOUND",
+      "MessageTexts.WORNG_DOC",
+      "MessageTexts.WORNG_JSON",
+      "UserCreateForm.CONFIGS",
+      "UserCreateForm.JSON"
+    ],
+    "decorators": [
+      "router.message(StateFilter(UserCreateForm.JSON))"
+    ]
+  },
+  "app/routers/users/create.py:json_start": {
+    "calls": [
+      "BotKeys.cancel",
+      "callback.message.edit_text",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_COUNT",
+      "MessageTexts.ASK_JSON",
+      "UserCreateForm.JSON",
+      "UserCreateForm.USERCOUNT",
+      "UserCreateForm.USERNAME"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(UserCreateForm.USERNAME), SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.JSON)))"
+    ]
+  },
+  "app/routers/users/create.py:templateselect": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "ClinetManager.get_configs",
+      "callback.message.answer",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "crud.get_template",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_CONFIGS",
+      "MessageTexts.ASK_DATA_LIMT",
+      "MessageTexts.NOT_FOUND",
+      "UserCreateForm.CONFIGS",
+      "UserCreateForm.DATA_LIMIT",
+      "UserCreateForm.TEMPLATE"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(UserCreateForm.TEMPLATE), SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.CREATE)))"
+    ]
+  },
+  "app/routers/users/create.py:usercount": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "crud.get_templates",
+      "message.answer",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_DATA_LIMT",
+      "MessageTexts.ASK_SUFFIX",
+      "MessageTexts.ITEMS",
+      "MessageTexts.WRONG_INT",
+      "UserCreateForm.DATA_LIMIT",
+      "UserCreateForm.TEMPLATE",
+      "UserCreateForm.USERCOUNT",
+      "UserCreateForm.USERSUFFIX"
+    ],
+    "decorators": [
+      "router.message(StateFilter(UserCreateForm.USERCOUNT))"
+    ]
+  },
+  "app/routers/users/create.py:username": {
+    "calls": [
+      "BotKeys.cancel",
+      "message.answer",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_COUNT",
+      "MessageTexts.WRONG_PATTERN",
+      "UserCreateForm.USERCOUNT",
+      "UserCreateForm.USERNAME"
+    ],
+    "decorators": [
+      "router.message(StateFilter(UserCreateForm.USERNAME))"
+    ]
+  },
+  "app/routers/users/create.py:userprefix": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "crud.get_templates",
+      "message.answer",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_DATA_LIMT",
+      "MessageTexts.ITEMS",
+      "MessageTexts.WRONG_INT",
+      "UserCreateForm.DATA_LIMIT",
+      "UserCreateForm.TEMPLATE",
+      "UserCreateForm.USERSUFFIX"
+    ],
+    "decorators": [
+      "router.message(StateFilter(UserCreateForm.USERSUFFIX))"
+    ]
+  },
+  "app/routers/users/data.py:data": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "ClinetManager.get_user",
+      "callback.answer",
+      "callback.message.edit_text",
+      "crud.get_server"
+    ],
+    "constants": [
+      "MessageTexts.NOT_FOUND"
+    ],
+    "decorators": [
+      "router.callback_query(PageCB.filter(F.page.is_(Pages.USERS) & F.action.is_(Actions.INFO)))"
+    ]
+  },
+  "app/routers/users/menu.py:data": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.lister",
+      "ClinetManager.get_users",
+      "callback.answer",
+      "callback.message.edit_text",
+      "crud.get_server"
+    ],
+    "constants": [
+      "MessageTexts.ITEMS_MENU",
+      "MessageTexts.NOT_FOUND"
+    ],
+    "decorators": [
+      "router.callback_query(PageCB.filter(F.page.is_(Pages.USERS) & F.action.is_(Actions.LIST)))"
+    ]
+  },
+  "app/routers/users/modify/charge.py:chargeend": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_SURE",
+      "MessageTexts.NOT_FOUND",
+      "UserModifyForm.CHARGE",
+      "UserModifyForm.TEMPLATE"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(UserModifyForm.TEMPLATE), SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.MODIFY)))"
+    ]
+  },
+  "app/routers/users/modify/charge.py:chargestart": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "crud.get_templates",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ITEMS",
+      "MessageTexts.NOT_FOUND",
+      "UserModifyForm.TEMPLATE"
+    ],
+    "decorators": [
+      "router.callback_query(SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.MODIFY) & F.select.in_([UserModify.CHARGE.value])))"
+    ]
+  },
+  "app/routers/users/modify/charge.py:confirmend": {
+    "calls": [
+      "BotKeys.cancel",
+      "ClinetManager.get_user",
+      "ClinetManager.modify_user",
+      "ClinetManager.reset_user",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "crud.get_template"
+    ],
+    "constants": [
+      "MessageTexts.FAILED",
+      "MessageTexts.NOT_FOUND",
+      "MessageTexts.SUCCESS",
+      "UserModifyForm.CHARGE"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(UserModifyForm.CHARGE), SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.MODIFY) & F.select.in_([YesOrNot.YES_USAGE, YesOrNot.YES_CHARGE, YesOrNot.YES_NORMAL, YesOrNot.NO])))"
+    ]
+  },
+  "app/routers/users/modify/configs.py:configselect": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "ClinetManager.modify_user",
+      "callback.answer",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_CONFIGS",
+      "MessageTexts.FAILED",
+      "MessageTexts.NOT_FOUND",
+      "MessageTexts.NOT_FOUND_CONFIGS",
+      "MessageTexts.SUCCESS",
+      "UserModifyForm.CONFIGS"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(UserModifyForm.CONFIGS), SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.MODIFY)))"
+    ]
+  },
+  "app/routers/users/modify/configs.py:configstart": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "ClinetManager.get_configs",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_CONFIGS",
+      "MessageTexts.NOT_FOUND",
+      "UserModifyForm.CONFIGS"
+    ],
+    "decorators": [
+      "router.callback_query(SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.MODIFY) & F.select.in_([UserModify.CONFIGS.value])))"
+    ]
+  },
+  "app/routers/users/modify/confirm.py:confirmend": {
+    "calls": [
+      "BotKeys.cancel",
+      "ClinetManager.activated_user",
+      "ClinetManager.disabled_user",
+      "ClinetManager.remove_user",
+      "ClinetManager.reset_user",
+      "ClinetManager.revoke_user",
+      "callback.message.answer_photo",
+      "callback.message.edit_text",
+      "crud.get_server"
+    ],
+    "constants": [
+      "MessageTexts.FAILED",
+      "MessageTexts.NOT_FOUND",
+      "MessageTexts.SUCCESS",
+      "MessageTexts.USER_INFO",
+      "MessageTexts.USER_INFO.format",
+      "UserModifyForm.CONFIRM"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(UserModifyForm.CONFIRM), SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.MODIFY) & F.select.in_([YesOrNot.YES, YesOrNot.NO])))"
+    ]
+  },
+  "app/routers/users/modify/confirm.py:confirmstart": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "ClinetManager.get_user",
+      "callback.answer",
+      "callback.message.answer_photo",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_SURE",
+      "MessageTexts.NOT_FOUND",
+      "MessageTexts.USER_INFO",
+      "MessageTexts.USER_INFO.format",
+      "UserModifyForm.CONFIRM"
+    ],
+    "decorators": [
+      "router.callback_query(SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.MODIFY) & F.select.in_([UserModify.ACTIVATED.value, UserModify.DISABLED.value, UserModify.RESET_USAGE.value, UserModify.REMOVE.value, UserModify.REVOKE.value, UserModify.QRCODE.value])))"
+    ]
+  },
+  "app/routers/users/modify/datalimit.py:dateend": {
+    "calls": [
+      "BotKeys.cancel",
+      "ClinetManager.modify_user",
+      "crud.get_server",
+      "message.answer"
+    ],
+    "constants": [
+      "MessageTexts.FAILED",
+      "MessageTexts.NOT_FOUND",
+      "MessageTexts.SUCCESS",
+      "MessageTexts.WRONG_INT",
+      "UserModifyForm.DATA_LIMIT"
+    ],
+    "decorators": [
+      "router.message(StateFilter(UserModifyForm.DATA_LIMIT))"
+    ]
+  },
+  "app/routers/users/modify/datalimit.py:datestart": {
+    "calls": [
+      "BotKeys.cancel",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_DATA_LIMT",
+      "MessageTexts.NOT_FOUND",
+      "UserModifyForm.DATA_LIMIT"
+    ],
+    "decorators": [
+      "router.callback_query(SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.MODIFY) & F.select.in_([UserModify.DATA_LIMIT.value])))"
+    ]
+  },
+  "app/routers/users/modify/datelimit.py:dateend": {
+    "calls": [
+      "BotKeys.cancel",
+      "ClinetManager.modify_user",
+      "crud.get_server",
+      "message.answer"
+    ],
+    "constants": [
+      "MessageTexts.FAILED",
+      "MessageTexts.NOT_FOUND",
+      "MessageTexts.SUCCESS",
+      "MessageTexts.WRONG_INT",
+      "UserModifyForm.DATE_LIMIT"
+    ],
+    "decorators": [
+      "router.message(StateFilter(UserModifyForm.DATE_LIMIT))"
+    ]
+  },
+  "app/routers/users/modify/datelimit.py:datelimit": {
+    "calls": [
+      "BotKeys.cancel",
+      "ClinetManager.modify_user",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_DATE_LIMIT",
+      "MessageTexts.FAILED",
+      "MessageTexts.NOT_FOUND",
+      "MessageTexts.SUCCESS",
+      "UserModifyForm.DATE_LIMIT",
+      "UserModifyForm.DATE_TYPE"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(UserModifyForm.DATE_TYPE), SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.MODIFY)))"
+    ]
+  },
+  "app/routers/users/modify/datelimit.py:selecttype": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state"
+    ],
+    "constants": [
+      "MessageTexts.MENU",
+      "MessageTexts.NOT_FOUND",
+      "UserModifyForm.DATE_TYPE"
+    ],
+    "decorators": [
+      "router.callback_query(SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.MODIFY) & F.select.in_([UserModify.DATE_LIMIT.value])))"
+    ]
+  },
+  "app/routers/users/modify/note.py:dateend": {
+    "calls": [
+      "BotKeys.cancel",
+      "ClinetManager.modify_user",
+      "crud.get_server",
+      "message.answer"
+    ],
+    "constants": [
+      "MessageTexts.FAILED",
+      "MessageTexts.NOT_FOUND",
+      "MessageTexts.SUCCESS",
+      "MessageTexts.WRONG_STR",
+      "UserModifyForm.NOTE"
+    ],
+    "decorators": [
+      "router.message(StateFilter(UserModifyForm.NOTE))"
+    ]
+  },
+  "app/routers/users/modify/note.py:datestart": {
+    "calls": [
+      "BotKeys.cancel",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_NOTE",
+      "MessageTexts.NOT_FOUND",
+      "UserModifyForm.NOTE"
+    ],
+    "decorators": [
+      "router.callback_query(SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.MODIFY) & F.select.in_([UserModify.NOTE.value])))"
+    ]
+  },
+  "app/routers/users/modify/owner.py:ownerend": {
+    "calls": [
+      "BotKeys.cancel",
+      "ClinetManager.set_owner",
+      "callback.message.edit_text",
+      "crud.get_server"
+    ],
+    "constants": [
+      "MessageTexts.FAILED",
+      "MessageTexts.NOT_FOUND",
+      "MessageTexts.SUCCESS",
+      "UserModifyForm.ADMIN"
+    ],
+    "decorators": [
+      "router.callback_query(StateFilter(UserModifyForm.ADMIN), SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.MODIFY)))"
+    ]
+  },
+  "app/routers/users/modify/owner.py:ownerstart": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.selector",
+      "ClinetManager.get_admins",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_ADMIN",
+      "MessageTexts.NOT_FOUND",
+      "UserModifyForm.ADMIN"
+    ],
+    "decorators": [
+      "router.callback_query(SelectCB.filter(F.types.is_(Pages.USERS) & F.action.is_(Actions.MODIFY) & F.select.in_([UserModify.OWNER.value])))"
+    ]
+  },
+  "app/routers/users/search.py:data": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.lister",
+      "ClinetManager.get_users",
+      "crud.get_server",
+      "message.answer"
+    ],
+    "constants": [
+      "MessageTexts.ITEMS",
+      "MessageTexts.NOT_FOUND",
+      "MessageTexts.WRONG_PATTERN"
+    ],
+    "decorators": [
+      "router.message(Command(commands=['user']))"
+    ]
+  },
+  "app/routers/users/search.py:end_search": {
+    "calls": [
+      "BotKeys.cancel",
+      "BotKeys.lister",
+      "ClinetManager.get_users",
+      "crud.get_server",
+      "message.answer"
+    ],
+    "constants": [
+      "MessageTexts.ITEMS",
+      "MessageTexts.NOT_FOUND"
+    ],
+    "decorators": [
+      "router.message(StateFilter(UserSearchForm.USERNAME))"
+    ]
+  },
+  "app/routers/users/search.py:start_search": {
+    "calls": [
+      "BotKeys.cancel",
+      "callback.message.edit_text",
+      "crud.get_server",
+      "state.set_state",
+      "state.update_data"
+    ],
+    "constants": [
+      "MessageTexts.ASK_USERNAME",
+      "MessageTexts.NOT_FOUND"
+    ],
+    "decorators": [
+      "router.callback_query(PageCB.filter(F.page.is_(Pages.USERS) & F.action.is_(Actions.SEARCH)))"
+    ]
+  }
+}

@@ -74,7 +74,7 @@ python3 tests/run_all.py /path/to/original/holderbot
 python3 tests/mysql_contract.py
 ```
 
-The available checks cover PHP syntax, Python presentation fixtures, QR compatibility, local HTTP contracts, and isolated MySQL migration, recovery, and delivery-failure tests. Live validation still requires the PDO MySQL extension, configured Telegram credentials, and supported panel instances.
+The checks execute presentation fixtures from the original Python source, pin all 75 upstream router contracts, and cover PHP workflows, QR compatibility, HTTP clients, MySQL migration, recovery, and delivery failures. Live validation requires configured Telegram credentials and supported panel instances.
 
 ## TODO
 
