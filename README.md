@@ -48,11 +48,12 @@ Optional queue settings in `config.php`:
 'queue_budget_seconds' => 15,
 'queue_steps' => 10,
 'queue_retention_days' => 7,
+'inline_lease_seconds' => 120,
 ```
 
 ## Queue operations
 
-The queue is reserved for work that can exceed webhook or shared-host limits: multi-user creation and imports, bulk deletion, transfers, configuration and admin-wide status changes, full statistics scans, monitoring, access refresh, expiry reports, and other scheduled work. Single-user edits, recharge, creation, and QR delivery run immediately. Credentials are loaded from MySQL when a job runs and are not copied into queue payloads.
+The queue is reserved for work that can exceed webhook or shared-host limits: multi-user creation and imports, bulk deletion, transfers, configuration and admin-wide status changes, full statistics scans, monitoring, access refresh, expiry reports, and other scheduled work. Single-user edits, recharge, creation, and QR delivery run immediately. These short operations are persisted as inline jobs first; if the inline lease expires, cron safely takes over under a per-job MySQL lock and updates the original loading message. Credentials are loaded from MySQL when a job runs and are not copied into queue payloads.
 
 ```bash
 php queue.php health

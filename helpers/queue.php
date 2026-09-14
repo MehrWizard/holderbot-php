@@ -11,6 +11,21 @@ final class BatchQueue
 
     private static function db(): PDO { return Storage::db(); }
 
+    private static function lockName(string $id): string { return 'holderbot-job-' . $id; }
+
+    private static function acquireJobLock(string $id): bool
+    {
+        $stmt = self::db()->prepare('SELECT GET_LOCK(?, 0)');
+        $stmt->execute([self::lockName($id)]);
+        return (int)$stmt->fetchColumn() === 1;
+    }
+
+    private static function releaseJobLock(string $id): void
+    {
+        $stmt = self::db()->prepare('SELECT RELEASE_LOCK(?)');
+        $stmt->execute([self::lockName($id)]);
+    }
+
     private static function fingerprint(array $server): string
     {
         return hash('sha256', json_encode([
@@ -32,12 +47,12 @@ final class BatchQueue
     private static function save(array $job): void
     {
         self::db()->prepare(
-            'UPDATE bot_queue SET kind=?, payload=?, status=?, cursor_pos=?, total=?, success_count=?, unconfirmed_count=?, skipped_count=?, error_text=?, next_run=?, active_phase=?, notification_status=? WHERE id=?'
+            'UPDATE bot_queue SET kind=?, payload=?, status=?, cursor_pos=?, total=?, success_count=?, unconfirmed_count=?, skipped_count=?, error_text=?, next_run=?, active_phase=?, notification_status=?, lease_until=? WHERE id=?'
         )->execute([
             $job['kind'], json_encode($job['params'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $job['status'],
             (int)$job['cursor'], (int)$job['total'], (int)$job['success'], (int)$job['unconfirmed'],
             (int)$job['skipped'], $job['error'] ?: null, (int)$job['next_run'], $job['active'] ?: null,
-            $job['notification'] ?: 'pending', $job['id']
+            $job['notification'] ?: 'pending', (int)($job['lease_until'] ?? 0), $job['id']
         ]);
     }
 
@@ -61,7 +76,7 @@ final class BatchQueue
 
     public static function enqueue(string $kind, array $server, array $params, int|string $chatId, int $userId, string $submission): array
     {
-        $allowed = ['delete','transfer','config','create','admin_status','stats','expiry','access','monitor','outbox','import','recharge'];
+        $allowed = ['delete','transfer','config','create','admin_status','stats','expiry','access','monitor','outbox','import','recharge','qr','revoke_qr'];
         if (!in_array($kind, $allowed, true)) throw new InvalidArgumentException('Unsupported queue operation');
         $targetCount = max((int)($params['count'] ?? 1), count($params['uploaded_json'] ?? []));
         if ($kind === 'create' && $targetCount > self::MAX_TARGETS) throw new LengthException('Too many targets');
@@ -78,6 +93,102 @@ final class BatchQueue
             $insert->execute([$id,$kind,$serverId,self::fingerprint($server),$chatId,$userId,$submissionKey,$status,json_encode($params, JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE),$total,$userId ? 'pending' : 'suppressed']);
             return self::get($id) ?? throw new RuntimeException('Queue insert failed');
         } finally { $db->query("SELECT RELEASE_LOCK('holderbot-queue-submit')"); }
+    }
+
+    /** Persist a short operation before attempting it inline. */
+    public static function enqueueInline(
+        string $kind,
+        array $server,
+        array $params,
+        int|string $chatId,
+        int $userId,
+        string $submission
+    ): array {
+        global $config;
+        $allowed = ['create', 'recharge', 'qr', 'revoke_qr'];
+        if (!in_array($kind, $allowed, true)) throw new InvalidArgumentException('Unsupported inline operation');
+        $serverId = (int)($server['id'] ?? 0);
+        $id = substr(hash('sha256', json_encode([$chatId, $userId, $submission, $kind, $serverId, $params], JSON_THROW_ON_ERROR)), 0, 32);
+        $submissionKey = hash('sha256', json_encode([$chatId, $userId, $submission, $kind, $serverId], JSON_THROW_ON_ERROR));
+        $lease = time() + max(15, (int)($config['inline_lease_seconds'] ?? 45));
+        $db = self::db();
+        $lock = $db->prepare("SELECT GET_LOCK('holderbot-queue-submit', 10)"); $lock->execute();
+        try {
+            $existing = $db->prepare('SELECT * FROM bot_queue WHERE id=? OR submission_key=?');
+            $existing->execute([$id, $submissionKey]);
+            if ($row = $existing->fetch()) return self::decode($row);
+            $insert = $db->prepare('INSERT INTO bot_queue (id,kind,server_id,server_fingerprint,chat_id,user_id,submission_key,status,payload,total,notification_status,lease_until) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
+            $insert->execute([
+                $id, $kind, $serverId, self::fingerprint($server), $chatId, $userId, $submissionKey,
+                'inline', json_encode($params, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), 1,
+                $userId ? 'pending' : 'suppressed', $lease,
+            ]);
+            return self::get($id) ?? throw new RuntimeException('Inline job insert failed');
+        } finally { $db->query("SELECT RELEASE_LOCK('holderbot-queue-submit')"); }
+    }
+
+    /**
+     * Run a persisted short operation while holding its MySQL advisory lock.
+     * If the operation throws, leave it runnable for the normal queue worker.
+     */
+    public static function executeInline(array $job, callable $operation): array
+    {
+        global $config;
+        $id = (string)$job['id'];
+        if (!self::acquireJobLock($id)) return ['state' => 'locked', 'job' => $job, 'result' => null];
+        try {
+            $current = self::get($id);
+            if (!$current) return ['state' => 'missing', 'job' => $job, 'result' => null];
+            if (!in_array($current['status'], ['inline', 'inline_running'], true)) {
+                return ['state' => $current['status'], 'job' => $current, 'result' => null];
+            }
+            $current['status'] = 'inline_running';
+            $current['lease_until'] = time() + max(15, (int)($config['inline_lease_seconds'] ?? 45));
+            $current['active'] = 'inline';
+            self::save($current);
+            try {
+                $result = $operation();
+                $current['status'] = 'completed';
+                $current['cursor'] = 1;
+                $current['total'] = 1;
+                $current['success'] = 1;
+                $current['active'] = null;
+                $current['lease_until'] = 0;
+                self::save($current);
+                return ['state' => 'completed', 'job' => $current, 'result' => $result];
+            } catch (InvalidArgumentException $e) {
+                $current['status'] = 'failed';
+                $current['lease_until'] = 0;
+                $current['active'] = null;
+                $current['error'] = $e->getMessage();
+                self::save($current);
+                return ['state' => 'failed', 'job' => $current, 'result' => null, 'error' => $e->getMessage()];
+            } catch (Throwable $e) {
+                $current['status'] = 'running';
+                $current['next_run'] = time();
+                $current['lease_until'] = 0;
+                $current['active'] = 'fallback';
+                $current['error'] = 'Inline attempt failed: ' . $e->getMessage();
+                self::save($current);
+                return ['state' => 'queued', 'job' => $current, 'result' => null, 'error' => $e->getMessage()];
+            }
+        } finally {
+            self::releaseJobLock($id);
+        }
+    }
+
+    public static function fallbackMessage(array $job): string
+    {
+        return 'The request took too long. Continuing in the background.' .
+            "\nQueue reference: <code>#" . htmlspecialchars(substr((string)$job['id'], 0, 10), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</code>';
+    }
+
+    private static function notifyFallback(array $job): void
+    {
+        $messageId = (int)($job['params']['message_id'] ?? 0);
+        if ($messageId <= 0 || (string)$job['chat_id'] === '0') return;
+        try { tg_edit_message($job['chat_id'], $messageId, self::fallbackMessage($job), self::keyboard($job)); }
+        catch (Throwable $e) { error_log('Unable to update inline fallback message: ' . $e->getMessage()); }
     }
 
     public static function message(int|string $chatId, int $userId, string $text, string $key, ?array $keyboard=null): array
@@ -104,6 +215,8 @@ final class BatchQueue
             'config' => 'configuration update',
             'admin_status' => 'admin user status update',
             'stats' => 'server statistics',
+            'qr' => 'QR delivery',
+            'revoke_qr' => 'subscription revoke',
             'access' => 'panel access refresh',
             'monitor' => 'node monitoring',
             'expiry' => 'expiry report',
@@ -157,6 +270,30 @@ final class BatchQueue
             $token = $server['type']==='marzneshin' ? MarzneshinClient::getToken($server,true) : MarzbanClient::getToken($server,true);
             if (!$token) throw new RuntimeException('Access refresh failed'); Storage::cacheSet('online_'.$server['id'],time(),86400); $job['success']=1; $job['total']=1; $job['cursor']=1; $job['status']='completed'; return;
         }
+        if ($job['kind'] === 'qr') {
+            $messageId = (int)($params['message_id'] ?? 0);
+            $username = (string)($params['username'] ?? '');
+            if ($messageId <= 0 || $username === '') throw new InvalidArgumentException('QR request is incomplete');
+            $user = PanelManager::getUser($server, $username);
+            if (!$user || empty($user['subscription_url'])) throw new InvalidArgumentException('No subscription link available for QR');
+            $response = QrGenerator::sendQrPhoto($job['chat_id'], $user['subscription_url'], Formatter::userInfo($server, $user));
+            if (is_array($response) && array_key_exists('ok', $response) && !$response['ok']) throw new RuntimeException('QR delivery failed');
+            tg_edit_message($job['chat_id'], $messageId, '✅ QR code sent.', Keyboards::cancel('usr:' . $server['id'] . ':' . $username));
+            $job['success']=1; $job['total']=1; $job['cursor']=1; $job['status']='completed'; return;
+        }
+        if ($job['kind'] === 'revoke_qr') {
+            $messageId = (int)($params['message_id'] ?? 0);
+            $username = (string)($params['username'] ?? '');
+            if ($messageId <= 0 || $username === '') throw new InvalidArgumentException('Revoke request is incomplete');
+            $updated = PanelManager::revokeSub($server, $username);
+            if (!$updated) throw new RuntimeException('Subscription revoke failed');
+            if (!empty($updated['subscription_url'])) {
+                $response = QrGenerator::sendQrPhoto($job['chat_id'], $updated['subscription_url'], Formatter::userInfo($server, $updated));
+                if (is_array($response) && array_key_exists('ok', $response) && !$response['ok']) throw new RuntimeException('QR delivery failed');
+            }
+            tg_edit_message($job['chat_id'], $messageId, '✅ Success.', Keyboards::cancel('usr:' . $server['id'] . ':' . $username));
+            $job['success']=1; $job['total']=1; $job['cursor']=1; $job['status']='completed'; return;
+        }
         if ($job['kind'] === 'stats') {
             if (empty($params['message_id'])) {
                 $job['status'] = 'cancelled';
@@ -195,8 +332,26 @@ final class BatchQueue
             case 'config':
                 $user=PanelManager::getUser($server,$username); if(!$user) throw new RuntimeException('Cannot read user config'); $serviceId=(string)$params['service_id']; $ids=$user['service_ids']??[]; $newIds=!empty($params['add'])?array_merge($ids,[$serviceId]):array_values(array_filter($ids,fn($id)=>(string)$id!==$serviceId)); $ok=PanelManager::updateUserConfigs($server,$username,$newIds); break;
             case 'create':
-                $item=$params['uploaded_json'][$index]??null; $name=$item['username']??(($params['username']??'user').($job['total']>1?(string)((int)($params['usersuffix']??1)+$index):'')); $ok=(bool)PanelManager::createUser($server,$name,(float)($item['datalimit']??$params['data_limit']??0),(int)($item['datelimit']??$params['date_limit']??0),null,$params['selected_configs']??[],(string)($params['date_type']??'fixed'),$params['admin']??null); break;
+                $item=$params['uploaded_json'][$index]??null; $name=$item['username']??(($params['username']??'user').($job['total']>1?(string)((int)($params['usersuffix']??1)+$index):''));
+                $created = PanelManager::getUser($server, $name) ?: PanelManager::createUser($server, $name, (float)($item['datalimit']??$params['data_limit']??0), (int)($item['datelimit']??$params['date_limit']??0), null, $params['selected_configs']??[], (string)($params['date_type']??'fixed'), $params['admin']??null);
+                $ok = $created !== null;
+                if ($ok && !empty($params['send_qr'])) {
+                    if (!empty($created['subscription_url'])) {
+                        $response = QrGenerator::sendQrPhoto($job['chat_id'], $created['subscription_url'], Formatter::userInfo($server, $created));
+                        if (is_array($response) && array_key_exists('ok', $response) && !$response['ok']) throw new RuntimeException('QR delivery failed');
+                    }
+                    $messageId = (int)($params['message_id'] ?? 0);
+                    if ($messageId > 0) {
+                        tg_edit_message($job['chat_id'], $messageId, '✅ User created.', Keyboards::cancel('srv:' . $server['id']));
+                        tg_send_message($job['chat_id'], "Let's back...", Keyboards::cancel('srv:' . $server['id']));
+                    }
+                }
+                break;
             default: $job['status']='completed'; return;
+        }
+        if ($job['kind'] === 'recharge') {
+            $messageId = (int)($params['message_id'] ?? 0);
+            if ($messageId > 0) tg_edit_message($job['chat_id'], $messageId, $ok ? '✅ Success.' : '❌ Failed', Keyboards::cancel('usr:' . $server['id'] . ':' . (string)$params['username']));
         }
         if($ok) $job['success']++; else $job['unconfirmed']++; $job['cursor']++;
     }
@@ -206,7 +361,26 @@ final class BatchQueue
         global $config;
         $steps=max(1,min(100,$steps??(int)($config['queue_steps']??10))); $seconds=max(.1,min(45.0,$seconds??(float)($config['queue_budget_seconds']??15.0))); $db=self::db(); $lock=$db->query("SELECT GET_LOCK('holderbot-queue-worker',1)"); if((int)$lock->fetchColumn()!==1)return 0;
         $old=RequestBudget::$deadline; RequestBudget::$deadline=microtime(true)+$seconds; $done=0;
-        try { while($done<$steps&&microtime(true)<RequestBudget::$deadline-.1) { $row=$db->query("SELECT * FROM bot_queue WHERE next_run<=UNIX_TIMESTAMP() AND status NOT IN ('completed','failed','cancelled') ORDER BY created_at LIMIT 1")->fetch(); if(!$row)break; $job=self::decode($row); try{self::step($job);unset($job['params']['read_failures']);}catch(Throwable $e){$job['error']=$e->getMessage();if($e instanceof InvalidArgumentException){$job['status']='failed';}else{$job['next_run']=time()+30;$job['params']['read_failures']=(int)($job['params']['read_failures']??0)+1;if($job['params']['read_failures']>=3)$job['status']='failed';}} self::save($job);$done++;} }
+        try { while($done<$steps&&microtime(true)<RequestBudget::$deadline-.1) {
+            $row=$db->query("SELECT * FROM bot_queue WHERE next_run<=UNIX_TIMESTAMP() AND status NOT IN ('completed','failed','cancelled') AND (status NOT IN ('inline','inline_running') OR lease_until<=UNIX_TIMESTAMP()) ORDER BY created_at LIMIT 1")->fetch();
+            if(!$row)break;
+            $job=self::decode($row);
+            if (!self::acquireJobLock((string)$job['id'])) { $done++; continue; }
+            try {
+                $staleInline = in_array($job['status'], ['inline', 'inline_running'], true);
+                if ($staleInline) {
+                    $job['status'] = 'running';
+                    $job['lease_until'] = 0;
+                    $job['active'] = 'fallback';
+                    self::save($job);
+                    self::notifyFallback($job);
+                }
+                try{self::step($job);unset($job['params']['read_failures']);}
+                catch(Throwable $e){$job['error']=$e->getMessage();if($e instanceof InvalidArgumentException){$job['status']='failed';}else{$job['next_run']=time()+30;$job['params']['read_failures']=(int)($job['params']['read_failures']??0)+1;if($job['params']['read_failures']>=3)$job['status']='failed';}}
+                self::save($job);
+            } finally { self::releaseJobLock((string)$job['id']); }
+            $done++;
+        } }
         finally { $db->query("SELECT RELEASE_LOCK('holderbot-queue-worker')"); RequestBudget::$deadline=$old; }
         return $done;
     }

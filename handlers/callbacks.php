@@ -300,9 +300,24 @@ class CallbackHandlers {
                 $dataLimit = (float)($state['data']['data_limit'] ?? 0);
                 $dateLimit = (int)($state['data']['date_limit'] ?? 0);
                 $dateType = $state['data']['date_type'] ?? 'fixed';
+                $job = BatchQueue::enqueueInline('recharge', $server, [
+                    'username' => $username, 'data_limit' => $dataLimit, 'date_limit' => $dateLimit,
+                    'reset' => $resetUsage, 'additive' => $additive, 'date_type' => $dateType,
+                    'message_id' => $messageId,
+                ], $chatId, $userId, 'callback:' . $id);
                 Storage::clearState($userId);
                 tg_answer_callback($id, 'Updating user...');
-                $updated = PanelManager::chargeUser($server, $username, $dataLimit, $dateLimit, $resetUsage, $additive, $dateType);
+                tg_edit_message($chatId, $messageId, 'Loading...');
+                $attempt = BatchQueue::executeInline($job, fn() => PanelManager::chargeUser($server, $username, $dataLimit, $dateLimit, $resetUsage, $additive, $dateType));
+                if ($attempt['state'] === 'queued') {
+                    tg_edit_message($chatId, $messageId, BatchQueue::fallbackMessage($attempt['job']), BatchQueue::keyboard($attempt['job']));
+                    return;
+                }
+                if ($attempt['state'] !== 'completed') {
+                    tg_edit_message($chatId, $messageId, 'This request is already being processed.', BatchQueue::keyboard($attempt['job']));
+                    return;
+                }
+                $updated = $attempt['result'];
                 tg_edit_message($chatId, $messageId, $updated ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
             } else {
                 tg_answer_callback($id, "❌ Not Found.", true);
@@ -336,12 +351,26 @@ class CallbackHandlers {
                 $ok = $user && PanelManager::setStatus($server, $username, !$user['is_active']);
             } elseif ($action === 'rst') $ok = PanelManager::resetUsage($server, $username);
             elseif ($action === 'rvk') {
-                $updated = PanelManager::revokeSub($server, $username);
-                $ok = $updated !== null;
-                if ($updated && !empty($updated['subscription_url'])) {
-                    tg_answer_callback($id, 'Generating QR code...');
-                    QrGenerator::sendQrPhoto($chatId, $updated['subscription_url'], Formatter::userInfo($server, $updated));
-                } else tg_answer_callback($id);
+                $job = BatchQueue::enqueueInline('revoke_qr', $server, [
+                    'username' => $username, 'message_id' => $messageId,
+                ], $chatId, $userId, 'callback:' . $id);
+                tg_answer_callback($id, 'Updating subscription...');
+                tg_edit_message($chatId, $messageId, 'Loading...');
+                $attempt = BatchQueue::executeInline($job, function () use ($server, $username, $chatId) {
+                    $updated = PanelManager::revokeSub($server, $username);
+                    if (!$updated) throw new RuntimeException('Subscription revoke failed');
+                    if (!empty($updated['subscription_url'])) QrGenerator::sendQrPhoto($chatId, $updated['subscription_url'], Formatter::userInfo($server, $updated));
+                    return $updated;
+                });
+                if ($attempt['state'] === 'queued') {
+                    tg_edit_message($chatId, $messageId, BatchQueue::fallbackMessage($attempt['job']), BatchQueue::keyboard($attempt['job']));
+                    return;
+                }
+                if ($attempt['state'] !== 'completed') {
+                    tg_edit_message($chatId, $messageId, 'This request is already being processed.', BatchQueue::keyboard($attempt['job']));
+                    return;
+                }
+                $ok = $attempt['result'] !== null;
             }
             if ($action !== 'rvk') tg_answer_callback($id);
             tg_edit_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
@@ -1399,12 +1428,26 @@ class CallbackHandlers {
                 // refresh and user retrieval can each require a network call;
                 // Telegram should stop showing the button spinner immediately.
                 tg_answer_callback($callbackId, "Generating QR code...");
-                $user = PanelManager::getUser($server, $username);
-                if (!$user || empty($user['subscription_url'])) {
-                    tg_edit_message($chatId, $messageId, "No subscription link available for QR.", Keyboards::userActions($serverId, $username, !empty($user['is_active']), $user['status'] ?? ''));
+                $job = BatchQueue::enqueueInline('qr', $server, [
+                    'username' => $username, 'message_id' => $messageId,
+                ], $chatId, $userId, 'callback:' . $callbackId);
+                tg_edit_message($chatId, $messageId, 'Loading...');
+                $attempt = BatchQueue::executeInline($job, function () use ($server, $username, $chatId) {
+                    $user = PanelManager::getUser($server, $username);
+                    if (!$user || empty($user['subscription_url'])) throw new InvalidArgumentException('No subscription link available for QR');
+                    return QrGenerator::sendQrPhoto($chatId, $user['subscription_url'], Formatter::userInfo($server, $user));
+                });
+                if ($attempt['state'] === 'queued') {
+                    tg_edit_message($chatId, $messageId, BatchQueue::fallbackMessage($attempt['job']), BatchQueue::keyboard($attempt['job']));
+                } elseif ($attempt['state'] === 'failed') {
+                    tg_edit_message($chatId, $messageId, "No subscription link available for QR.", Keyboards::userActions($serverId, $username, false, ''));
+                } elseif ($attempt['state'] !== 'completed') {
+                    tg_edit_message($chatId, $messageId, 'This request is already being processed.', BatchQueue::keyboard($attempt['job']));
+                }
+                /* The QR is delivered by the inline operation or its queue fallback. */
+                if ($attempt['state'] !== 'completed') {
                     return;
                 }
-                QrGenerator::sendQrPhoto($chatId, $user['subscription_url'], Formatter::userInfo($server, $user));
                 break;
 
             case 'del':
@@ -1512,23 +1555,41 @@ class CallbackHandlers {
             return;
         }
 
+        $username = (string)($stateData['username'] ?? 'user');
+        $dataLimit = (float)($stateData['data_limit'] ?? 0);
+        $dateLimit = (int)($stateData['date_limit'] ?? 0);
+        $dateType = (string)($stateData['date_type'] ?? 'fixed');
+        $job = BatchQueue::enqueueInline('create', $server, [
+            'username' => $username, 'data_limit' => $dataLimit, 'date_limit' => $dateLimit,
+            'date_type' => $dateType, 'selected_configs' => $stateData['selected_configs'] ?? [],
+            'admin' => $stateData['admin'] ?? null, 'message_id' => $messageId, 'send_qr' => true,
+        ], $chatId, $userId, 'callback:' . $callbackId);
         Storage::clearState($userId);
         tg_answer_callback($callbackId, 'Creating user...');
-        tg_edit_message($chatId, $messageId, '⏳');
-        $created = PanelManager::createUser(
-            $server,
-            (string)($stateData['username'] ?? 'user'),
-            (float)($stateData['data_limit'] ?? 0),
-            (int)($stateData['date_limit'] ?? 0),
-            null,
-            $stateData['selected_configs'] ?? [],
-            (string)($stateData['date_type'] ?? 'fixed'),
-            $stateData['admin'] ?? null
-        );
-        if ($created && !empty($created['subscription_url'])) {
-            QrGenerator::sendQrPhoto($chatId, $created['subscription_url'], Formatter::userInfo($server, $created));
-        } elseif (!$created) {
-            tg_send_message($chatId, '❌ Failed to create ' . Formatter::escape((string)($stateData['username'] ?? 'user')) . '.');
+        tg_edit_message($chatId, $messageId, 'Loading...');
+        $attempt = BatchQueue::executeInline($job, function () use ($server, $username, $dataLimit, $dateLimit, $stateData, $dateType, $chatId) {
+            $created = PanelManager::createUser(
+                $server, $username, $dataLimit, $dateLimit, null, $stateData['selected_configs'] ?? [], $dateType, $stateData['admin'] ?? null
+            );
+            if ($created && !empty($created['subscription_url'])) {
+                $response = QrGenerator::sendQrPhoto($chatId, $created['subscription_url'], Formatter::userInfo($server, $created));
+                if (is_array($response) && array_key_exists('ok', $response) && !$response['ok']) throw new RuntimeException('QR delivery failed');
+            }
+            return $created;
+        });
+        if ($attempt['state'] === 'queued') {
+            tg_edit_message($chatId, $messageId, BatchQueue::fallbackMessage($attempt['job']), BatchQueue::keyboard($attempt['job']));
+            return;
+        }
+        if ($attempt['state'] !== 'completed') {
+            tg_edit_message($chatId, $messageId, 'This request is already being processed.', BatchQueue::keyboard($attempt['job']));
+            return;
+        }
+        $created = $attempt['result'];
+        if (!$created) {
+            tg_send_message($chatId, '❌ Failed to create ' . Formatter::escape($username) . '.');
+        } else {
+            tg_edit_message($chatId, $messageId, '✅ User created.', Keyboards::cancel("srv:{$serverId}"));
         }
         tg_send_message($chatId, "Let's back...", Keyboards::cancel("srv:{$serverId}"));
     }

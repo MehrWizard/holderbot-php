@@ -119,6 +119,7 @@ class Storage {
                         next_run INT NOT NULL DEFAULT 0,
                         active_phase VARCHAR(32) NULL,
                         notification_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                        lease_until INT NOT NULL DEFAULT 0,
                         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                         UNIQUE KEY queue_submission (submission_key),
@@ -150,6 +151,7 @@ class Storage {
                 try { self::$pdo->exec("ALTER TABLE servers ADD COLUMN expired_stats TINYINT(1) DEFAULT 0"); } catch (Throwable) {}
                 try { self::$pdo->exec("ALTER TABLE templates ADD COLUMN is_active TINYINT(1) DEFAULT 1"); } catch (Throwable) {}
                 try { self::$pdo->exec("ALTER TABLE templates ADD COLUMN date_type VARCHAR(16) NOT NULL DEFAULT 'fixed'"); } catch (Throwable) {}
+                try { self::$pdo->exec("ALTER TABLE bot_queue ADD COLUMN lease_until INT NOT NULL DEFAULT 0 AFTER notification_status"); } catch (Throwable) {}
 
                 // Seed optional servers from config.php once. Credentials remain
                 // under operator control and are persisted in MySQL for runtime use.

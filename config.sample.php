@@ -59,6 +59,7 @@ return [
     'queue_budget_seconds' => 15,
     'queue_steps' => 10,
     'queue_retention_days' => 7,
+    'inline_lease_seconds' => 120,
 
     // -------------------------------------------------------------------------
     // Pre-configured Servers (Optional)
