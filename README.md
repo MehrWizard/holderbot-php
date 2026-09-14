@@ -52,7 +52,7 @@ Optional queue settings in `config.php`:
 
 ## Queue operations
 
-The queue handles creation, imports, recharge, deletion, transfers, config changes, admin-wide status changes, QR delivery, access refresh, monitoring, and scheduled reports. Credentials are loaded from MySQL when a job runs and are not copied into queue payloads.
+The queue is reserved for work that can exceed webhook or shared-host limits: multi-user creation and imports, bulk deletion, transfers, configuration and admin-wide status changes, full statistics scans, monitoring, access refresh, expiry reports, and other scheduled work. Single-user edits, recharge, creation, and QR delivery run immediately. Credentials are loaded from MySQL when a job runs and are not copied into queue payloads.
 
 ```bash
 php queue.php health

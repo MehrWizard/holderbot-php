@@ -105,15 +105,14 @@ if (!in_array($userId, $adminIds, true)) {
 
     foreach ($adminIds as $adminId) {
         $usernameDisplay = !empty($fromUser['username']) ? $fromUser['username'] : '➖';
-        try { BatchQueue::message(
-            $adminId, 0,
+        try { tg_send_message(
+            $adminId,
             "<b>Oops, we have a spy!</b>\n" .
             "🥷🏻 <b>Full Name:</b> <code>" . htmlspecialchars($firstName) . "</code>\n" .
             "📌 <b>Username:</b> <code>{$usernameDisplay}</code>\n" .
             "🆔 <b>User ID:</b> <code>{$userId}</code>\n" .
             "🔗 <b>Private Chat Link:</b> <a href='tg://openmessage?user_id={$userId}'>Click here to open chat</a>",
-            'unauthorized:' . ($update['update_id'] ?? hash('sha256', $rawInput)) . ':' . $adminId
-        ); } catch (Throwable $e) { error_log('Cannot queue access alert: '.$e->getMessage()); }
+        ); } catch (Throwable $e) { error_log('Cannot send access alert: '.$e->getMessage()); }
     }
     exit;
 }

@@ -297,7 +297,10 @@ class CallbackHandlers {
                 $dataLimit = (float)($state['data']['data_limit'] ?? 0);
                 $dateLimit = (int)($state['data']['date_limit'] ?? 0);
                 $dateType = $state['data']['date_type'] ?? 'fixed';
-                self::queueBatch('recharge', $server, ['username'=>$username, 'data_limit'=>$dataLimit, 'date_limit'=>$dateLimit, 'reset'=>$resetUsage, 'additive'=>$additive, 'date_type'=>$dateType], $chatId, $messageId, $userId, $id);
+                Storage::clearState($userId);
+                tg_answer_callback($id, 'Updating user...');
+                $updated = PanelManager::chargeUser($server, $username, $dataLimit, $dateLimit, $resetUsage, $additive, $dateType);
+                tg_edit_message($chatId, $messageId, $updated ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
             } else {
                 tg_answer_callback($id, "❌ Not Found.", true);
             }
@@ -332,9 +335,12 @@ class CallbackHandlers {
             elseif ($action === 'rvk') {
                 $updated = PanelManager::revokeSub($server, $username);
                 $ok = $updated !== null;
-                if ($updated) BatchQueue::photo($chatId, $userId, $updated['subscription_url'], Formatter::userInfo($server, $updated), 'revoke-qr:'.$id);
+                if ($updated && !empty($updated['subscription_url'])) {
+                    tg_answer_callback($id, 'Generating QR code...');
+                    QrGenerator::sendQrPhoto($chatId, $updated['subscription_url'], Formatter::userInfo($server, $updated));
+                } else tg_answer_callback($id);
             }
-            tg_answer_callback($id);
+            if ($action !== 'rvk') tg_answer_callback($id);
             tg_edit_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
             return;
         }
@@ -1395,7 +1401,7 @@ class CallbackHandlers {
                     tg_edit_message($chatId, $messageId, "No subscription link available for QR.", Keyboards::userActions($serverId, $username, !empty($user['is_active']), $user['status'] ?? ''));
                     return;
                 }
-                BatchQueue::photo($chatId, $userId, $user['subscription_url'], Formatter::userInfo($server, $user), 'qr:'.$callbackId);
+                QrGenerator::sendQrPhoto($chatId, $user['subscription_url'], Formatter::userInfo($server, $user));
                 break;
 
             case 'del':
@@ -1498,7 +1504,30 @@ class CallbackHandlers {
             self::queueBatch('import', $server, $stateData, $chatId, $messageId, $userId, $callbackId);
             return;
         }
-        self::queueBatch('create', $server, $stateData, $chatId, $messageId, $userId, $callbackId);
+        if (!empty($stateData['uploaded_json']) || (int)($stateData['count'] ?? 1) > 1) {
+            self::queueBatch('create', $server, $stateData, $chatId, $messageId, $userId, $callbackId);
+            return;
+        }
+
+        Storage::clearState($userId);
+        tg_answer_callback($callbackId, 'Creating user...');
+        tg_edit_message($chatId, $messageId, '⏳');
+        $created = PanelManager::createUser(
+            $server,
+            (string)($stateData['username'] ?? 'user'),
+            (float)($stateData['data_limit'] ?? 0),
+            (int)($stateData['date_limit'] ?? 0),
+            null,
+            $stateData['selected_configs'] ?? [],
+            (string)($stateData['date_type'] ?? 'fixed'),
+            $stateData['admin'] ?? null
+        );
+        if ($created && !empty($created['subscription_url'])) {
+            QrGenerator::sendQrPhoto($chatId, $created['subscription_url'], Formatter::userInfo($server, $created));
+        } elseif (!$created) {
+            tg_send_message($chatId, '❌ Failed to create ' . Formatter::escape((string)($stateData['username'] ?? 'user')) . '.');
+        }
+        tg_send_message($chatId, "Let's back...", Keyboards::cancel("srv:{$serverId}"));
     }
 
     private static function executeUserDelete(
