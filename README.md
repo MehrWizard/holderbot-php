@@ -51,7 +51,7 @@ Optional queue settings in `config.php`:
 'inline_lease_seconds' => 120,
 ```
 
-Full-panel scans and bulk discovery request up to 1,000 users per page by default. The worker has no fixed step cap: with the default 55-second budget, it starts another step only while at least 30 seconds remain. Increase `queue_budget_seconds` only if your cron host permits longer executions; overlapping cron runs are skipped by the database lock.
+Full-panel scans and bulk discovery request up to 1,000 users per page by default and adapt when a panel returns fewer. The worker has no fixed step cap: with the default 55-second budget, it starts another step only while at least 30 seconds remain. Increase `queue_budget_seconds` only if your cron host permits longer executions; overlapping cron runs are skipped by the database lock.
 
 ## Queue operations
 

@@ -11,7 +11,9 @@ class BackgroundTasks {
         $total = (int)($state['total'] ?? 0);
         $names = [];
         $matched = (int)($state['matched'] ?? count($names));
-        $users = PanelManager::getUsers($server, $page, PanelManager::pageSize($server), null, null, null, true);
+        $pageSize = (int)($state['page_size'] ?? PanelManager::pageSize($server));
+        $users = PanelManager::getUsers($server, $page, $pageSize, null, null, null, true);
+        if ($page === 1 && $users && count($users) < $pageSize) $pageSize = count($users);
         $total += count($users);
         foreach ($users as $user) {
             if ($server['type'] === 'marzneshin' && ($user['raw']['expire_strategy'] ?? '') !== 'fixed_date') continue;
@@ -21,7 +23,7 @@ class BackgroundTasks {
                 $names[] = (string)$user['username'];
             }
         }
-        return ['page' => $page + 1, 'total' => $total, 'names' => $names, 'matched' => $matched, 'done' => count($users) < PanelManager::pageSize($server), 'now' => $now];
+        return ['page' => $page + 1, 'page_size' => $pageSize, 'total' => $total, 'names' => $names, 'matched' => $matched, 'done' => !$users, 'now' => $now];
     }
 
     /** Schedule only; all panel and Telegram calls run in bounded queue steps. */

@@ -720,12 +720,19 @@ final class BatchQueue
             if (!is_array($stats)) {
                 $stats = $params['stats'] ?? PanelManager::statsForUsers($server, [], time());
                 $page = max(1, (int)($params['page'] ?? 1));
-                $users = PanelManager::getUsers($server, $page, PanelManager::pageSize($server), null, null, null, true);
+                $pageSize = (int)($params['page_size'] ?? PanelManager::pageSize($server));
+                if ($page === 1) $params['page_size'] = $pageSize;
+                $users = PanelManager::getUsers($server, $page, $pageSize, null, null, null, true);
                 $part = PanelManager::statsForUsers($server, $users, (int)($params['now'] ?? time()), PanelManager::getBotUsername());
                 self::storeReportPage($job['id'], $page, $part['today_expired']);
                 $part['today_expired'] = [];
                 foreach ($part as $key => $value) $stats[$key] = is_array($value) ? array_merge($stats[$key] ?? [], $value) : (int)($stats[$key] ?? 0) + (int)$value;
-                if (count($users) >= PanelManager::pageSize($server)) {
+                $more = (bool)$users;
+                if ($page === 1 && $users && count($users) < $pageSize) {
+                    $params['page_size'] = count($users);
+                    $more = (bool)PanelManager::getUsers($server, 2, count($users), null, null, null, true);
+                }
+                if ($more) {
                     $params['stats'] = $stats;
                     $params['page'] = $page + 1;
                     $params['now'] = (int)($params['now'] ?? time());
@@ -763,17 +770,19 @@ final class BatchQueue
         }
         if ($job['status'] === 'discovering') {
             $job['active'] = 'discovering';
-            $pageSize = PanelManager::pageSize($server);
+            $pageSize = (int)($params['page_size'] ?? PanelManager::pageSize($server));
+            if ((int)($params['page'] ?? 1) === 1) $params['page_size'] = $pageSize;
             $users = PanelManager::getUsers($server,(int)($params['page']??1),$pageSize,null,$params['status']??null,$params['admin']??null,true);
             $insert = self::db()->prepare('INSERT IGNORE INTO bot_queue_items (job_id,position,username) VALUES (?,?,?)');
             $offset = ((int)($params['page'] ?? 1) - 1) * $pageSize;
             foreach ($users as $i => $user) $insert->execute([$job['id'], $offset + $i, $user['username']]);
             $params['page'] = (int)($params['page'] ?? 1) + 1;
+            if ($users && (int)$params['page'] === 2 && count($users) < $pageSize) $params['page_size'] = count($users);
             $job['params'] = $params;
             $count = self::db()->prepare('SELECT COUNT(*) FROM bot_queue_items WHERE job_id=?');
             $count->execute([$job['id']]);
             $job['total'] = (int)$count->fetchColumn();
-            if (count($users) < $pageSize) $job['status'] = 'running';
+            if (!$users) $job['status'] = 'running';
             return;
         }
         if (isset($params['delivery'])) {

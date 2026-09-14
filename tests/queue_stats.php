@@ -7,13 +7,15 @@ Storage::init();
 class PanelManager {
     public static array $pages=[];
     public static int $size=1;
+    public static ?int $cap=null;
     public static bool $fail=false;
     public static function pageSize(...$args): int { return 2; }
     public static function getBotUsername(): string { return 'test'; }
     public static function getUsers($server,$page,...$args): array {
         self::$pages[]=$page;
         if (self::$fail) { self::$fail=false; throw new RuntimeException('Simulated read timeout'); }
-        return array_fill(0,max(0,min(2,self::$size-($page-1)*2)),['username'=>'test']);
+        $pageSize=min((int)($args[0] ?? 2),self::$cap ?? 2);
+        return array_fill(0,max(0,min($pageSize,self::$size-($page-1)*$pageSize)),['username'=>'test']);
     }
     public static function statsForUsers($server,$users,...$args): array { return ['total'=>count($users),'today_expired'=>[]]; }
 }
@@ -42,7 +44,7 @@ $other->query("SELECT GET_LOCK('holderbot-queue-worker',0)");
 Storage::cacheSet('queue_heartbeat',time()-600,3600);
 $small=BatchQueue::enqueueInline('stats',$server,['message_id'=>123],99,42,'small_stats');
 BatchQueue::run(2,10,$small['id']);
-if (BatchQueue::get($small['id'])['status']!=='completed' || PanelManager::$pages!==[1]) throw new RuntimeException('Small stats did not finish immediately beside cron lock');
+if (BatchQueue::get($small['id'])['status']!=='completed' || PanelManager::$pages!==[1,2]) throw new RuntimeException('Small stats did not finish immediately beside cron lock');
 if((BatchQueue::cachedStats($serverId)['text'] ?? '')==='') throw new RuntimeException('Completed statistics were not cached');
 if (!BatchQueue::health()['stale']) throw new RuntimeException('Inline scan concealed stopped cron');
 if (Formatter::$cards[0]['today_expired']!==[]) throw new RuntimeException('Empty report promised follow-up messages');
@@ -57,7 +59,7 @@ $other->query('SELECT RELEASE_ALL_LOCKS()');
 BatchQueue::run(2,1,$large['id']);
 if ((BatchQueue::get($large['id'])['params']['page'] ?? 0)!==2) throw new RuntimeException('Missing inline page checkpoint');
 BatchQueue::run(2,10);
-if (BatchQueue::get($large['id'])['status']!=='completed' || PanelManager::$pages!==[1,2,3] || end(Formatter::$cards)['total']!==5) throw new RuntimeException('Cron repeated or lost inline scan pages');
+if (BatchQueue::get($large['id'])['status']!=='completed' || PanelManager::$pages!==[1,2,3,4] || end(Formatter::$cards)['total']!==5) throw new RuntimeException('Cron repeated or lost inline scan pages');
 PanelManager::$fail=true; PanelManager::$size=1;
 $retry=BatchQueue::enqueueInline('stats',$server,['message_id'=>125],99,42,'retry_stats');
 BatchQueue::run(2,1,$retry['id']);
@@ -94,4 +96,9 @@ foreach($parts as $part) if(str_contains(json_decode($part,true)['text'],"\n")) 
 $cache=new ReflectionMethod(BatchQueue::class,'cacheStatsResult'); $cache->invoke(null,$long,$longText);
 $cached=BatchQueue::cachedStats($serverId);
 if($cached['text']!==$longText || count($cached['chunks'])!==count($parts)) throw new RuntimeException('Latest complete statistics cache lost its chunks');
+PanelManager::$pages=[]; PanelManager::$size=5; PanelManager::$cap=1;
+$capped=BatchQueue::enqueueInline('stats',$server,['message_id'=>128],99,42,'capped_stats');
+BatchQueue::run(2,10,$capped['id']);
+BatchQueue::run(2,10,$capped['id']);
+if (BatchQueue::get($capped['id'])['status']!=='completed' || end(Formatter::$cards)['total']!==5) throw new RuntimeException('Panel page cap silently truncated statistics');
 echo "PASS: immediate statistics, cron continuation, read timeout recovery, heartbeat isolation; Telegram stubbed\n";
