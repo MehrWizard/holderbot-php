@@ -14,6 +14,7 @@ Reference: local Python v0.6.0. Python database migration is out of scope. Core 
 - [X] Deliver reports one recipient per step and terminate failed notification attempts without replaying panel mutations.
 - [X] Preserve the expiry scan time, report real worker heartbeat age, and clean expired data in bounded passes while retaining uncertain-operation evidence.
 - [X] Require matching template date wizard state, reject invalid date types, and preserve creation state after a database-save failure.
+- [X] Bind configuration and ownership callbacks to their target username so an older editor cannot alter another user on the same server. Old selector buttons must be reopened.
 - [X] Restore fresh Home menus and reject malformed command server IDs before panel lookup.
 - [X] Provide paginated CLI inspection of uncertain users and persisted mutation intent.
 
@@ -21,7 +22,7 @@ Reference: local Python v0.6.0. Python database migration is out of scope. Core 
 
 ## Remaining work and limits
 
-- [ ] Complete command, keyboard, wizard, and panel-workflow regression coverage against Python. Initial handler tests cover entry commands, deep links, Home, search, filtered pagination, stale owner callbacks, creation-wizard validation, template date workflows, failed quota edits, and Unicode note limits; remaining workflows still need coverage.
+- [ ] Complete command, keyboard, wizard, and panel-workflow regression coverage against Python. Initial handler tests cover entry commands, deep links, Home, search, filtered pagination, stale owner callbacks, creation-wizard validation, template date workflows, failed quota edits, Unicode note limits, configuration selection and ownership failures; remaining workflows still need coverage.
 - [ ] Exercise both panel types with isolated users, supported panel versions, and 16,000-user mutation workloads. Large import ingestion has been tested; remote mutation throughput has not.
 - [ ] Validate live Telegram navigation, rendering, QR delivery, and final results.
 - [ ] Test backup restoration and external stopped-cron monitoring.

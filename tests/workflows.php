@@ -25,6 +25,9 @@ class PanelManager {
     public static array $users=[];
     public static function modifyUserDataLimit($server,$username,$value): bool { self::$calls[]=['data',$username,$value]; return false; }
     public static function modifyUserNote($server,$username,$value): bool { self::$calls[]=['note',$username,$value]; return true; }
+    public static function getServices($server): array { return [['id'=>'one:tcp','name'=>'One'],['id'=>'two','name'=>'Two']]; }
+    public static function updateUserConfigs($server,$username,$ids): bool { self::$calls[]=['configs',$username,$ids]; return false; }
+    public static function setOwner($server,$username,$admin): bool { self::$calls[]=['owner',$username,$admin]; return false; }
     public static function getUsers($server,$page,$size,$search=null,$status=null): array { self::$calls[]=['list',$page,$size,$search,$status]; return self::$users; }
     public static function getUser($server,$username): array { self::$calls[]=['exact',$username]; return ['username'=>$username,'is_active'=>true,'status'=>'active']; }
 }
@@ -119,4 +122,23 @@ StateHandlers::handle($input+['text'=>str_repeat('ی',501)],Storage::getState(42
 check(count(PanelManager::$calls)===$count,'Oversized Unicode note reached panel');
 StateHandlers::handle($input+['text'=>str_repeat('ی',500)],Storage::getState(42));
 check(end(PanelManager::$calls)===['note','test_user',str_repeat('ی',500)],'Valid Unicode note rejected');
+callback('act:1:first_user:cfg');
+$oldKeys=buttons(end($events)[1][3]);
+$oldToggle=array_values(array_filter($oldKeys,fn($key)=>str_starts_with($key,'cfg_pick:')))[0];
+callback('act:1:second_user:cfg');
+$before=Storage::getState(42);
+callback($oldToggle);
+check(Storage::getState(42)===$before && end($events)[0]==='alert','Old config button changed another user selection');
+callback('cfg_pick:second_user:tgl:1:one%3Atcp');
+check(Storage::getState(42)['data']['current_services']===['two'],'Encoded config ID did not toggle correctly');
+callback('cfg_pick:second_user:none:1');
+$count=count(PanelManager::$calls); callback('cfg_save:1:second_user');
+check(count(PanelManager::$calls)===$count && end($events)[0]==='alert','Empty configs reached panel');
+callback('cfg_pick:second_user:all:1'); callback('cfg_save:1:second_user');
+check(end(PanelManager::$calls)===['configs','second_user',['one:tcp','two']] && end($events)[1][2]==='❌ Failed','Config failure reported success or wrong target');
+Storage::setState(42,'user_mod_owner',['server_id'=>1,'username'=>'second_user']);
+$count=count(PanelManager::$calls); callback('set_own:first_user:1:new_admin');
+check(count(PanelManager::$calls)===$count && end($events)[0]==='alert','Old owner button mutated another user');
+callback('set_own:second_user:1:new_admin');
+check(end(PanelManager::$calls)===['owner','second_user','new_admin'] && end($events)[1][2]==='❌ Failed','Ownership failure reported success');
 echo "PASS: command, deep-link, Home, search, pagination and stale wizard workflows; external boundaries stubbed\n";

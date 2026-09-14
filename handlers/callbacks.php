@@ -243,11 +243,12 @@ class CallbackHandlers {
             return;
         }
 
-        // Set owner admin: set_own:<id>:<admin>
+        // Set owner admin: set_own:<encoded username>:<id>:<admin>
         if (str_starts_with($data, 'set_own:')) {
-            $parts = explode(':', $data, 3);
-            $serverId = (int)($parts[1] ?? 0);
-            $admin = $parts[2] ?? '';
+            $parts = explode(':', $data, 4);
+            $target = rawurldecode($parts[1] ?? '');
+            $serverId = (int)($parts[2] ?? 0);
+            $admin = $parts[3] ?? '';
             $state = Storage::getState($userId);
             $username = $state['data']['username'] ?? '';
             $server = Storage::getServer($serverId);
@@ -256,6 +257,7 @@ class CallbackHandlers {
                 || ($state['step'] ?? '') !== 'user_mod_owner'
                 || (int)($state['data']['server_id'] ?? 0) !== $serverId
                 || $username === ''
+                || $username !== $target || $admin === ''
             ) {
                 tg_answer_callback($id, "❌ Not Found.", true);
                 return;
@@ -437,11 +439,12 @@ class CallbackHandlers {
         }
 
         if (str_starts_with($data, 'cfg_pick:')) {
-            $parts = explode(':', $data, 4);
-            $operation = $parts[1] ?? '';
-            $serverId = (int)($parts[2] ?? 0);
+            $parts = explode(':', $data, 5);
+            $username = rawurldecode($parts[1] ?? '');
+            $operation = $parts[2] ?? '';
+            $serverId = (int)($parts[3] ?? 0);
             $state = Storage::getState($userId);
-            if (($state['step'] ?? '') !== 'user_mod_configs' || (int)($state['data']['server_id'] ?? 0) !== $serverId) {
+            if (($state['step'] ?? '') !== 'user_mod_configs' || (int)($state['data']['server_id'] ?? 0) !== $serverId || ($state['data']['username'] ?? '') !== $username || !in_array($operation, ['all','none','tgl'], true)) {
                 tg_answer_callback($id, "❌ Not Found.", true);
                 return;
             }
@@ -450,7 +453,11 @@ class CallbackHandlers {
             $services = PanelManager::getServices($server);
             $currentIds = $state['data']['current_services'];
             $valid = array_map('strval', array_column($services, 'id'));
-            $selected = rawurldecode($parts[3] ?? '');
+            $selected = rawurldecode($parts[4] ?? '');
+            if ($operation === 'tgl' && !in_array($selected, $valid, true)) {
+                tg_answer_callback($id, 'Config no longer available. Reopen the editor.', true);
+                return;
+            }
             if ($operation === 'all') $currentIds = array_column($services, 'id');
             elseif ($operation === 'none') $currentIds = [];
             elseif ($operation === 'tgl' && in_array($selected, $valid, true)) {
@@ -463,7 +470,7 @@ class CallbackHandlers {
             $username = $state['data']['username'];
             tg_answer_callback($id);
             tg_edit_message($chatId, $messageId, "Select Configs:", Keyboards::configSelector(
-                $serverId, $services, $currentIds, 'cfg_pick', "cfg_save:{$serverId}:{$username}", "usr:{$serverId}:{$username}"
+                $serverId, $services, $currentIds, 'cfg_pick:' . rawurlencode($username), "cfg_save:{$serverId}:{$username}", "usr:{$serverId}:{$username}"
             ));
             return;
         }
@@ -1426,7 +1433,7 @@ class CallbackHandlers {
                     $serverId,
                     $services,
                     $currentServices,
-                    'cfg_pick',
+                    'cfg_pick:' . rawurlencode($username),
                     "cfg_save:{$serverId}:{$username}",
                     "usr:{$serverId}:{$username}"
                 );
@@ -1448,7 +1455,7 @@ class CallbackHandlers {
                 $admins = PanelManager::getAdmins($server);
                 Storage::setState($userId, 'user_mod_owner', ['server_id' => $serverId, 'username' => $username]);
                 tg_answer_callback($callbackId);
-                $kb = Keyboards::adminsSelector($serverId, $admins, 'set_own', false, "usr:{$serverId}:{$username}");
+                $kb = Keyboards::adminsSelector($serverId, $admins, 'set_own:' . rawurlencode($username), false, "usr:{$serverId}:{$username}");
                 tg_edit_message(
                     $chatId,
                     $messageId,
