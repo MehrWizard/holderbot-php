@@ -12,6 +12,8 @@ Verification now includes the repaired HTTP harness (36 local requests across bo
 
 Scheduling now rotates eligible jobs by last service time, so a locked or long-running job does not monopolize worker attempts. Cancellation is checked before the next step and preserves uncertain-mutation evidence after a crash. Retention removes child records in batches of at most 1,000 per table per maintenance pass before compacting parent payloads. Isolated MySQL tests cover these cases.
 
+Confirmed inline creation/revocation results are now saved before QR delivery; worker results are saved before final notifications. Report delivery checkpoints one recipient per step, and failed outbox sends terminate without replay. Unconfirmed jobs are excluded from automatic retention cleanup. Queue Home sends a fresh menu, status alerts preserve Unicode, and empty statistics reports no longer promise nonexistent follow-up messages. Isolated delivery tests inject QR and message failures without contacting Telegram.
+
 ## Baseline blocking findings
 
 - **Uncertain mutations can replay.** `helpers/queue.php` marks an interrupted inline request runnable and later invokes recharge/revoke again. The intended absolute recharge result and revoke baseline are not persisted. Worker mutation phase is not saved before the remote call, so process death can repeat a mutation despite the exception handler. Reconcile persisted intent before retrying, or retain an explicit uncertain item requiring review.

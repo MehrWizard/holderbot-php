@@ -238,7 +238,16 @@ final class BatchQueue
         $rows = [[['text'=>'Refresh status','callback_data'=>'job:'.$job['id']]]];
         if (!in_array($job['status'],['completed','failed','cancelled'],true)) $rows[]=[['text'=>'Cancel remaining work','callback_data'=>'job_cancel:'.$job['id']]];
         if ((int)$job['server_id']>0) $rows[]=[['text'=>'Back','callback_data'=>'queue_back:'.$job['server_id']]];
+        $rows[]=[['text'=>'Home','callback_data'=>'queue_home']];
         return ['inline_keyboard'=>$rows];
+    }
+
+    public static function alertText(array $job): string
+    {
+        $text = html_entity_decode(strip_tags(self::describe($job)), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        preg_match('/\A.{0,187}/us', $text, $match);
+        $prefix = $match[0] ?? '';
+        return $prefix === $text ? $text : $prefix . '...';
     }
 
     public static function label(string $kind): string
@@ -286,7 +295,7 @@ final class BatchQueue
         $label = self::label((string)$job['kind']);
         if (!empty($job['cancel_requested']) && !in_array($job['status'], ['completed','failed','cancelled'], true)) return 'Cancellation requested. The current step may finish; remaining work will stop.';
         $status = (string)($job['status'] ?? 'running');
-        if (!empty($job['params']['report_ready']) && $status !== 'completed') return 'Delivering report messages.';
+        if (!empty($job['params']['report_ready']) && !in_array($status, ['completed','failed','cancelled'], true)) return 'Delivering report messages.';
         if ($status === 'completed') {
             if ($job['kind'] === 'stats') return '📊 Server statistics updated.';
             $text = '✅ ' . ucfirst($label) . " completed.\nProcessed: " . (int)$job['cursor'] . ' item(s).';
@@ -350,15 +359,25 @@ final class BatchQueue
             $select->execute([$job['id']]);
             $part = $select->fetch();
             if (!$part) { $job['status']='completed'; $job['success']=1; return; }
-            $text = json_decode($part['payload'], true, 512, JSON_THROW_ON_ERROR)['text'];
-            // Delivery is best effort and must never rerun a panel operation.
-            self::db()->prepare("UPDATE bot_queue_items SET status='delivered' WHERE job_id=? AND position=?")->execute([$job['id'], $part['position']]);
-            foreach ($params['recipients'] ?? [$job['chat_id']] as $recipient) tg_send_message($recipient, $text);
+            $payload = json_decode($part['payload'], true, 512, JSON_THROW_ON_ERROR);
+            $recipients = array_values($params['recipients'] ?? [$job['chat_id']]);
+            $index = (int)($payload['recipient_cursor'] ?? 0);
+            $payload['recipient_cursor'] = $index + 1;
+            // Checkpoint each recipient before best-effort delivery. A failed send
+            // must not replay either the scan or previously attempted recipients.
+            self::db()->prepare('UPDATE bot_queue_items SET payload=?,status=? WHERE job_id=? AND position=?')->execute([
+                json_encode($payload, JSON_THROW_ON_ERROR), $index + 1 >= count($recipients) ? 'delivered' : 'pending', $job['id'], $part['position'],
+            ]);
+            if (isset($recipients[$index])) {
+                try { tg_send_message($recipients[$index], $payload['text']); }
+                catch (Throwable $e) { error_log('Report delivery failed: ' . $e->getMessage()); }
+            }
             return;
         }
         if ($job['kind'] === 'outbox') {
-            $job['active']='outbox'; self::save($job);
-            $result = isset($params['photo']) ? QrGenerator::sendQrPhoto($job['chat_id'],$params['photo'],$params['text']) : tg_send_message($job['chat_id'],$params['text'],$params['keyboard']??null);
+            $job['active']='outbox'; $job['status']='completed'; self::save($job);
+            try { $result = isset($params['photo']) ? QrGenerator::sendQrPhoto($job['chat_id'],$params['photo'],$params['text']) : tg_send_message($job['chat_id'],$params['text'],$params['keyboard']??null); }
+            catch (Throwable $e) { $result = ['ok'=>false]; }
             $job['active']=null; $job['cursor']=1; $job['total']=1; if (!empty($result['ok'])) $job['success']=1; else { $job['unconfirmed']=1; $job['error']='Message delivery not confirmed'; } $job['status']='completed'; return;
         }
         if ($job['kind'] === 'import') {
@@ -417,10 +436,15 @@ final class BatchQueue
             self::save($job);
             $updated = PanelManager::revokeSub($server, $username);
             if (!$updated) throw new RuntimeException('Subscription revoke failed');
+            // Persist confirmed success before QR generation or Telegram calls.
+            $job['active']=null; $job['success']=1; $job['total']=1; $job['cursor']=1; $job['status']='completed';
+            self::save($job);
             if (!empty($updated['subscription_url'])) {
-                QrGenerator::sendQrPhoto($job['chat_id'], $updated['subscription_url'], Formatter::userInfo($server, $updated));
+                try { QrGenerator::sendQrPhoto($job['chat_id'], $updated['subscription_url'], Formatter::userInfo($server, $updated)); }
+                catch (Throwable $e) { error_log('QR delivery failed after confirmed revoke: ' . $e->getMessage()); }
             }
-            tg_replace_message($job['chat_id'], $messageId, '✅ Success.', Keyboards::cancel('usr:' . $server['id'] . ':' . $username));
+            try { tg_replace_message($job['chat_id'], $messageId, '✅ Success.', Keyboards::cancel('usr:' . $server['id'] . ':' . $username)); }
+            catch (Throwable $e) { error_log('Result delivery failed after confirmed revoke: ' . $e->getMessage()); }
             $job['success']=1; $job['total']=1; $job['cursor']=1; $job['status']='completed'; return;
         }
         if ($job['kind'] === 'stats') {
@@ -446,7 +470,9 @@ final class BatchQueue
                     return;
                 }
             }
-            $stats['today_expired'] = ['See the following report messages for the complete list.'];
+            $hasReport = self::db()->prepare('SELECT 1 FROM bot_queue_items WHERE job_id=? LIMIT 1');
+            $hasReport->execute([$job['id']]);
+            $stats['today_expired'] = $hasReport->fetchColumn() ? ['See the following report messages for the complete list.'] : [];
             $text = Formatter::statsCard($server, $stats);
             tg_replace_message($job['chat_id'], (int)$params['message_id'], $text, Keyboards::serverMenu((int)$server['id']));
             $job['params']['report_ready'] = true;
@@ -465,7 +491,7 @@ final class BatchQueue
                 $job['params'] = $params;
                 return;
             }
-            foreach ($params['recipients'] ?? [] as $recipient) tg_send_message($recipient, 'Expiry report: ' . $scan['matched'] . ' matching users out of ' . $scan['total'] . '.');
+            self::storeReportPage($job['id'], 0, ['Expiry report for ' . Formatter::escape($server['remark']) . ': ' . $scan['matched'] . ' matching users out of ' . $scan['total'] . '.']);
             $job['params']['report_ready'] = true;
             $job['success'] = 1; $job['total'] = 1; $job['cursor'] = 1; return;
         }
@@ -589,9 +615,9 @@ final class BatchQueue
                         if($job['params']['read_failures']>=3)$job['status']='failed';
                     }
                 }
-                self::finalizeMessage($job);
                 $job['active'] = null;
                 self::save($job);
+                self::finalizeMessage($job);
             } finally { self::releaseJobLock($lockedId); }
         } }
         finally { $db->query("SELECT RELEASE_LOCK('holderbot-queue-worker')"); RequestBudget::$deadline=$old; }
@@ -612,10 +638,10 @@ final class BatchQueue
         $days = max(1, $retentionDays ?? (int)($config['queue_retention_days'] ?? 7));
         $cutoff = time() - $days * 86400;
         foreach (['bot_queue_items', 'bot_queue_imports'] as $table) {
-            $cleanup = self::db()->prepare("DELETE FROM {$table} WHERE job_id IN (SELECT id FROM bot_queue WHERE status IN ('completed','failed','cancelled') AND updated_at < FROM_UNIXTIME(?)) LIMIT 1000");
+            $cleanup = self::db()->prepare("DELETE FROM {$table} WHERE job_id IN (SELECT id FROM bot_queue WHERE status IN ('completed','failed','cancelled') AND unconfirmed_count=0 AND updated_at < FROM_UNIXTIME(?)) LIMIT 1000");
             $cleanup->execute([$cutoff]);
         }
-        $stmt = self::db()->prepare("UPDATE bot_queue SET payload='{}' WHERE status IN ('completed','failed','cancelled') AND updated_at < FROM_UNIXTIME(?) AND payload <> '{}' AND NOT EXISTS (SELECT 1 FROM bot_queue_items WHERE job_id=bot_queue.id) AND NOT EXISTS (SELECT 1 FROM bot_queue_imports WHERE job_id=bot_queue.id) LIMIT 100");
+        $stmt = self::db()->prepare("UPDATE bot_queue SET payload='{}' WHERE status IN ('completed','failed','cancelled') AND unconfirmed_count=0 AND updated_at < FROM_UNIXTIME(?) AND payload <> '{}' AND NOT EXISTS (SELECT 1 FROM bot_queue_items WHERE job_id=bot_queue.id) AND NOT EXISTS (SELECT 1 FROM bot_queue_imports WHERE job_id=bot_queue.id) LIMIT 100");
         $stmt->execute([time() - $days * 86400]);
         return $stmt->rowCount();
     }

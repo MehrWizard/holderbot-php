@@ -62,16 +62,17 @@ php queue.php inspect JOB_ID
 php queue.php cancel JOB_ID
 ```
 
-`/jobs` in Telegram lists recent jobs for the current chat. Jobs are deduplicated by submission identity, rotate through bounded worker slices, and retain success and uncertain-operation counts. Cancellation stops remaining work after the current step; it cannot undo a panel request already sent. Expired job data is cleaned up incrementally. Remote APIs do not provide a shared transaction, so uncertain mutations require manual review.
+`/jobs` in Telegram lists recent jobs for the current chat. Jobs are deduplicated by submission identity, rotate through bounded worker slices, and retain success and uncertain-operation counts. Cancellation stops remaining work after the current step; it cannot undo a panel request already sent. Expired job data is cleaned up incrementally; uncertain-operation evidence is retained. Report delivery advances one recipient per step. Remote APIs do not provide a shared transaction, so uncertain mutations require manual review.
 
 ## Verification
 
 ```bash
 php tests/run.php
 python3 tests/run_all.py /path/to/original/holderbot
+python3 tests/mysql_contract.py
 ```
 
-The available checks cover PHP syntax, Python presentation fixtures, QR compatibility, and optional MySQL migration/HTTP contracts. Live validation still requires the PDO MySQL extension, configured Telegram credentials, and supported panel instances.
+The available checks cover PHP syntax, Python presentation fixtures, QR compatibility, local HTTP contracts, and isolated MySQL migration, recovery, and delivery-failure tests. Live validation still requires the PDO MySQL extension, configured Telegram credentials, and supported panel instances.
 
 ## TODO
 

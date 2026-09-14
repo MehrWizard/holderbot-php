@@ -18,6 +18,13 @@ class CallbackHandlers {
         $messageId = $callbackQuery['message']['message_id'] ?? 0;
         $userId = $callbackQuery['from']['id'];
 
+        if ($data === 'queue_home') {
+            Storage::clearState($userId);
+            tg_answer_callback($id);
+            self::renderHome($chatId, $messageId, true);
+            return;
+        }
+
         if (str_starts_with($data, 'queue_back:')) {
             $serverId = (int)substr($data, strlen('queue_back:'));
             Storage::clearState($userId);
@@ -38,8 +45,7 @@ class CallbackHandlers {
                 try { BatchQueue::cancel($jobId); } catch (RuntimeException $e) { tg_answer_callback($id, $e->getMessage(), true); return; }
                 $job = BatchQueue::get($jobId) ?? $job;
             } else {
-                $statusText = BatchQueue::describe($job);
-                if (strlen($statusText) > 190) $statusText = substr($statusText, 0, 187) . '...';
+                $statusText = BatchQueue::alertText($job);
                 tg_answer_callback($id, $statusText, true);
                 return;
             }
@@ -331,7 +337,7 @@ class CallbackHandlers {
                     return;
                 }
                 $updated = $attempt['result'];
-                tg_replace_message($chatId, $messageId, $updated ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
+                tg_replace_message($chatId, $messageId, "✅ Success.", Keyboards::cancel("usr:{$serverId}:{$username}"));
             } else {
                 tg_answer_callback($id, "❌ Not Found.", true);
             }
@@ -372,7 +378,6 @@ class CallbackHandlers {
                 $attempt = BatchQueue::executeInline($job, function () use ($server, $username, $chatId) {
                     $updated = PanelManager::revokeSub($server, $username);
                     if (!$updated) throw new RuntimeException('Subscription revoke failed');
-                    if (!empty($updated['subscription_url'])) QrGenerator::sendQrPhoto($chatId, $updated['subscription_url'], Formatter::userInfo($server, $updated));
                     return $updated;
                 });
                 if ($attempt['state'] === 'queued') {
@@ -383,7 +388,12 @@ class CallbackHandlers {
                     tg_edit_message($chatId, $messageId, BatchQueue::describe($attempt['job']), BatchQueue::keyboard($attempt['job']));
                     return;
                 }
-                $ok = $attempt['result'] !== null;
+                $ok = true; // A duplicate completed callback has no in-memory result.
+                $updated = $attempt['result'];
+                if (!empty($updated['subscription_url'])) {
+                    try { QrGenerator::sendQrPhoto($chatId, $updated['subscription_url'], Formatter::userInfo($server, $updated)); }
+                    catch (Throwable $e) { error_log('QR delivery failed after confirmed revoke: ' . $e->getMessage()); }
+                }
             }
             if ($action !== 'rvk') tg_answer_callback($id);
             tg_replace_message($chatId, $messageId, $ok ? "✅ Success." : "❌ Failed", Keyboards::cancel("usr:{$serverId}:{$username}"));
@@ -1220,12 +1230,13 @@ class CallbackHandlers {
         tg_edit_message($chatId, $messageId, $description, BatchQueue::keyboard($job));
     }
 
-    private static function renderHome(int|string $chatId, int $messageId): void {
+    private static function renderHome(int|string $chatId, int $messageId, bool $fresh = false): void {
         $servers = Storage::getServers();
         $text = "Welcome to HolderBot 🤖 [<code>" . HOLDERBOT_VERSION . "</code> by @ErfJabs]\n";
         $text .= "<b><a href='https://t.me/pingihostbot'>نصب پنل و انجام تانل به صورت کامل خودکار!</a></b>";
         $kb = Keyboards::home($servers);
-        tg_edit_message($chatId, $messageId, $text, $kb);
+        if ($fresh) tg_send_message($chatId, $text, $kb);
+        else tg_edit_message($chatId, $messageId, $text, $kb);
     }
 
     private static function renderServerMenu(int|string $chatId, int $messageId, int $serverId): void {
@@ -1597,9 +1608,6 @@ class CallbackHandlers {
             $created = PanelManager::createUser(
                 $server, $username, $dataLimit, $dateLimit, null, $stateData['selected_configs'] ?? [], $dateType, $stateData['admin'] ?? null
             );
-            if ($created && !empty($created['subscription_url'])) {
-                QrGenerator::sendQrPhoto($chatId, $created['subscription_url'], Formatter::userInfo($server, $created));
-            }
             return $created;
         });
         if ($attempt['state'] === 'queued') {
@@ -1611,11 +1619,11 @@ class CallbackHandlers {
             return;
         }
         $created = $attempt['result'];
-        if (!$created) {
-            tg_send_message($chatId, '❌ Failed to create ' . Formatter::escape($username) . '.');
-        } else {
-            tg_replace_message($chatId, $messageId, '✅ User created.', Keyboards::cancel("srv:{$serverId}"));
+        if (!empty($created['subscription_url'])) {
+            try { QrGenerator::sendQrPhoto($chatId, $created['subscription_url'], Formatter::userInfo($server, $created)); }
+            catch (Throwable $e) { error_log('QR delivery failed after confirmed creation: ' . $e->getMessage()); }
         }
+        tg_replace_message($chatId, $messageId, '✅ User created.', Keyboards::cancel("srv:{$serverId}"));
         tg_send_message($chatId, "Let's back...", Keyboards::cancel("srv:{$serverId}"));
     }
 
