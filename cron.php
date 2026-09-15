@@ -2,6 +2,7 @@
 /** Run once from cron, or use --daemon for the original 30-second node interval. */
 declare(strict_types=1);
 if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
+@set_time_limit(0);
 $config = require __DIR__ . '/config.php';
 date_default_timezone_set($config['timezone'] ?? 'UTC');
 require __DIR__ . '/storage.php';
@@ -21,7 +22,7 @@ do {
     $start = microtime(true);
     try { BackgroundTasks::tick($forceExpired); }
     catch (Throwable $e) { error_log('HolderBot scheduler failed: ' . $e->getMessage()); }
-    try { BatchQueue::run(); }
+    try { BatchQueue::run((float)($config['queue_cron_budget_seconds'] ?? 300)); }
     catch (Throwable $e) { error_log('HolderBot queue failed: ' . $e->getMessage()); }
     try { BatchQueue::maintain(); }
     catch (Throwable $e) { error_log('HolderBot queue retention failed: ' . $e->getMessage()); }

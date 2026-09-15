@@ -111,11 +111,25 @@ class PanelManager {
         ?string $admin = null
     ): array {
         $startedAt = microtime(true);
+        $extendedTimeout=max(5,min(45,(int)($GLOBALS['config']['scan_request_timeout_seconds']??25)));
+        if($page>1) {
+            try {
+                $users=self::getUsers($server,$page,$pageSize,$search,$status,$admin,true,$extendedTimeout);
+                $elapsed=max(0.001,microtime(true)-$startedAt);
+                self::rememberPageSize($server,$pageSize,$elapsed);
+                return ['users'=>$users,'page_size'=>$pageSize,'elapsed'=>$elapsed];
+            } catch(RuntimeException $e) {
+                throw new PanelScanException(
+                    'Established panel page request failed with a '.$extendedTimeout.'s timeout. '.$e->getMessage(),
+                    $pageSize,
+                    $e
+                );
+            }
+        }
         $sizes = $page === 1
             ? array_values(array_unique(array_filter([$pageSize, min($pageSize, 500), min($pageSize, 250), min($pageSize, 100), min($pageSize, 25)])))
             : [$pageSize];
         $last = null; $attempted = [];
-        $extendedTimeout=max(5,min(45,(int)($GLOBALS['config']['scan_request_timeout_seconds']??25)));
         foreach ($sizes as $index=>$size) {
             $attempted[] = $size;
             try {

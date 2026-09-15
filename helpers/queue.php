@@ -764,7 +764,8 @@ final class BatchQueue
                 if ($page === 1 && $users && count($users) < $pageSize) {
                     $params['page_size'] = count($users);
                     PanelManager::rememberPageSize($server, count($users), (float)$scan['elapsed']);
-                    $more = (bool)PanelManager::getUsers($server, 2, count($users), null, null, null, true);
+                    $probeTimeout=max(5,min(45,(int)($GLOBALS['config']['scan_request_timeout_seconds']??25)));
+                    $more = (bool)PanelManager::getUsers($server, 2, count($users), null, null, null, true, $probeTimeout);
                 }
                 if ($more) {
                     $params['stats'] = $stats;
