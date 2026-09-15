@@ -48,14 +48,14 @@ class Keyboards {
     public static function serverMenu(int|array $server): array {
         $serverId=is_array($server)?(int)$server['id']:$server;$sudo=!is_array($server)||PanelManager::isSudo($server);
         $rows=$sudo ? [
-            [self::button('👤 Users', "users:{$serverId}:1:all"),self::button('➕ Create User', "new_usr:{$serverId}")],
-            [self::button('🔍 Search User', "srch_usr:{$serverId}")],
-            [self::button('👥 Admins', "admins_list:{$serverId}:1"),self::button('➕ Create Admin', "new_adm:{$serverId}")],
-            [self::button('🔍 Search Admin', "srch_adm:{$serverId}")],
+            [self::button('👤 Users', "users:{$serverId}:1:all")],
+            [self::button('➕ Create User', "new_usr:{$serverId}"),self::button('🔍 Search User', "srch_usr:{$serverId}")],
+            [self::button('👥 Admins', "admins_list:{$serverId}:1")],
+            [self::button('➕ Create Admin', "new_adm:{$serverId}"),self::button('🔍 Search Admin', "srch_adm:{$serverId}")],
             [self::button('📊 Stats', "stats:{$serverId}"),self::button('🗄 Actions', "act_menu:{$serverId}")],
         ] : [
-            [self::button('👤 Users', "users:{$serverId}:1:all"),self::button('➕ Create User', "new_usr:{$serverId}")],
-            [self::button('🔍 Search User', "srch_usr:{$serverId}")],
+            [self::button('👤 Users', "users:{$serverId}:1:all")],
+            [self::button('➕ Create User', "new_usr:{$serverId}"),self::button('🔍 Search User', "srch_usr:{$serverId}")],
             [self::button('📊 Stats', "stats:{$serverId}")],
         ];
         $rows[]=[self::button('☁️ Server', "srv_cfg:{$serverId}")];$rows[]=[self::button('🏛️ Home','home')];
@@ -99,9 +99,9 @@ class Keyboards {
             if ($page > 1) $nav[] = self::button('⬅️', "users:{$serverId}:" . ($page - 1) . ":{$filter}");
             if ($hasMore) $nav[] = self::button('➡️', "users:{$serverId}:" . ($page + 1) . ":{$filter}");
             if ($nav) $rows[] = $nav;
-        } else $rows[] = [self::button('🔍 Search User', "srch_usr:{$serverId}")];
-        $rows[] = [self::button('➕ Create', "new_usr:{$serverId}"), self::button('🏛️ Home', 'home')];
-        $rows[] = [self::button('◀️ Back', "srv:{$serverId}")];
+        }
+        $rows[]=[self::button('➕ Create User',"new_usr:{$serverId}"),self::button('🔍 Search User',"srch_usr:{$serverId}")];
+        $rows[]=[self::button('◀️ Back',"srv:{$serverId}"),self::button('🏛️ Home','home')];
         return self::navigationLast(['inline_keyboard' => $rows]);
     }
     public static function userActions(int $serverId, string $username, bool $isActive, string $status, ?string $backData = null,bool $sudo=true): array {

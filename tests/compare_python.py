@@ -151,6 +151,6 @@ for index,(fixture,value) in enumerate(zip(fixtures,actual)):
         expected[-1]=['◀️ Back','🏛️ Home']
     if fixture['kind']=='keyboard' and fixture['method']=='serverMenu':
         # Requested PHP extension: first-class administrator management.
-        expected=[['👤 Users','➕ Create User'],['🔍 Search User'],['👥 Admins','➕ Create Admin'],['🔍 Search Admin'],['📊 Stats','🗄 Actions'],['☁️ Server'],['🏛️ Home']]
+        expected=[['👤 Users'],['➕ Create User','🔍 Search User'],['👥 Admins'],['➕ Create Admin','🔍 Search Admin'],['📊 Stats','🗄 Actions'],['☁️ Server'],['🏛️ Home']]
     assert value == expected, f"Fixture {index} {fixture['kind']}:\nExpected: {expected!r}\nActual: {value!r}"
 print(f'PASS: {len(fixtures)} differential fixtures evaluated against original Python code')
