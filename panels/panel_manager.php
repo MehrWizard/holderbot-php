@@ -16,6 +16,8 @@ final class PanelScanException extends RuntimeException {
 }
 
 class PanelManager {
+    public static function isSudo(array $server): bool { return !array_key_exists('panel_is_sudo',$server) || $server['panel_is_sudo'] === null || !empty($server['panel_is_sudo']); }
+    public static function authenticatedAdmin(array $server): string { return (string)($server['panel_admin_username']??$server['username']??''); }
     /**
      * Get the last error from panel client.
      */
@@ -814,8 +816,8 @@ class PanelManager {
     }
 
     /**
-     * Whether the server's credentials were successfully verified (sudo-checked
-     * login) within the last 24 hours - the original bot's "is_online" concept,
+     * Whether the server's credentials were successfully verified by a panel
+     * login within the last 24 hours - the original bot's "is_online" concept,
      * used to gate background jobs against a server that's currently unreachable.
      */
     public static function isOnline(array $server): bool {

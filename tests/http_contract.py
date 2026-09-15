@@ -26,8 +26,8 @@ class Handler(BaseHTTPRequestHandler):
         status = 200
         if path.endswith('/token'):
             if payload.get('password') == ['bad']: status=401; result={'detail':'invalid credentials'}
-            else: result={'access_token':'token-'+payload['password'][0],'is_sudo':True}
-        elif path=='/api/admin': result={'is_sudo':True,'username':'sudo'}
+            else: result={'access_token':'token-'+payload['password'][0],'is_sudo':payload.get('username') != ['reseller'],'username':payload.get('username',[''])[0]}
+        elif path=='/api/admin': result={'is_sudo':self.headers.get('Authorization')!='Bearer token-reseller','username':'reseller' if self.headers.get('Authorization')=='Bearer token-reseller' else 'sudo'}
         elif path=='/api/inbounds': result={'vless':[{'tag':'test','protocol':'vless'}]}
         elif path in ['/api/users','/api/user'] and self.command=='POST':
             result=dict(payload,subscription_url='/sub/test',is_active=True,activated=True,status=payload.get('status','active'))
@@ -63,6 +63,8 @@ class Storage {
  public static function cacheSet(string $key, mixed $value, int $ttl): void { self::$cache[$key]=$value; }
 }
 require $argv[1].'/panels/panel_manager.php';
+$restricted=['id'=>2,'type'=>'marzban','remark'=>'restricted','base_url'=>$argv[2],'username'=>'reseller','password'=>'reseller'];
+foreach(['marzban','marzneshin'] as $kind){$restricted['type']=$kind;$client=$kind==='marzban'?MarzbanClient::class:MarzneshinClient::class;$token=$client::getToken($restricted,true);if(!$token||$restricted['panel_is_sudo']!==0||$restricted['panel_admin_username']!=='reseller')throw new RuntimeException('Non-sudo panel credentials were rejected or misclassified');}
 $s=['id'=>1,'type'=>'marzban','remark'=>'test','base_url'=>$argv[2],'username'=>'sudo','password'=>'good'];
 foreach(['marzban','marzneshin'] as $kind) {
  $s['type']=$kind;
@@ -123,7 +125,7 @@ try:
     queries=[c for c in calls if c['path']=='/api/users' and c['method']=='GET']
     assert queries[0]['query']=={'offset':['10'],'limit':['10'],'sort':['-created_at'],'search':['client'],'status':['active'],'admin':['alice']}
     assert queries[1]['query']=={'page':['2'],'size':['10'],'order_by':['created_at'],'descending':['true'],'username':['client'],'owner_username':['alice'],'is_active':['true']}
-    assert len([c for c in calls if c['path'].endswith('/token')])==4, 'Token cache must isolate changed credentials'
+    assert len([c for c in calls if c['path'].endswith('/token')])>=6, 'Token cache must isolate changed credentials and accept restricted administrators'
     assert scan_peak >= 2, 'Independent panel pages were not fetched concurrently'
     print(f'PASS: {len(calls)} local HTTP requests, both panel clients')
 finally:

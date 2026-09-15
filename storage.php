@@ -72,6 +72,8 @@ class Storage {
                         node_monitoring TINYINT(1) DEFAULT 0,
                         node_restart TINYINT(1) DEFAULT 0,
                         expired_stats TINYINT(1) DEFAULT 0,
+                        panel_admin_username VARCHAR(64) NULL,
+                        panel_is_sudo TINYINT(1) NULL,
                         cached_token TEXT NULL,
                         token_expires_at INT NULL
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -177,6 +179,8 @@ class Storage {
 
                 // Auto-migrate newly added columns if upgrading an existing database
                 try { self::$pdo->exec("ALTER TABLE servers ADD COLUMN expired_stats TINYINT(1) DEFAULT 0"); } catch (Throwable) {}
+                try { self::$pdo->exec("ALTER TABLE servers ADD COLUMN panel_admin_username VARCHAR(64) NULL"); } catch (Throwable) {}
+                try { self::$pdo->exec("ALTER TABLE servers ADD COLUMN panel_is_sudo TINYINT(1) NULL"); } catch (Throwable) {}
                 try { self::$pdo->exec("ALTER TABLE templates ADD COLUMN is_active TINYINT(1) DEFAULT 1"); } catch (Throwable) {}
                 try { self::$pdo->exec("ALTER TABLE templates ADD COLUMN date_type VARCHAR(16) NOT NULL DEFAULT 'fixed'"); } catch (Throwable) {}
                 try { self::$pdo->exec("ALTER TABLE bot_queue ADD COLUMN lease_until INT NOT NULL DEFAULT 0 AFTER notification_status"); } catch (Throwable) {}
@@ -252,7 +256,7 @@ class Storage {
         if (!empty($server['id'])) {
                 $stmt = self::$pdo->prepare("
                     UPDATE servers SET remark = ?, type = ?, base_url = ?, username = ?, password = ?,
-                    is_active = ?, node_monitoring = ?, node_restart = ?, expired_stats = ?, cached_token = ?, token_expires_at = ?
+                    is_active = ?, node_monitoring = ?, node_restart = ?, expired_stats = ?, cached_token = ?, token_expires_at = ?, panel_admin_username = ?, panel_is_sudo = ?
                     WHERE id = ?
                 ");
                 $stmt->execute([
@@ -261,6 +265,7 @@ class Storage {
                     (int)($server['node_monitoring'] ?? 0), (int)($server['node_restart'] ?? 0),
                     (int)($server['expired_stats'] ?? 0),
                     $server['cached_token'] ?? null, $server['token_expires_at'] ?? null,
+                    $server['panel_admin_username'] ?? ($server['username'] ?? null), array_key_exists('panel_is_sudo',$server)?(int)$server['panel_is_sudo']:null,
                     $server['id']
                 ]);
                 self::cacheDelete('stats_result_'.(int)$server['id']);
@@ -268,14 +273,15 @@ class Storage {
         }
 
             $stmt = self::$pdo->prepare("
-                INSERT INTO servers (remark, type, base_url, username, password, is_active, node_monitoring, node_restart, expired_stats)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO servers (remark, type, base_url, username, password, is_active, node_monitoring, node_restart, expired_stats, panel_admin_username, panel_is_sudo)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
             $stmt->execute([
                 $server['remark'], $server['type'], rtrim($server['base_url'], '/'),
                 $server['username'], $server['password'], (int)($server['is_active'] ?? 1),
                 (int)($server['node_monitoring'] ?? 0), (int)($server['node_restart'] ?? 0),
-                (int)($server['expired_stats'] ?? 0)
+                (int)($server['expired_stats'] ?? 0), $server['panel_admin_username'] ?? ($server['username'] ?? null),
+                array_key_exists('panel_is_sudo',$server)?(int)$server['panel_is_sudo']:null
             ]);
             return (int)self::$pdo->lastInsertId();
     }

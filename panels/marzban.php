@@ -124,15 +124,12 @@ class MarzbanClient {
     }
 
     /**
-     * Get or refresh admin authentication token. Only a sudo admin account is
-     * accepted - a non-sudo credential is rejected outright, matching the
-     * original bot, which refuses to onboard (or keep using) a non-sudo panel
-     * account.
+     * Get or refresh an administrator token and record its access scope.
      */
     public static function getToken(array &$server, bool $force = false): ?string {
         $cacheKey = "marzban_token_" . hash('sha256', json_encode([$server['base_url'], $server['username'], $server['password']]));
         $cached = Storage::cacheGet($cacheKey);
-        if ($cached && !$force) {
+        if ($cached && !$force && array_key_exists('panel_is_sudo',$server) && $server['panel_is_sudo'] !== null) {
             return $cached;
         }
 
@@ -165,11 +162,9 @@ class MarzbanClient {
             asFormUrlencoded: false,
             bearerOverride: $token
         );
-        if (empty($adminInfo['is_sudo'])) {
-            self::$lastError = 'Admin account is not a sudo admin.';
-            error_log("MarzbanClient: rejecting non-sudo credentials for server [{$server['remark']}]");
-            return null;
-        }
+        if (!is_array($adminInfo) || !array_key_exists('is_sudo',$adminInfo)) { self::$lastError='Unable to determine administrator access level.'; return null; }
+        $server['panel_admin_username']=(string)($adminInfo['username']??$server['username']);
+        $server['panel_is_sudo']=!empty($adminInfo['is_sudo'])?1:0;
 
         Storage::cacheSet($cacheKey, $token, 8 * 3600);
         Storage::cacheSet("online_" . ($server['id'] ?? md5($server['base_url'])), time(), 86400);

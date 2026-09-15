@@ -622,6 +622,9 @@ class StateHandlers {
         $server['username'] = $parts[0];
         $server['password'] = $parts[1];
         $server['base_url'] = rtrim($parts[2], '/');
+        $server['panel_admin_username']=$candidate['panel_admin_username']??$candidate['username'];
+        $server['panel_is_sudo']=$candidate['panel_is_sudo']??null;
+        if(empty($server['panel_is_sudo'])){$server['node_monitoring']=0;$server['node_restart']=0;}
         $server['cached_token'] = null;
         $server['token_expires_at'] = null;
         Storage::saveServer($server);

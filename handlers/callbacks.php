@@ -174,7 +174,8 @@ class CallbackHandlers {
         // Server Settings Toggles - each requires a confirmation step first
         if (str_starts_with($data, 'tgl_srv_mon_ask:')) {
             $serverId = (int)substr($data, strlen('tgl_srv_mon_ask:'));
-            if(!Storage::getServer($serverId)){tg_answer_callback($id,'Not found.',true);return;}
+            $server=Storage::getServer($serverId);if(!$server){tg_answer_callback($id,'Not found.',true);return;}
+            if(!PanelManager::isSudo($server)){tg_answer_callback($id,'Node monitoring requires sudo panel access.',true);return;}
             Storage::setState($userId,'server_toggle_confirm',['server_id'=>$serverId,'action'=>'mon']);
             tg_answer_callback($id);
             tg_edit_message($chatId, $messageId, "Are your sure?", Keyboards::confirm("tgl_srv_mon:{$serverId}", "srv_cfg:{$serverId}"));
@@ -182,7 +183,8 @@ class CallbackHandlers {
         }
         if (str_starts_with($data, 'tgl_srv_res_ask:')) {
             $serverId = (int)substr($data, strlen('tgl_srv_res_ask:'));
-            if(!Storage::getServer($serverId)){tg_answer_callback($id,'Not found.',true);return;}
+            $server=Storage::getServer($serverId);if(!$server){tg_answer_callback($id,'Not found.',true);return;}
+            if(!PanelManager::isSudo($server)){tg_answer_callback($id,'Node restart requires sudo panel access.',true);return;}
             Storage::setState($userId,'server_toggle_confirm',['server_id'=>$serverId,'action'=>'res']);
             tg_answer_callback($id);
             tg_edit_message($chatId, $messageId, "Are your sure?", Keyboards::confirm("tgl_srv_res:{$serverId}", "srv_cfg:{$serverId}"));
@@ -200,6 +202,7 @@ class CallbackHandlers {
             $serverId = (int)substr($data, strlen('tgl_srv_mon:'));
             if(!self::consumeConfirmation($userId,'server_toggle_confirm',['server_id'=>$serverId,'action'=>'mon'])){tg_answer_callback($id,'Session expired, please retry.',true);return;}
             $server = Storage::getServer($serverId);
+            if($server&&!PanelManager::isSudo($server)){tg_answer_callback($id,'Node monitoring requires sudo panel access.',true);return;}
             if ($server) {
                 $server['node_monitoring'] = empty($server['node_monitoring']) ? 1 : 0;
                 Storage::saveServer($server);
@@ -212,6 +215,7 @@ class CallbackHandlers {
             $serverId = (int)substr($data, strlen('tgl_srv_res:'));
             if(!self::consumeConfirmation($userId,'server_toggle_confirm',['server_id'=>$serverId,'action'=>'res'])){tg_answer_callback($id,'Session expired, please retry.',true);return;}
             $server = Storage::getServer($serverId);
+            if($server&&!PanelManager::isSudo($server)){tg_answer_callback($id,'Node restart requires sudo panel access.',true);return;}
             if ($server) {
                 $server['node_restart'] = empty($server['node_restart']) ? 1 : 0;
                 Storage::saveServer($server);
@@ -598,6 +602,7 @@ class CallbackHandlers {
             $serverId = (int)substr($data, strlen('act_menu:'));
             $server = Storage::getServer($serverId);
             if(!$server){tg_answer_callback($id,'❌ Not Found.',true);return;}
+            if(!PanelManager::isSudo($server)){tg_answer_callback($id,'Server-wide actions require sudo panel access.',true);return;}
             Storage::clearState($userId);
             tg_answer_callback($id);
             tg_edit_message(
@@ -1057,7 +1062,8 @@ class CallbackHandlers {
 
         if(str_starts_with($data,'srch_adm:')) {
             $serverId=(int)substr($data,strlen('srch_adm:'));
-            if(!Storage::getServer($serverId)){tg_answer_callback($id,'Server not found.',true);return;}
+            $server=Storage::getServer($serverId);if(!$server){tg_answer_callback($id,'Server not found.',true);return;}
+            if(!PanelManager::isSudo($server)){tg_answer_callback($id,'Administrator management requires sudo panel access.',true);return;}
             Storage::setState($userId,'search_admin',['server_id'=>$serverId]);tg_answer_callback($id);
             tg_edit_message($chatId,$messageId,'Enter administrator username:',Keyboards::cancel("srv:{$serverId}"));return;
         }
@@ -1065,13 +1071,15 @@ class CallbackHandlers {
         if(str_starts_with($data,'adm_view:')) {
             $parts=explode(':',$data,4);$serverId=(int)($parts[1]??0);$admin=rawurldecode($parts[2]??'');$page=max(1,(int)($parts[3]??1));$server=Storage::getServer($serverId);
             if(!$server){tg_answer_callback($id,'Server not found.',true);return;}
+            if(!PanelManager::isSudo($server)){tg_answer_callback($id,'Administrator management requires sudo panel access.',true);return;}
             tg_answer_callback($id);self::renderAdminCard($chatId,$messageId,$server,$admin,$page);return;
         }
 
         if(str_starts_with($data,'adm_users:')) {
             $parts=explode(':',$data,6);$serverId=(int)($parts[1]??0);$admin=rawurldecode($parts[2]??'');$adminPage=max(1,(int)($parts[3]??1));$page=max(1,(int)($parts[4]??1));$server=Storage::getServer($serverId);
             $filter=$parts[5]??'all';if(!in_array($filter,['all','active','disabled','on_hold','limited','expired'],true))$filter='all';
-            if(!$server||!PanelManager::getAdmin($server,$admin)){tg_answer_callback($id,'Administrator not found.',true);return;}
+            if(!$server||!PanelManager::isSudo($server)){tg_answer_callback($id,'Administrator management requires sudo panel access.',true);return;}
+            if(!PanelManager::getAdmin($server,$admin)){tg_answer_callback($id,'Administrator not found.',true);return;}
             if($filter==='on_hold'&&strtolower((string)$server['type'])==='marzneshin'){tg_answer_callback($id,'This panel does not expose an On Hold user filter.',true);return;}
             $status=$filter==='all'?null:$filter;$limit=10;$users=PanelManager::getUsers($server,$page,$limit,null,$status,$admin,true);$total=PanelManager::getLastUsersTotal($server);
             if($total!==null&&$page>max(1,(int)ceil($total/$limit))){$page=max(1,(int)ceil($total/$limit));$users=PanelManager::getUsers($server,$page,$limit,null,$status,$admin,true);}
@@ -1081,20 +1089,23 @@ class CallbackHandlers {
 
         if(str_starts_with($data,'srch_adm_user:')) {
             $parts=explode(':',$data,4);$serverId=(int)($parts[1]??0);$admin=rawurldecode($parts[2]??'');$adminPage=max(1,(int)($parts[3]??1));$server=Storage::getServer($serverId);
-            if(!$server||!PanelManager::getAdmin($server,$admin)){tg_answer_callback($id,'Administrator not found.',true);return;}
+            if(!$server||!PanelManager::isSudo($server)){tg_answer_callback($id,'Administrator management requires sudo panel access.',true);return;}
+            if(!PanelManager::getAdmin($server,$admin)){tg_answer_callback($id,'Administrator not found.',true);return;}
             Storage::setState($userId,'search_admin_user',['server_id'=>$serverId,'admin'=>$admin,'admin_page'=>$adminPage]);tg_answer_callback($id);
             tg_edit_message($chatId,$messageId,'Enter a username to search within <b>'.Formatter::escape($admin).'</b>:',Keyboards::cancel("adm_view:{$serverId}:".rawurlencode($admin).":{$adminPage}"));return;
         }
 
         if(str_starts_with($data,'adm_create:')) {
             $parts=explode(':',$data,5);$serverId=(int)($parts[1]??0);$admin=rawurldecode($parts[2]??'');$server=Storage::getServer($serverId);
-            if(!$server||!PanelManager::getAdmin($server,$admin)){tg_answer_callback($id,'Administrator not found.',true);return;}
+            if(!$server||!PanelManager::isSudo($server)){tg_answer_callback($id,'Administrator management requires sudo panel access.',true);return;}
+            if(!PanelManager::getAdmin($server,$admin)){tg_answer_callback($id,'Administrator not found.',true);return;}
             self::renderUserCreatePrompt($chatId,$messageId,$serverId,$userId,$admin,$id);return;
         }
 
         if(str_starts_with($data,'adm_act:')) {
             $parts=explode(':',$data,6);$action=$parts[1]??'';$serverId=(int)($parts[2]??0);$admin=rawurldecode($parts[3]??'');$page=max(1,(int)($parts[4]??1));$server=Storage::getServer($serverId);
-            if(!$server||!in_array($action,['act_adm','dis_adm','del_all','xfer_adm','add_cfg','del_cfg'],true)||!self::validAdmin($server,$admin,false)){tg_answer_callback($id,'Administrator action is no longer valid.',true);return;}
+            if(!$server||!PanelManager::isSudo($server)){tg_answer_callback($id,'Administrator management requires sudo panel access.',true);return;}
+            if(!in_array($action,['act_adm','dis_adm','del_all','xfer_adm','add_cfg','del_cfg'],true)||!self::validAdmin($server,$admin,false)){tg_answer_callback($id,'Administrator action is no longer valid.',true);return;}
             $back='adm_view:'.$serverId.':'.rawurlencode($admin).':'.$page;
             if($action==='xfer_adm'){
                 Storage::setState($userId,'xfer_target',['server_id'=>$serverId,'from_admin'=>$admin,'return_to'=>$back]);
@@ -1140,6 +1151,10 @@ class CallbackHandlers {
             $server = Storage::getServer($serverId);
             if (!$server) {
                 tg_answer_callback($id, "Server not found.", true);
+                return;
+            }
+            if(!PanelManager::isSudo($server)){
+                self::renderUserCreatePrompt($chatId,$messageId,$serverId,$userId,'',$id);
                 return;
             }
             Storage::setState($userId, 'create_user_admin', ['server_id' => $serverId]);
@@ -1459,7 +1474,7 @@ class CallbackHandlers {
         }
 
         $text = "Select a Button";
-        $kb = Keyboards::serverMenu($serverId);
+        $kb = Keyboards::serverMenu($server);
         tg_edit_message($chatId, $messageId, $text, $kb);
     }
 
@@ -1469,7 +1484,7 @@ class CallbackHandlers {
             tg_send_message($chatId, "❌ Not Found.", Keyboards::home(Storage::getServers()));
             return;
         }
-        tg_send_message($chatId, "Select a Button", Keyboards::serverMenu($serverId));
+        tg_send_message($chatId, "Select a Button", Keyboards::serverMenu($server));
     }
 
     private static function renderServerSettings(int|string $chatId, int $messageId, int $serverId): void {
@@ -1542,7 +1557,7 @@ class CallbackHandlers {
                 $chatId,
                 $messageId,
                 "❌ Not Found.",
-                Keyboards::serverMenu($serverId)
+                Keyboards::serverMenu($server)
             );
             return;
         }
@@ -1550,7 +1565,7 @@ class CallbackHandlers {
         $card = Formatter::userCard($server, $user,PanelManager::getBotUsername());
         if($backData!==null && method_exists(Storage::class,'rememberUserBack')) Storage::rememberUserBack($chatId,$serverId,$username,$backData);
         $backData=$backData??(method_exists(Storage::class,'userBack')?Storage::userBack($chatId,$serverId,$username):null);
-        $kb = Keyboards::userActions($serverId, $user['username'], $user['is_active'], $user['status'],$backData);
+        $kb = Keyboards::userActions($serverId, $user['username'], $user['is_active'], $user['status'],$backData,PanelManager::isSudo($server));
         tg_edit_message($chatId, $messageId, $card, $kb);
     }
 
@@ -1658,6 +1673,7 @@ class CallbackHandlers {
                 break;
 
             case 'own': // Change Owner
+                if(!PanelManager::isSudo($server)){tg_answer_callback($callbackId,'Changing ownership requires sudo panel access.',true);break;}
                 $admins = PanelManager::getAdmins($server);
                 Storage::setState($userId, 'user_mod_owner', ['server_id' => $serverId, 'username' => $username]);
                 tg_answer_callback($callbackId);

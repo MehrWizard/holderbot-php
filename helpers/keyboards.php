@@ -45,13 +45,18 @@ class Keyboards {
         $nav=[]; if($page>1)$nav[]=self::button('⬅️','home_page:'.($page-1)); if($page*self::SELECTOR_PAGE<$total)$nav[]=self::button('➡️','home_page:'.($page+1)); if($nav)$rows[]=$nav;
         return ['inline_keyboard' => $rows];
     }
-    public static function serverMenu(int $serverId): array {
-        return self::navigationLast(['inline_keyboard' => [
-            [self::button('👤 Users', "users:{$serverId}:1:all"), self::button('🗄 Actions', "act_menu:{$serverId}")],
-            [self::button('📊 Stats', "stats:{$serverId}"), self::button('➕ Create User', "new_usr:{$serverId}")],
+    public static function serverMenu(int|array $server): array {
+        $serverId=is_array($server)?(int)$server['id']:$server;$sudo=!is_array($server)||PanelManager::isSudo($server);
+        $rows=$sudo ? [
+            [self::button('👤 Users', "users:{$serverId}:1:all"),self::button('🗄 Actions', "act_menu:{$serverId}")],
+            [self::button('📊 Stats', "stats:{$serverId}"),self::button('➕ Create User', "new_usr:{$serverId}")],
             [self::button('🔍 Search User', "srch_usr:{$serverId}"),self::button('🔍 Search Admin', "srch_adm:{$serverId}")],
-            [self::button('☁️ Server', "srv_cfg:{$serverId}"), self::button('🏛️ Home', 'home')],
-        ]]);
+        ] : [
+            [self::button('👤 Users', "users:{$serverId}:1:all"),self::button('📊 Stats', "stats:{$serverId}")],
+            [self::button('➕ Create User', "new_usr:{$serverId}"),self::button('🔍 Search User', "srch_usr:{$serverId}")],
+        ];
+        $rows[]=[self::button('☁️ Server', "srv_cfg:{$serverId}"), self::button('🏛️ Home', 'home')];
+        return self::navigationLast(['inline_keyboard'=>$rows]);
     }
     public static function stats(int $serverId): array {
         return ['inline_keyboard'=>[
@@ -61,11 +66,10 @@ class Keyboards {
     }
     public static function serverSettings(array $server): array {
         $id = $server['id'];
-        return self::rows([
-            self::button('🏷 Remark', "srv_edit_remark:{$id}"), self::button('📋 Data', "srv_edit_creds:{$id}"),
-            self::button('📡 Monitoring Nodes', "tgl_srv_mon_ask:{$id}"), self::button('🔄 Auto Restart Nodes', "tgl_srv_res_ask:{$id}"),
-            self::button('⚰️ Expired Stats', "tgl_srv_exp_ask:{$id}"), self::button('🗑 Remove', "del_srv_ask:{$id}"),
-        ], 2, "srv:{$id}");
+        $buttons=[self::button('🏷 Remark', "srv_edit_remark:{$id}"), self::button('📋 Data', "srv_edit_creds:{$id}")];
+        if(PanelManager::isSudo($server))$buttons=array_merge($buttons,[self::button('📡 Monitoring Nodes', "tgl_srv_mon_ask:{$id}"),self::button('🔄 Auto Restart Nodes', "tgl_srv_res_ask:{$id}")]);
+        $buttons=array_merge($buttons,[self::button('⚰️ Expired Stats', "tgl_srv_exp_ask:{$id}"),self::button('🗑 Remove', "del_srv_ask:{$id}")]);
+        return self::rows($buttons,2,"srv:{$id}");
     }
     public static function usersList(int $serverId, array $users, int $page = 1, bool $hasMore = false, string $filter = 'all', bool $search = false): array {
         $buttons = [];
@@ -87,12 +91,13 @@ class Keyboards {
         $rows[] = [self::button('◀️ Back', "srv:{$serverId}")];
         return self::navigationLast(['inline_keyboard' => $rows]);
     }
-    public static function userActions(int $serverId, string $username, bool $isActive, string $status, ?string $backData = null): array {
+    public static function userActions(int $serverId, string $username, bool $isActive, string $status, ?string $backData = null,bool $sudo=true): array {
         $actions = [
             'dl' => '📊 Data Limit', 'dt' => '⏱️ Date Limit', 'tgl_ask' => $isActive ? '❌ Disabled' : '✅ Activated',
             'rst_ask' => '🔁 Reset Usage', 'rvk_ask' => '⛓️‍💥 Revoke', 'qr' => '🖼 Qrcode',
             'nt' => '🗒 Note', 'own' => '👤 Set Owner', 'cfg' => '📂 Configs', 'chg' => '🧪 Charge', 'del' => '🗑 Remove',
         ];
+        if(!$sudo)unset($actions['own']);
         $buttons = [];
         foreach ($actions as $action => $label) $buttons[] = self::button($label, "act:{$serverId}:{$username}:{$action}");
         return self::rows($buttons, 2, $backData ?? "srv:{$serverId}");

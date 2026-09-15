@@ -130,6 +130,7 @@ class Formatter {
     }
     public static function serverCard(array $server): string {
         $fields = ['ID' => $server['id'], 'Remark' => $server['remark'], 'Active' => ($server['is_active'] ?? true) ? 'Yes' : 'No',
+            'Panel Access'=>PanelManager::isSudo($server)?'Sudo':'Own users only',
             'Online' => PanelManager::isOnline($server) ? 'Yes' : 'No',
             'Node Monitoring' => !empty($server['node_monitoring']) ? 'Yes' : 'No',
             'Node Auto Restart' => !empty($server['node_restart']) ? 'Yes' : 'No',

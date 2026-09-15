@@ -29,6 +29,7 @@ class PanelManager {
     public static array $users=[];
     public static ?int $total=null;
     public static array $admins=['new_admin','admin1','admin2'];
+    public static function isSudo($server): bool { return !array_key_exists('panel_is_sudo',$server)||$server['panel_is_sudo']===null||!empty($server['panel_is_sudo']); }
     public static function modifyUserDataLimit($server,$username,$value): bool { self::$calls[]=['data',$username,$value]; return false; }
     public static function modifyUserNote($server,$username,$value): bool { self::$calls[]=['note',$username,$value]; return true; }
     public static function getServices($server): array { return [['id'=>'one:tcp','name'=>'One'],['id'=>'two','name'=>'Two']]; }
@@ -104,6 +105,7 @@ check(Storage::getState(42)===null && end($events)[0]==='edit' && end($events)[1
 callback('queue_home'); check(end($events)[0]==='edit' && end(NotificationOutbox::$detached)===['99',5],'Loading Home did not detach and edit recent message');
 callback('queue_back:1'); check(end($events)[0]==='edit' && count(NotificationOutbox::$detached)===2,'Loading Back did not detach and edit recent message');
 check(in_array('srch_adm:1',buttons(Keyboards::serverMenu(1)),true),'Server menu omitted administrator search');
+$restricted=['id'=>1,'type'=>'marzban','panel_is_sudo'=>0];$restrictedMenu=buttons(Keyboards::serverMenu($restricted));check(!in_array('act_menu:1',$restrictedMenu,true)&&!in_array('srch_adm:1',$restrictedMenu,true)&&in_array('users:1:1:all',$restrictedMenu,true)&&in_array('new_usr:1',$restrictedMenu,true),'Restricted server menu exposed sudo actions or hid own-user actions');check(!in_array('act:1:test:own',buttons(Keyboards::userActions(1,'test',true,'active',null,false)),true),'Restricted user menu exposed ownership transfer');
 callback('srch_adm:1');check(Storage::getState(42)['step']==='search_admin','Administrator search did not start');
 StateHandlers::handle(['text'=>'admin','chat'=>['id'=>99],'from'=>['id'=>42]],Storage::getState(42));$adminResultKeys=buttons(end($events)[1][3]);$adminView=array_values(array_filter($adminResultKeys,fn($key)=>str_contains($key,':admin1:')))[0];callback($adminView);$adminActionKeys=buttons(end($events)[1][3]);check(in_array('adm_act:act_adm:1:admin1:1',$adminActionKeys,true)&&in_array('adm_users:1:admin1:1:1',$adminActionKeys,true)&&in_array('adm_create:1:admin1:1',$adminActionKeys,true),'Administrator result did not open its complete action screen');
 PanelManager::$users=[['username'=>'owned','is_active'=>true]];callback('adm_users:1:admin1:1:1');$ownedKeys=buttons(end($events)[1][3]);check(in_array('adm_users:1:admin1:1:1:active',$ownedKeys,true)&&in_array('adm_users:1:admin1:1:1:limited',$ownedKeys,true)&&in_array('adm_users:1:admin1:1:1:expired',$ownedKeys,true)&&in_array('srch_adm_user:1:admin1:1',$ownedKeys,true),'Administrator users omitted generic user filters or scoped search');

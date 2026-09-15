@@ -121,15 +121,12 @@ class MarzneshinClient {
     }
 
     /**
-     * Get or refresh admin authentication token. Only a sudo admin account is
-     * accepted - a non-sudo credential is rejected outright, matching the
-     * original bot, which refuses to onboard (or keep using) a non-sudo panel
-     * account.
+     * Get or refresh an administrator token and record its access scope.
      */
     public static function getToken(array &$server, bool $force = false): ?string {
         $cacheKey = "marzneshin_token_" . hash('sha256', json_encode([$server['base_url'], $server['username'], $server['password']]));
         $cached = Storage::cacheGet($cacheKey);
-        if ($cached && !$force) {
+        if ($cached && !$force && array_key_exists('panel_is_sudo',$server) && $server['panel_is_sudo'] !== null) {
             return $cached;
         }
 
@@ -150,13 +147,9 @@ class MarzneshinClient {
             return null;
         }
 
-        if (empty($resp['is_sudo'])) {
-            self::$lastError = 'Admin account is not a sudo admin.';
-            error_log("MarzneshinClient: rejecting non-sudo credentials for server [{$server['remark']}]");
-            return null;
-        }
-
         $token = $resp['access_token'];
+        $server['panel_admin_username']=(string)($resp['username']??$server['username']);
+        $server['panel_is_sudo']=!empty($resp['is_sudo'])?1:0;
         Storage::cacheSet($cacheKey, $token, 8 * 3600);
         Storage::cacheSet("online_" . ($server['id'] ?? md5($server['base_url'])), time(), 86400);
         return $token;
