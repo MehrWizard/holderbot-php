@@ -47,6 +47,10 @@ if ($report['status']!=='completed' || array_column($sends,0)!==[11,22,33]) thro
 $save->invoke(null,$report);
 $report['status']='failed';
 if (str_contains(BatchQueue::describe($report),'Delivering')) throw new RuntimeException('Terminal report has nonterminal description');
+$report['error']='Panel timeout';
+$report['params']['failure_context']=['server'=>'production','adapter'=>'marzban','stage'=>'scan','page'=>4,'page_size'=>100,'attempts'=>3];
+$description=BatchQueue::describe($report);
+foreach(['Queue ID:','production','marzban','scan','4 / 100','Panel timeout'] as $detail) if(!str_contains($description,$detail)) throw new RuntimeException('Queue failure omitted diagnostic detail: '.$detail);
 $report['error']=str_repeat('خطا & <bad> ',100);
 $alert=BatchQueue::alertText($report);
 if (!preg_match('//u',$alert) || preg_match_all('/./us',$alert)>190 || str_contains($alert,'&lt;')) throw new RuntimeException('Invalid Unicode status alert');

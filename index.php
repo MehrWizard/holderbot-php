@@ -157,5 +157,21 @@ try {
         // the original bot (which only reacts to /start and /user).
     }
 } catch (Throwable $e) {
-    error_log("HolderBot unhandled exception: " . $e->getMessage() . "\n" . $e->getTraceAsString());
+    $reference=substr(hash('sha256',$e->getMessage().'|'.$e->getFile().'|'.$e->getLine().'|'.microtime(true)),0,12);
+    error_log("HolderBot unhandled exception [{$reference}]: " . $e->getMessage() . "\n" . $e->getTraceAsString());
+    if ($interactiveChat !== null) {
+        try {
+            $detail=preg_replace('/\s+/u',' ',trim($e->getMessage()))?:'No exception details were provided.';
+            preg_match('/\A.{0,900}/us',$detail,$match);
+            tg_send_message($interactiveChat,
+                "❌ <b>Request failed.</b>\n" .
+                '<b>Reference:</b> <code>' . htmlspecialchars($reference,ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8') . "</code>\n" .
+                '<b>Error type:</b> <code>' . htmlspecialchars(get_class($e),ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8') . "</code>\n" .
+                '<b>Location:</b> <code>' . htmlspecialchars(basename($e->getFile()).':'.$e->getLine(),ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8') . "</code>\n" .
+                '<b>Details:</b> ' . htmlspecialchars($match[0]??'Unknown error',ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8')
+            );
+        } catch (Throwable $deliveryError) {
+            error_log("HolderBot could not deliver error reference [{$reference}]: ".$deliveryError->getMessage());
+        }
+    }
 }

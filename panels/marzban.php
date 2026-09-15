@@ -28,6 +28,7 @@ class MarzbanClient {
         bool $asFormUrlencoded = false,
         ?string $bearerOverride = null
     ): ?array {
+        self::$lastError = '';
         if (self::$transport !== null) return (self::$transport)($server, $method, $endpoint, $payload);
         $baseUrl = rtrim($server['base_url'], '/');
         $url = $baseUrl . $endpoint;

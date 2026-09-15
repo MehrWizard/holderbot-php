@@ -11,8 +11,10 @@ final class BatchQueue
 {
     public const MAX_TARGETS = 100000;
     private const TELEGRAM_TEXT_LIMIT = 4096;
+    private const TELEGRAM_ENTITY_LIMIT = 100;
 
     private static function db(): PDO { return Storage::db(); }
+    private static function escape(string $value): string { return htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 
     private static function lockName(string $id): string { return 'holderbot-job-' . $id; }
 
@@ -472,8 +474,19 @@ final class BatchQueue
             return $text;
         }
         if ($status === 'failed') {
-            $text = '❌ ' . ucfirst($label) . ' failed.';
-            return $text . (!empty($job['error']) ? "\n" . htmlspecialchars((string)$job['error'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') : '');
+            $context = $job['params']['failure_context'] ?? [];
+            $text = '❌ ' . ucfirst($label) . " failed.\n" .
+                '<b>Queue ID:</b> <code>' . self::escape((string)$job['id']) . "</code>\n" .
+                '<b>Operation:</b> <code>' . self::escape((string)$job['kind']) . "</code>\n";
+            if (!empty($context['server'])) $text .= '<b>Server:</b> ' . self::escape((string)$context['server']) . "\n";
+            if (!empty($context['adapter'])) $text .= '<b>Adapter:</b> <code>' . self::escape((string)$context['adapter']) . "</code>\n";
+            if (!empty($context['stage'])) $text .= '<b>Stage:</b> <code>' . self::escape((string)$context['stage']) . "</code>\n";
+            if (isset($context['page'])) $text .= '<b>Page / size:</b> <code>' . (int)$context['page'] . ' / ' . (int)($context['page_size'] ?? 0) . "</code>\n";
+            $text .= '<b>Progress:</b> <code>' . (int)$job['cursor'] . ' / ' . (int)$job['total'] . "</code>\n" .
+                '<b>Attempts:</b> <code>' . (int)($context['attempts'] ?? 1) . "</code>\n" .
+                (!empty($context['time']) ? '<b>Failed at:</b> <code>' . self::escape((string)$context['time']) . "</code>\n" : '') .
+                '<b>Details:</b> ' . self::escape((string)($job['error'] ?: 'No diagnostic details were recorded.'));
+            return $text;
         }
         if ($status === 'cancelled') return '⛔ ' . ucfirst($label) . ' cancelled.';
 
@@ -511,7 +524,7 @@ final class BatchQueue
         $chunks = []; $chunk = '';
         foreach ($entries as $entry) {
             $candidate=$chunk . ($chunk === '' ? '' : ',') . $entry;
-            if ($chunk !== '' && (self::telegramTextLength($candidate) > self::TELEGRAM_TEXT_LIMIT || self::telegramEntityCount($candidate) > 100)) { $chunks[] = $chunk; $chunk = ''; }
+            if ($chunk !== '' && (self::telegramTextLength($candidate) > self::TELEGRAM_TEXT_LIMIT || self::telegramEntityCount($candidate) > self::TELEGRAM_ENTITY_LIMIT)) { $chunks[] = $chunk; $chunk = ''; }
             $chunk .= ($chunk === '' ? '' : ',') . $entry;
         }
         if ($chunk !== '') $chunks[] = $chunk;
@@ -549,7 +562,7 @@ final class BatchQueue
         }
         $stats['today_expired']=$entries;
         $full=Formatter::statsCard($server,$stats);
-        if(self::telegramTextLength($full)<=self::TELEGRAM_TEXT_LIMIT && self::telegramEntityCount($full)<=100) {
+        if(self::telegramTextLength($full)<=self::TELEGRAM_TEXT_LIMIT && self::telegramEntityCount($full)<=self::TELEGRAM_ENTITY_LIMIT) {
             self::db()->prepare('DELETE FROM bot_queue_items WHERE job_id=?')->execute([$job['id']]);
             return $full;
         }
@@ -765,7 +778,7 @@ final class BatchQueue
             $scan = BackgroundTasks::expiryPage($server, $params['scan'] ?? [], (int)($params['now'] ?? time()));
             $botUsername = PanelManager::getBotUsername();
             self::storeReportPage($job['id'], $scan['page'] - 1, array_map(function($name) use ($botUsername, $server) {
-                $label = '<code>' . Formatter::escape($name) . '</code>';
+                $label = Formatter::escape($name);
                 return $botUsername === '' ? $label : '<a href="https://t.me/' . Formatter::escape($botUsername) . '?start=user_' . (int)$server['id'] . '_' . rawurlencode($name) . '">' . $label . '</a>';
             }, $scan['names']));
             $scan['names'] = [];
@@ -935,6 +948,21 @@ final class BatchQueue
                 try{self::step($job);unset($job['params']['read_failures']);}
                 catch(Throwable $e){
                     $job['error']=$e->getMessage();
+                    $failureServer=(int)($job['server_id']??0)>0 ? Storage::getServer((int)$job['server_id']) : null;
+                    $panelError=$failureServer && method_exists(PanelManager::class,'getLastError') ? trim(PanelManager::getLastError($failureServer)) : '';
+                    if($panelError!=='' && !str_contains($job['error'],$panelError)) {
+                        preg_match('/\A.{0,700}/us',preg_replace('/\s+/u',' ',$panelError)?:$panelError,$match);
+                        $job['error'].=' Panel response: '.($match[0]??'Unknown panel error');
+                    }
+                    $job['params']['failure_context']=[
+                        'server'=>(string)($failureServer['remark']??''),
+                        'adapter'=>(string)($failureServer['type']??''),
+                        'stage'=>(string)($job['active']??$job['status']??'unknown'),
+                        'page'=>(int)($job['params']['page']??$job['params']['scan']['page']??1),
+                        'page_size'=>(int)($job['params']['page_size']??$job['params']['scan']['page_size']??0),
+                        'attempts'=>(int)($job['params']['read_failures']??0)+1,
+                        'time'=>date(DATE_ATOM),
+                    ];
                     if($e instanceof InvalidArgumentException){$job['status']='failed';}
                     elseif (($job['active'] ?? '') === 'mutation' || ($job['active'] ?? '') === 'fallback') {
                         $job['unconfirmed']++;

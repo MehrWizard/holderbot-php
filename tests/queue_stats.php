@@ -98,7 +98,7 @@ foreach($parts as $part) if(str_contains(json_decode($part,true)['text'],"\n")) 
 $entities=new ReflectionMethod(BatchQueue::class,'telegramEntityCount');
 foreach($parts as $part) if($entities->invoke(null,json_decode($part,true)['text'])>100) throw new RuntimeException('A follow-up report exceeds Telegram entity limits');
 $linked=BatchQueue::enqueueInline('stats',$server,['message_id'=>129],99,42,'entity_report');
-$linkedEntries=[]; for($i=0;$i<60;$i++) $linkedEntries[]='<a href="https://t.me/test?start=user_1_'.$i.'"><code>u'.$i.'</code></a>';
+$linkedEntries=[]; for($i=0;$i<120;$i++) $linkedEntries[]='<a href="https://t.me/test?start=user_1_'.$i.'">u'.$i.'</a>';
 $store->invoke(null,$linked['id'],1,$linkedEntries);
 $linkedText=$prepare->invokeArgs(null,[&$linked,$server,['today_expired'=>[]]]);
 if(!str_contains($linkedText,'following report')) throw new RuntimeException('Entity-heavy report was not split');

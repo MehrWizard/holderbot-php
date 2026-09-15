@@ -27,6 +27,7 @@ class MarzneshinClient {
         bool $requiresAuth = true,
         bool $asFormUrlencoded = false
     ): ?array {
+        self::$lastError = '';
         if (self::$transport !== null) return (self::$transport)($server, $method, $endpoint, $payload);
         $baseUrl = rtrim($server['base_url'], '/');
         $url = $baseUrl . $endpoint;

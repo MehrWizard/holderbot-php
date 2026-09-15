@@ -73,7 +73,19 @@ class PanelManager {
         }
 
         if (!is_array($rawList)) {
-            if ($strict) throw new RuntimeException("Unable to fetch user page");
+            if ($strict) {
+                $detail = trim(self::getLastError($server));
+                $detail = preg_replace('/\s+/u', ' ', $detail) ?: 'No response details were returned by the panel';
+                preg_match('/\A.{0,700}/us', $detail, $match);
+                throw new RuntimeException(sprintf(
+                    'Panel user-page request failed. Server: %s; adapter: %s; page: %d; page size: %d; panel response: %s',
+                    (string)($server['remark'] ?? '#' . ($server['id'] ?? '?')),
+                    $type,
+                    $page,
+                    $limit,
+                    $match[0] ?? 'Unknown panel error'
+                ));
+            }
             return [];
         }
 
@@ -97,8 +109,9 @@ class PanelManager {
         $sizes = $page === 1
             ? array_values(array_unique(array_filter([$pageSize, min($pageSize, 500), min($pageSize, 250), min($pageSize, 100), min($pageSize, 25)])))
             : [$pageSize];
-        $last = null;
+        $last = null; $attempted = [];
         foreach ($sizes as $size) {
+            $attempted[] = $size;
             try {
                 $users = self::getUsers($server, $page, $size, $search, $status, $admin, true);
                 $elapsed = max(0.001, microtime(true) - $startedAt);
@@ -108,7 +121,12 @@ class PanelManager {
                 $last = $e;
             }
         }
-        throw $last ?? new RuntimeException('Unable to fetch user page');
+        throw new RuntimeException(
+            'Panel user-page negotiation failed after page sizes ' . implode(', ', $attempted) . '. ' .
+            ($last?->getMessage() ?? 'The panel returned no diagnostic details.'),
+            0,
+            $last
+        );
     }
 
     /**
@@ -664,9 +682,10 @@ class PanelManager {
                 if (!empty($u['expire_timestamp']) && ($server['type'] !== 'marzneshin' || ($u['raw']['expire_strategy'] ?? '') === 'fixed_date')) {
                     $hoursUntilExpiry = (int)(($u['expire_timestamp'] - $now) / 3600);
                     if ($hoursUntilExpiry > 0 && $hoursUntilExpiry <= 24) {
+                        $name = htmlspecialchars((string)$u['username'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                         $todayExpired[] = $botUsername
-                            ? "<a href='https://t.me/{$botUsername}?start=user_{$server['id']}_{$u['username']}'> <code>{$u['username']}</code> </a>"
-                            : "<code>{$u['username']}</code>";
+                            ? '<a href="https://t.me/' . rawurlencode($botUsername) . '?start=user_' . (int)$server['id'] . '_' . rawurlencode((string)$u['username']) . '">' . $name . '</a>'
+                            : '<code>' . $name . '</code>';
                     }
                 }
             }
