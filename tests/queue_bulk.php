@@ -15,6 +15,13 @@ MarzbanClient::$transport=function($server,$method,$endpoint)use(&$attempted) {
 $negotiatedServer=Storage::getServer(Storage::saveServer(['remark'=>'negotiation','type'=>'marzban','base_url'=>'http://example.invalid','username'=>'test','password'=>'test']));
 $negotiated=PanelManager::scanUsers($negotiatedServer,1,1000);
 if($attempted!==[1000,500,250,100] || $negotiated['page_size']!==100 || $negotiated['users'][0]['username']!=='negotiated') throw new RuntimeException('Panel page-size negotiation failed');
+$cache=Storage::db()->prepare('SELECT expires_at FROM bot_cache WHERE cache_key=?');
+$cache->execute(['panel_page_size_'.$negotiatedServer['id']]);
+if((int)$cache->fetchColumn()>time()+1) throw new RuntimeException('Negotiated page size did not use the measured request window');
+sleep(2);
+if(PanelManager::pageSize($negotiatedServer)!==1000) throw new RuntimeException('Expired page-size cache was reused');
+$cache->execute(['panel_page_size_'.$negotiatedServer['id']]);
+if($cache->fetchColumn()!==false) throw new RuntimeException('Expired page-size cache was not deleted');
 $memory=memory_get_usage(true);
 foreach(['marzban','marzneshin'] as $type) {
     $next=0;

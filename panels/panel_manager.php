@@ -93,6 +93,7 @@ class PanelManager {
         ?string $status = null,
         ?string $admin = null
     ): array {
+        $startedAt = microtime(true);
         $sizes = $page === 1
             ? array_values(array_unique(array_filter([$pageSize, min($pageSize, 500), min($pageSize, 250), min($pageSize, 100), min($pageSize, 25)])))
             : [$pageSize];
@@ -100,8 +101,9 @@ class PanelManager {
         foreach ($sizes as $size) {
             try {
                 $users = self::getUsers($server, $page, $size, $search, $status, $admin, true);
-                self::rememberPageSize($server, $size);
-                return ['users' => $users, 'page_size' => $size];
+                $elapsed = max(0.001, microtime(true) - $startedAt);
+                self::rememberPageSize($server, $size, $elapsed);
+                return ['users' => $users, 'page_size' => $size, 'elapsed' => $elapsed];
             } catch (RuntimeException $e) {
                 $last = $e;
             }
@@ -720,8 +722,11 @@ class PanelManager {
         return max(1, min(5000, (int)($config['scan_page_size'] ?? 1000)));
     }
 
-    public static function rememberPageSize(array $server, int $size): void {
-        if ($size > 0) Storage::cacheSet('panel_page_size_' . (int)($server['id'] ?? 0), $size, 30 * 86400);
+    public static function rememberPageSize(array $server, int $size, float $requestSeconds): void {
+        if ($size > 0) {
+            $ttl = max(1, (int)ceil(max(0.001, $requestSeconds) * 5));
+            Storage::cacheSet('panel_page_size_' . (int)($server['id'] ?? 0), $size, $ttl);
+        }
     }
 
     public static function getBotUsername(): string {

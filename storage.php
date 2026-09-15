@@ -371,7 +371,12 @@ class Storage {
     public static function cacheGet(string $key): mixed {
         $stmt = self::db()->prepare("SELECT cache_value, expires_at FROM bot_cache WHERE cache_key = ?");
         $stmt->execute([$key]); $row = $stmt->fetch();
-        return ($row && (int)$row['expires_at'] > time()) ? json_decode($row['cache_value'], true) : null;
+        if (!$row) return null;
+        if ((int)$row['expires_at'] <= time()) {
+            self::cacheDelete($key);
+            return null;
+        }
+        return json_decode($row['cache_value'], true);
     }
 
     public static function cacheSet(string $key, mixed $value, int $ttlSeconds = 3600): void {

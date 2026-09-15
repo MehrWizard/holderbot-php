@@ -733,7 +733,7 @@ final class BatchQueue
                 $more = (bool)$users;
                 if ($page === 1 && $users && count($users) < $pageSize) {
                     $params['page_size'] = count($users);
-                    PanelManager::rememberPageSize($server, count($users));
+                    PanelManager::rememberPageSize($server, count($users), (float)$scan['elapsed']);
                     $more = (bool)PanelManager::getUsers($server, 2, count($users), null, null, null, true);
                 }
                 if ($more) {
