@@ -13,7 +13,11 @@ class CallbackHandlers {
     public static function handle(array $callbackQuery): void {
         $id = $callbackQuery['id'];
         $data = $callbackQuery['data'] ?? '';
-        if (str_starts_with($data, 'ref:')) $data = Storage::cacheGet($data) ?? '';
+        if (str_starts_with($data, 'ref:')) {
+            $resolved=Storage::cacheGet($data);
+            if(!is_string($resolved)||$resolved===''){tg_answer_callback($id,'This menu has expired. Open the menu again.',true);return;}
+            $data=$resolved;
+        }
         $chatId = $callbackQuery['message']['chat']['id'] ?? 0;
         $messageId = $callbackQuery['message']['message_id'] ?? 0;
         // Telegram supplies the original bot message's Unix timestamp here.
@@ -284,15 +288,17 @@ class CallbackHandlers {
             return;
         }
 
-        // View single user: usr:<id>:<username>
+        // View single user: usr:<id>:<username>:<origin page>:<origin filter>
         if (str_starts_with($data, 'usr:')) {
-            $parts = explode(':', $data, 3);
+            $parts = explode(':', $data, 5);
             $serverId = (int)($parts[1] ?? 0);
-            $username = $parts[2] ?? '';
+            $username = rawurldecode($parts[2] ?? '');
+            $originPage=max(1,(int)($parts[3]??1)); $originFilter=$parts[4]??'';
+            $back=in_array($originFilter,['all','active','limited','expired'],true)?"users:{$serverId}:{$originPage}:{$originFilter}":null;
             if($serverId<1 || $username===''){tg_answer_callback($id,'Invalid user.',true);return;}
             Storage::clearState($userId);
             tg_answer_callback($id);
-            self::renderUserCard($chatId, $messageId, $serverId, $username);
+            self::renderUserCard($chatId, $messageId, $serverId, $username,$back);
             return;
         }
 
@@ -445,7 +451,7 @@ class CallbackHandlers {
 
             $ok = false;
             if ($action === 'tgl') {
-                $user = PanelManager::getUser($server, $username);
+                $user = PanelManager::getUser($server, $username,true);
                 if(!$user){tg_answer_callback($id,'❌ Not Found.',true);return;}
                 self::runUserMutation($id,$chatId,$messageId,$userId,$server,['username'=>$username,'operation'=>'status','active'=>!$user['is_active']]); return;
             } elseif ($action === 'rst') {
@@ -1432,30 +1438,26 @@ class CallbackHandlers {
 
         $limit = 10;
         $statusParam = ($filter !== 'all') ? $filter : null;
-        $users = PanelManager::getUsers($server, $page, $limit, null, $statusParam);
-        // Page-number APIs derive their offset from the requested page size, so
-        // a limit+1 lookahead would skip one user on every following page.
-        $hasMore = count($users)===$limit && PanelManager::getUsers($server,$page+1,$limit,null,$statusParam)!==[];
+        $users = PanelManager::getUsers($server, $page, $limit, null, $statusParam,null,true);
+        $total=method_exists(PanelManager::class,'getLastUsersTotal')?PanelManager::getLastUsersTotal($server):null;
+        if($total!==null && $page>max(1,(int)ceil($total/$limit))){$page=max(1,(int)ceil($total/$limit));$users=PanelManager::getUsers($server,$page,$limit,null,$statusParam,null,true);}
+        $hasMore=$total!==null ? $page*$limit<$total : count($users)===$limit;
 
-        if (!$users) {
-            if ($callbackId) tg_answer_callback($callbackId, "❌ Not Found.", true);
-            return;
-        }
         if ($callbackId) tg_answer_callback($callbackId);
-        $text = "Select a item or create a new:";
+        $text = $users ? "Select a item or create a new:" : "No users found.";
 
         $kb = Keyboards::usersList($serverId, $users, $page, $hasMore, $filter);
         tg_edit_message($chatId, $messageId, $text, $kb);
     }
 
-    private static function renderUserCard(int|string $chatId, int $messageId, int $serverId, string $username): void {
+    private static function renderUserCard(int|string $chatId, int $messageId, int $serverId, string $username,?string $backData=null): void {
         $server = Storage::getServer($serverId);
         if (!$server) {
             tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::home(Storage::getServers()));
             return;
         }
 
-        $user = PanelManager::getUser($server, $username);
+        $user = PanelManager::getUser($server, $username,true);
         if (!$user) {
             tg_edit_message(
                 $chatId,
@@ -1467,7 +1469,9 @@ class CallbackHandlers {
         }
 
         $card = Formatter::userCard($server, $user);
-        $kb = Keyboards::userActions($serverId, $user['username'], $user['is_active'], $user['status']);
+        if($backData!==null && method_exists(Storage::class,'rememberUserBack')) Storage::rememberUserBack($chatId,$serverId,$username,$backData);
+        $backData=$backData??(method_exists(Storage::class,'userBack')?Storage::userBack($chatId,$serverId,$username):null);
+        $kb = Keyboards::userActions($serverId, $user['username'], $user['is_active'], $user['status'],$backData);
         tg_edit_message($chatId, $messageId, $card, $kb);
     }
 
@@ -1539,7 +1543,7 @@ class CallbackHandlers {
 
             case 'cfg': // Modify Configs/Inbounds
                 $services = PanelManager::getServices($server);
-                $user = PanelManager::getUser($server, $username);
+                $user = PanelManager::getUser($server, $username,true);
                 if (empty($services)) {
                     tg_answer_callback($callbackId, "No configs/services found on this server.", true);
                     return;
@@ -1619,7 +1623,7 @@ class CallbackHandlers {
                 ], $chatId, $userId, 'callback:' . $callbackId);
                 tg_edit_message($chatId, $messageId, 'Loading...');
                 $attempt = BatchQueue::executeInline($job, function () use ($server, $username, $chatId) {
-                    $user = PanelManager::getUser($server, $username);
+                    $user = PanelManager::getUser($server, $username,true);
                     if (!$user || empty($user['subscription_url'])) throw new InvalidArgumentException('No subscription link available for QR');
                     return $user;
                 });

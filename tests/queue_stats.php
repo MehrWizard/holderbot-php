@@ -64,7 +64,7 @@ $other->query('SELECT RELEASE_ALL_LOCKS()');
 BatchQueue::run(2,1,$large['id']);
 if ((BatchQueue::get($large['id'])['params']['page'] ?? 0)!==2) throw new RuntimeException('Missing inline page checkpoint');
 BatchQueue::run(2,10);
-if (BatchQueue::get($large['id'])['status']!=='completed' || PanelManager::$pages!==[1,2,3,4] || end(Formatter::$cards)['total']!==5) throw new RuntimeException('Cron repeated or lost inline scan pages');
+if (BatchQueue::get($large['id'])['status']!=='completed' || PanelManager::$pages!==[1,2,3] || end(Formatter::$cards)['total']!==5) throw new RuntimeException('Cron repeated or lost inline scan pages');
 PanelManager::$fail=true; PanelManager::$size=1;
 $retry=BatchQueue::enqueueInline('stats',$server,['message_id'=>125],99,42,'retry_stats');
 BatchQueue::run(2,1,$retry['id']);

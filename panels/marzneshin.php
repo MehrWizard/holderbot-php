@@ -10,6 +10,8 @@ require_once __DIR__ . '/../helpers/request_budget.php';
 
 class MarzneshinClient {
     public static string $lastError = '';
+    public static int $lastHttpCode = 0;
+    public static ?int $lastUsersTotal = null;
     public static ?Closure $transport = null;
 
     public static function getLastError(): string {
@@ -29,6 +31,7 @@ class MarzneshinClient {
         int $timeoutSeconds = 5
     ): ?array {
         self::$lastError = '';
+        self::$lastHttpCode = 0;
         if (self::$transport !== null) return (self::$transport)($server, $method, $endpoint, $payload, $timeoutSeconds);
         $baseUrl = rtrim($server['base_url'], '/');
         $url = $baseUrl . $endpoint;
@@ -70,6 +73,7 @@ class MarzneshinClient {
 
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        self::$lastHttpCode = (int)$httpCode;
         $err = curl_error($ch);
         curl_close($ch);
 
@@ -179,6 +183,14 @@ class MarzneshinClient {
         ?bool $limited = null,
         int $timeoutSeconds = 5
     ): ?array {
+        self::$lastUsersTotal = null;
+        $endpoint = self::usersEndpoint($page,$size,$search,$status,$ownerUsername,$expired,$limited);
+        $resp = self::request($server, 'GET', $endpoint, null, true, false, $timeoutSeconds);
+        foreach (['total','count','total_count'] as $key) if(isset($resp[$key]) && is_numeric($resp[$key])) { self::$lastUsersTotal=(int)$resp[$key]; break; }
+        return $resp['items'] ?? null;
+    }
+
+    public static function usersEndpoint(int $page,int $size,?string $search=null,?string $status=null,?string $ownerUsername=null,?bool $expired=null,?bool $limited=null): string {
         $query = [
             'page' => $page,
             'size' => $size,
@@ -205,9 +217,7 @@ class MarzneshinClient {
             }
         }
 
-        $endpoint = '/api/users?' . http_build_query($query);
-        $resp = self::request($server, 'GET', $endpoint, null, true, false, $timeoutSeconds);
-        return $resp['items'] ?? null;
+        return '/api/users?' . http_build_query($query);
     }
 
     /**

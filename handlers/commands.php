@@ -134,13 +134,14 @@ class CommandHandlers {
             return true;
         }
 
-        $user = PanelManager::getUser($server, $username);
+        $user = PanelManager::getUser($server, $username,true);
         if (!$user) {
             tg_send_message($chatId, "❌ Not Found.");
             return true;
         }
 
         $card = Formatter::userCard($server, $user);
+        if(method_exists(Storage::class,'rememberUserBack')) Storage::rememberUserBack($chatId,$serverId,$user['username'],"stats_cached:{$serverId}");
         $kb = Keyboards::userActions($serverId, $user['username'], $user['is_active'], $user['status'], "stats_cached:{$serverId}");
         self::sendFreshMenu($chatId, $card, $kb);
         return true;

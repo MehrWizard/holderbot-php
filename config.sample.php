@@ -60,6 +60,8 @@ return [
     'queue_cron_budget_seconds' => 300,
     'scan_page_size' => 1000,
     'scan_request_timeout_seconds' => 25,
+    // Concurrent read-only user pages. Keep between 1 and 8 for shared hosts.
+    'scan_parallel_requests' => 4,
     'queue_retention_days' => 7,
     'inline_lease_seconds' => 120,
 

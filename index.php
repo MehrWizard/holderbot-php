@@ -159,6 +159,10 @@ try {
 } catch (Throwable $e) {
     $reference=substr(hash('sha256',$e->getMessage().'|'.$e->getFile().'|'.$e->getLine().'|'.microtime(true)),0,12);
     error_log("HolderBot unhandled exception [{$reference}]: " . $e->getMessage() . "\n" . $e->getTraceAsString());
+    if(!empty($update['callback_query']['id'])) {
+        try { tg_answer_callback($update['callback_query']['id'],'Request failed. Reference: '.$reference,true); }
+        catch(Throwable $callbackError){error_log("HolderBot could not answer failed callback [{$reference}]: ".$callbackError->getMessage());}
+    }
     if ($interactiveChat !== null) {
         try {
             $detail=preg_replace('/\s+/u',' ',trim($e->getMessage()))?:'No exception details were provided.';

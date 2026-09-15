@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/marzban.php';
 require_once __DIR__ . '/marzneshin.php';
+require_once __DIR__ . '/../helpers/parallel_panel.php';
 
 final class PanelScanException extends RuntimeException {
     public function __construct(string $message, public readonly int $nextPageSize, ?Throwable $previous=null) { parent::__construct($message,0,$previous); }
@@ -28,17 +29,49 @@ class PanelManager {
     /**
      * Get a single user.
      */
-    public static function getUser(array $server, string $username): ?array {
+    public static function getUser(array $server, string $username, bool $strict=false): ?array {
         $type = strtolower($server['type'] ?? 'marzban');
         $raw = ($type === 'marzneshin')
             ? MarzneshinClient::getUser($server, $username)
             : MarzbanClient::getUser($server, $username);
 
         if (!$raw || empty($raw['username'])) {
+            $code=$type==='marzneshin'?MarzneshinClient::$lastHttpCode:MarzbanClient::$lastHttpCode;
+            if($strict && $code!==404) self::throwReadFailure($server,'user '.$username);
             return null;
         }
 
         return self::normalizeUser($server, $raw);
+    }
+
+    public static function getLastUsersTotal(array $server): ?int {
+        return strtolower($server['type']??'marzban')==='marzneshin' ? MarzneshinClient::$lastUsersTotal : MarzbanClient::$lastUsersTotal;
+    }
+
+    private static function throwReadFailure(array $server,string $resource): never {
+        $detail=preg_replace('/\s+/u',' ',trim(self::getLastError($server)))?:'No response details were returned by the panel';
+        preg_match('/\A.{0,700}/us',$detail,$match);
+        throw new RuntimeException(sprintf('Panel %s request failed. Server: %s; adapter: %s; panel response: %s',$resource,(string)($server['remark']??'#'.($server['id']??'?')),strtolower($server['type']??'marzban'),$match[0]??'Unknown panel error'));
+    }
+
+    /** Fetch an independently checkpointable group of pages concurrently. */
+    public static function scanUserPages(array $server,int $startPage,int $count,int $pageSize,?string $search=null,?string $status=null,?string $admin=null): array {
+        $count=max(1,min(8,$count));
+        $type=strtolower($server['type']??'marzban');
+        $client=$type==='marzneshin'?MarzneshinClient::class:MarzbanClient::class;
+        if($client::$transport!==null || $count===1 || !function_exists('curl_multi_init')) {
+            $out=[]; for($p=$startPage;$p<$startPage+$count;$p++) $out[$p]=self::getUsers($server,$p,$pageSize,$search,$status,$admin,true,max(5,min(45,(int)($GLOBALS['config']['scan_request_timeout_seconds']??25)))); return $out;
+        }
+        $token=$client::getToken($server); if(!$token) self::throwReadFailure($server,'authentication');
+        $endpoints=[];
+        for($p=$startPage;$p<$startPage+$count;$p++) {
+            $endpoints[$p]=$type==='marzneshin'
+                ? MarzneshinClient::usersEndpoint($p,$pageSize,$search,$status,$admin,$status==='expired'?true:null,$status==='limited'?true:null)
+                : MarzbanClient::usersEndpoint(($p-1)*$pageSize,$pageSize,$search,$status,$admin);
+        }
+        try{$raw=ParallelPanel::fetch($server,$endpoints,$token,max(5,min(45,(int)($GLOBALS['config']['scan_request_timeout_seconds']??25))));}
+        catch(Throwable $e){throw new RuntimeException('Concurrent panel page group failed at pages '.$startPage.'-'.($startPage+$count-1).'. '.$e->getMessage(),0,$e);}
+        $out=[]; foreach($raw as $p=>$response){$items=$type==='marzneshin'?($response['items']??null):($response['users']??null);if(!is_array($items))throw new RuntimeException("Panel page {$p} response omitted its user list");$out[$p]=array_map(fn($u)=>self::normalizeUser($server,$u),$items);} return $out;
     }
 
     /** A failed lookup is distinct from a confirmed missing username. */
@@ -441,13 +474,14 @@ class PanelManager {
     /**
      * Get list of admin usernames.
      */
-    public static function getAdmins(array $server): array {
+    public static function getAdmins(array $server, bool $strict=true): array {
         $type = strtolower($server['type'] ?? 'marzban');
         $raw = ($type === 'marzneshin')
             ? MarzneshinClient::getAdmins($server)
             : MarzbanClient::getAdmins($server);
 
         if (!is_array($raw)) {
+            if($strict) self::throwReadFailure($server,'administrator-list');
             return [];
         }
 
@@ -556,14 +590,15 @@ class PanelManager {
     /**
      * Get available services/configs from the panel.
      */
-    public static function getServices(array $server): array {
+    public static function getServices(array $server, bool $strict=true): array {
         $type = strtolower($server['type'] ?? 'marzban');
         if ($type === 'marzneshin') {
             $services = MarzneshinClient::getServices($server);
+            if(!is_array($services) && $strict) self::throwReadFailure($server,'service-list');
             return is_array($services) ? $services : [];
         } else {
             $allInbounds = MarzbanClient::getInbounds($server);
-            if (!is_array($allInbounds)) return [];
+            if (!is_array($allInbounds)) { if($strict) self::throwReadFailure($server,'inbound-list'); return []; }
             $result = [];
             foreach ($allInbounds as $proto => $list) {
                 $items = isset($list['tag']) ? [$list] : (is_array($list) ? $list : []);
@@ -804,7 +839,7 @@ class PanelManager {
             ? MarzneshinClient::getNodes($server)
             : MarzbanClient::getNodes($server);
 
-        if ($strict && !is_array($raw)) throw new RuntimeException('Unable to read panel nodes');
+        if ($strict && !is_array($raw)) self::throwReadFailure($server,'node-list');
         return is_array($raw) ? $raw : [];
     }
 

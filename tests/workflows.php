@@ -21,10 +21,13 @@ class Storage {
     public static function clearState($id): void { unset(self::$state[$id]); }
     public static function cacheGet($key): mixed { return self::$cache[$key] ?? null; }
     public static function cacheSet($key,$value,...$args): void { self::$cache[$key]=$value; }
+    public static function rememberUserBack($chat,$server,$username,$callback): void { self::$cache['back|'.$chat.'|'.$server.'|'.$username]=$callback; }
+    public static function userBack($chat,$server,$username): ?string { return self::$cache['back|'.$chat.'|'.$server.'|'.$username]??null; }
 }
 class PanelManager {
     public static array $calls=[];
     public static array $users=[];
+    public static ?int $total=null;
     public static function modifyUserDataLimit($server,$username,$value): bool { self::$calls[]=['data',$username,$value]; return false; }
     public static function modifyUserNote($server,$username,$value): bool { self::$calls[]=['note',$username,$value]; return true; }
     public static function getServices($server): array { return [['id'=>'one:tcp','name'=>'One'],['id'=>'two','name'=>'Two']]; }
@@ -32,6 +35,7 @@ class PanelManager {
     public static function updateUserConfigs($server,$username,$ids): bool { self::$calls[]=['configs',$username,$ids]; return false; }
     public static function setOwner($server,$username,$admin): bool { self::$calls[]=['owner',$username,$admin]; return false; }
     public static function getUsers($server,$page,$size,$search=null,$status=null): array { self::$calls[]=['list',$page,$size,$search,$status]; return self::$users; }
+    public static function getLastUsersTotal($server): ?int { return self::$total; }
     public static function getUser($server,$username): array { self::$calls[]=['exact',$username]; return ['username'=>$username,'is_active'=>true,'status'=>'active','service_ids'=>['one:tcp','two']]; }
 }
 class Formatter {
@@ -95,12 +99,19 @@ check(Storage::getState(42)===null && end($events)[0]==='edit' && end($events)[1
 callback('queue_home'); check(end($events)[0]==='edit' && end(NotificationOutbox::$detached)===['99',5],'Loading Home did not detach and edit recent message');
 callback('queue_back:1'); check(end($events)[0]==='edit' && count(NotificationOutbox::$detached)===2,'Loading Back did not detach and edit recent message');
 PanelManager::$users=array_fill(0,10,['username'=>'test','is_active'=>true]);
+$before=count(PanelManager::$calls);
 callback('users:1:2:expired');
-check(end(PanelManager::$calls)===['list',3,10,null,'expired'],'User pagination did not use a page-safe exact look-ahead');
+check(count(PanelManager::$calls)===$before+1 && end(PanelManager::$calls)===['list',2,10,null,'expired'],'User pagination made more than one panel request');
 $keys=buttons(end($events)[1][3]);
 check(in_array('users:1:1:expired',$keys,true) && in_array('users:1:3:expired',$keys,true),'Pagination lost filter');
+$userKeys=array_values(array_filter($keys,fn($key)=>str_starts_with($key,'usr:')));callback($userKeys[0]);check(in_array('users:1:2:expired',buttons(end($events)[1][3]),true),'User card lost its originating list page and filter');
 PanelManager::$users=[]; callback('users:1:3:expired');
-check(end($events)[0]==='alert' && end($events)[1][2]===true,'Empty page replaced menu instead of alert');
+check(end($events)[0]==='edit' && end($events)[1][2]==='No users found.','Empty page did not render a navigable empty state');
+Storage::$cache=[];callback('ref:missing');check(end($events)[0]==='alert' && str_contains(end($events)[1][1],'expired'),'Expired callback reference was not explained');
+$many=array_map(fn($i)=>['id'=>$i,'remark'=>'S'.$i,'is_active'=>1],range(1,41));$home=Keyboards::home($many,99);check(in_array('srv:41',buttons($home),true),'Server selector did not clamp an obsolete page');
+$templates=array_map(fn($i)=>['id'=>$i,'remark'=>'T'.$i,'is_active'=>1,'data_limit'=>1,'date_limit'=>1],range(1,41));check(in_array('tmpl_view:41:3',buttons(Keyboards::templatesMenu($templates,99)),true),'Template selector did not clamp an obsolete page');
+$admins=array_map(fn($i)=>'admin'.$i,range(1,41));check(in_array('pick:1:admin41',buttons(Keyboards::adminsSelector(1,$admins,'pick',false,null,99)),true),'Admin selector did not clamp an obsolete page');
+$services=array_map(fn($i)=>['id'=>$i,'name'=>'C'.$i],range(1,41));check(in_array('pick:tgl:1:41',buttons(Keyboards::configSelector(1,$services,[],'pick','done','back',99)),true),'Config selector did not clamp an obsolete page');
 $state=['step'=>'search_user','data'=>['server_id'=>1]];
 StateHandlers::handle(['text'=>'query','chat'=>['id'=>99],'from'=>['id'=>42]],$state);
 check(end(PanelManager::$calls)===['list',1,10,'query',null],'Search wizard lookup differs from command');

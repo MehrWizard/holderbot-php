@@ -319,7 +319,7 @@ final class BatchQueue
     public static function revoke(array &$job, array $server): ?array
     {
         $username = (string)$job['params']['username'];
-        $before = PanelManager::getUser($server, $username);
+        $before = PanelManager::getUser($server, $username,true);
         if (!$before || empty($before['subscription_url'])) throw new RuntimeException('Cannot read subscription before revoke');
         $job['params']['mutation_intent'] = ['username'=>$username, 'phase'=>'revoke_subscription',
             'before'=>$before['raw'] ?? [], 'payload'=>['previous_subscription_sha256'=>hash('sha256', $before['subscription_url'])]];
@@ -331,7 +331,7 @@ final class BatchQueue
     public static function reset(array &$job, array $server): bool
     {
         $username=(string)$job['params']['username'];
-        $before=PanelManager::getUser($server,$username);
+        $before=PanelManager::getUser($server,$username,true);
         if (!$before) throw new RuntimeException('Cannot read user before usage reset');
         $job['params']['mutation_intent']=['username'=>$username,'phase'=>'reset_usage','before'=>$before['raw'],'payload'=>[]];
         $job['active']='mutation'; self::save($job);
@@ -341,7 +341,7 @@ final class BatchQueue
     public static function mutateUser(array &$job,array $server): bool
     {
         $p=$job['params']; $username=(string)($p['username'] ?? ''); $operation=(string)($p['operation'] ?? '');
-        $before=PanelManager::getUser($server,$username);
+        $before=PanelManager::getUser($server,$username,true);
         if(!$before) throw new RuntimeException('Cannot read user before mutation');
         $raw=$before['raw']; $expected=[];
         $call=match($operation) {
@@ -718,7 +718,7 @@ final class BatchQueue
             $messageId = (int)($params['message_id'] ?? 0);
             $username = (string)($params['username'] ?? '');
             if ($messageId <= 0 || $username === '') throw new InvalidArgumentException('QR request is incomplete');
-            $user = PanelManager::getUser($server, $username);
+            $user = PanelManager::getUser($server, $username,true);
             if (!$user || empty($user['subscription_url'])) throw new InvalidArgumentException('No subscription link available for QR');
             self::resultNotices($job,$user);
             $job['success']=1; $job['total']=1; $job['cursor']=1; $job['status']='completed'; return;
@@ -752,24 +752,41 @@ final class BatchQueue
                 $page = max(1, (int)($params['page'] ?? 1));
                 $pageSize = (int)($params['page_size'] ?? PanelManager::pageSize($server));
                 if ($page === 1) $params['page_size'] = $pageSize;
-                $scan = PanelManager::scanUsers($server, $page, $pageSize);
-                $users = $scan['users'];
-                $pageSize = (int)$scan['page_size'];
-                $params['page_size'] = $pageSize;
-                $part = PanelManager::statsForUsers($server, $users, (int)($params['now'] ?? time()), PanelManager::getBotUsername());
-                self::storeReportPage($job['id'], $page, $part['today_expired']);
-                $part['today_expired'] = [];
-                foreach ($part as $key => $value) $stats[$key] = is_array($value) ? array_merge($stats[$key] ?? [], $value) : (int)($stats[$key] ?? 0) + (int)$value;
-                $more = (bool)$users;
-                if ($page === 1 && $users && count($users) < $pageSize) {
-                    $params['page_size'] = count($users);
-                    PanelManager::rememberPageSize($server, count($users), (float)$scan['elapsed']);
-                    $probeTimeout=max(5,min(45,(int)($GLOBALS['config']['scan_request_timeout_seconds']??25)));
-                    $more = (bool)PanelManager::getUsers($server, 2, count($users), null, null, null, true, $probeTimeout);
+                $parallel=max(1,min(8,(int)($GLOBALS['config']['scan_parallel_requests']??4)));
+                if($page===1){
+                    $scan=PanelManager::scanUsers($server,1,$pageSize); $pages=[1=>$scan['users']];
+                    $pageSize=(int)$scan['page_size']; $params['page_size']=$pageSize;
+                    $knownTotal=method_exists(PanelManager::class,'getLastUsersTotal')?PanelManager::getLastUsersTotal($server):null;
+                    if($knownTotal!==null)$params['known_total']=$knownTotal;
+                    if($knownTotal!==null && $knownTotal>count($scan['users']) && count($scan['users'])>0 && count($scan['users'])<$pageSize){$pageSize=count($scan['users']);$params['page_size']=$pageSize;PanelManager::rememberPageSize($server,$pageSize,(float)$scan['elapsed']);}
+                    elseif($knownTotal===null && count($scan['users'])>0 && count($scan['users'])<$pageSize){
+                        $pageSize=count($scan['users']);$params['page_size']=$pageSize;PanelManager::rememberPageSize($server,$pageSize,(float)$scan['elapsed']);
+                        $pages[2]=PanelManager::getUsers($server,2,$pageSize,null,null,null,true,max(5,min(45,(int)($GLOBALS['config']['scan_request_timeout_seconds']??25))));
+                    }
+                } else {
+                    if(isset($params['known_total'])) $parallel=min($parallel,max(1,(int)ceil((int)$params['known_total']/$pageSize)-$page+1));
+                    $pages=method_exists(PanelManager::class,'scanUserPages')
+                        ? PanelManager::scanUserPages($server,$page,$parallel,$pageSize)
+                        : [$page=>PanelManager::getUsers($server,$page,$pageSize)];
+                }
+                $more=false;$nextPage=$page;
+                foreach($pages as $scannedPage=>$users){
+                    if(!$users){$more=false;break;}
+                    $part=PanelManager::statsForUsers($server,$users,(int)($params['now']??time()),PanelManager::getBotUsername());
+                    self::storeReportPage($job['id'],(int)$scannedPage,$part['today_expired']);$part['today_expired']=[];
+                    foreach($part as $key=>$value)$stats[$key]=is_array($value)?array_merge($stats[$key]??[],$value):(int)($stats[$key]??0)+(int)$value;
+                    $nextPage=(int)$scannedPage+1;
+                    // Commit every completed page. A killed worker resumes at the
+                    // next page; report inserts are idempotent if death occurs
+                    // between the report write and this parent checkpoint.
+                    $params['stats']=$stats;$params['page']=$nextPage;$params['now']=(int)($params['now']??time());$job['params']=$params;self::save($job);
+                    $knownTotal=isset($params['known_total'])?(int)$params['known_total']:null;
+                    $more=$knownTotal!==null ? $stats['total']<$knownTotal : count($users)>=$pageSize;
+                    if(!$more)break;
                 }
                 if ($more) {
                     $params['stats'] = $stats;
-                    $params['page'] = $page + 1;
+                    $params['page'] = $nextPage;
                     $params['now'] = (int)($params['now'] ?? time());
                     $job['params'] = $params;
                     return;
@@ -846,7 +863,7 @@ final class BatchQueue
 
         $before=null; $expected=[];
         if(in_array($job['kind'],['delete','transfer','config','admin_status'],true)) {
-            $before=PanelManager::getUser($server,$username);
+            $before=PanelManager::getUser($server,$username,true);
             if(!$before) throw new RuntimeException('Cannot read user before bulk mutation');
             $expected=match($job['kind']) {
                 'transfer'=>['owner_username'=>(string)$params['to_admin']],

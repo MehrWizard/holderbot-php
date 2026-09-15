@@ -10,6 +10,8 @@ require_once __DIR__ . '/../helpers/request_budget.php';
 
 class MarzbanClient {
     public static string $lastError = '';
+    public static int $lastHttpCode = 0;
+    public static ?int $lastUsersTotal = null;
     public static ?Closure $transport = null;
 
     public static function getLastError(): string {
@@ -30,6 +32,7 @@ class MarzbanClient {
         int $timeoutSeconds = 5
     ): ?array {
         self::$lastError = '';
+        self::$lastHttpCode = 0;
         if (self::$transport !== null) return (self::$transport)($server, $method, $endpoint, $payload, $timeoutSeconds);
         $baseUrl = rtrim($server['base_url'], '/');
         $url = $baseUrl . $endpoint;
@@ -73,6 +76,7 @@ class MarzbanClient {
 
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        self::$lastHttpCode = (int)$httpCode;
         $err = curl_error($ch);
         curl_close($ch);
 
@@ -191,6 +195,14 @@ class MarzbanClient {
         ?string $admin = null,
         int $timeoutSeconds = 5
     ): ?array {
+        self::$lastUsersTotal = null;
+        $endpoint = self::usersEndpoint($offset, $limit, $search, $status, $admin);
+        $resp = self::request($server, 'GET', $endpoint, null, true, false, null, $timeoutSeconds);
+        if (isset($resp['total']) && is_numeric($resp['total'])) self::$lastUsersTotal = (int)$resp['total'];
+        return $resp['users'] ?? null;
+    }
+
+    public static function usersEndpoint(int $offset, int $limit, ?string $search=null, ?string $status=null, ?string $admin=null): string {
         $query = [
             'offset' => $offset,
             'limit' => $limit,
@@ -206,9 +218,7 @@ class MarzbanClient {
             $query['admin'] = $admin;
         }
 
-        $endpoint = '/api/users?' . http_build_query($query);
-        $resp = self::request($server, 'GET', $endpoint, null, true, false, null, $timeoutSeconds);
-        return $resp['users'] ?? null;
+        return '/api/users?' . http_build_query($query);
     }
 
     /**

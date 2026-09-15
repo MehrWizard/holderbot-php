@@ -11,9 +11,13 @@ from urllib.parse import urlparse, parse_qs
 
 root = Path(__file__).resolve().parents[1]
 calls = []
+scan_active = 0
+scan_peak = 0
+scan_lock = threading.Lock()
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
     def handle_request(self):
+        global scan_active, scan_peak
         body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
         payload = json.loads(body) if body and 'json' in self.headers.get('Content-Type','') else parse_qs(body.decode())
         path = urlparse(self.path).path
@@ -29,7 +33,17 @@ class Handler(BaseHTTPRequestHandler):
             result=dict(payload,subscription_url='/sub/test',is_active=True,activated=True,status=payload.get('status','active'))
         elif path.startswith('/api/user') and self.command=='PUT':
             result=dict(payload,username=payload.get('username','client'),subscription_url='/sub/test',status=payload.get('status','active'))
-        elif path=='/api/users': result={'users':[],'items':[]}
+        elif path.endswith('/missing') and self.command=='GET': status=404; result={'detail':'user not found'}
+        elif path.endswith('/unavailable') and self.command=='GET': status=503; result={'detail':'panel maintenance'}
+        elif path=='/api/users':
+            query=parse_qs(urlparse(self.path).query)
+            if query.get('limit')==['3']:
+                with scan_lock:
+                    scan_active += 1; scan_peak=max(scan_peak,scan_active)
+                time.sleep(.2)
+                with scan_lock: scan_active -= 1
+                offset=int(query.get('offset',['0'])[0]); result={'users':[{'username':f'user-{offset}'}],'total':12}
+            else: result={'users':[],'items':[],'total':0}
         if path in ['/api/nodes', '/api/admins', '/empty-array']: result=[]
         if path=='/slow': time.sleep(1)
         if path=='/empty-body': status=204
@@ -58,6 +72,7 @@ foreach(['marzban','marzneshin'] as $kind) {
   if (!PanelManager::updateDateLimit($s,'client',2,$date)) throw new RuntimeException('Date edit failed');
  }
  PanelManager::getUsers($s,2,10,'client','active','alice');
+ if(PanelManager::getLastUsersTotal($s)!==0)throw new RuntimeException('Panel total metadata was not retained');
  PanelManager::setOwner($s,'client','alice');
  $s['password']='bad';
  $token=$kind==='marzban'?MarzbanClient::getToken($s):MarzneshinClient::getToken($s);
@@ -76,6 +91,10 @@ foreach(['marzban','marzneshin'] as $kind) {
 }
 $s['type']='marzban';
 if (PanelManager::getNodes($s)!==[] || PanelManager::getAdmins($s)!==[]) throw new RuntimeException('Empty panel lists corrupted');
+if(PanelManager::getUser($s,'missing',true)!==null)throw new RuntimeException('Confirmed missing user was treated as a panel failure');
+try{PanelManager::getUser($s,'unavailable',true);throw new RuntimeException('Panel read failure was accepted as missing');}catch(RuntimeException $e){if(!str_contains($e->getMessage(),'panel maintenance'))throw $e;}
+$started=microtime(true);$pages=PanelManager::scanUserPages($s,1,4,3);$elapsed=microtime(true)-$started;
+if(array_keys($pages)!==[1,2,3,4] || $pages[4][0]['username']!=='user-9')throw new RuntimeException('Concurrent page scan returned incorrect pages');
 '''
 try:
     with tempfile.TemporaryDirectory() as tmp:
@@ -105,6 +124,7 @@ try:
     assert queries[0]['query']=={'offset':['10'],'limit':['10'],'sort':['-created_at'],'search':['client'],'status':['active'],'admin':['alice']}
     assert queries[1]['query']=={'page':['2'],'size':['10'],'order_by':['created_at'],'descending':['true'],'username':['client'],'owner_username':['alice'],'is_active':['true']}
     assert len([c for c in calls if c['path'].endswith('/token')])==4, 'Token cache must isolate changed credentials'
+    assert scan_peak >= 2, 'Independent panel pages were not fetched concurrently'
     print(f'PASS: {len(calls)} local HTTP requests, both panel clients')
 finally:
     server.shutdown(); server.server_close()

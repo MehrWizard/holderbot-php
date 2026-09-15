@@ -386,4 +386,14 @@ class Storage {
     public static function cacheDelete(string $key): void {
         self::db()->prepare('DELETE FROM bot_cache WHERE cache_key=?')->execute([$key]);
     }
+
+    private static function userBackKey(int|string $chatId,int $serverId,string $username): string {
+        return 'user_back_'.hash('sha256',(string)$chatId.'|'.$serverId.'|'.$username);
+    }
+    public static function rememberUserBack(int|string $chatId,int $serverId,string $username,string $callback): void {
+        self::cacheSet(self::userBackKey($chatId,$serverId,$username),$callback,86400);
+    }
+    public static function userBack(int|string $chatId,int $serverId,string $username): ?string {
+        $value=self::cacheGet(self::userBackKey($chatId,$serverId,$username)); return is_string($value)&&$value!==''?$value:null;
+    }
 }
