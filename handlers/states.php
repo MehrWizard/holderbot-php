@@ -22,6 +22,9 @@ class StateHandlers {
             case 'search_user':
                 return self::handleSearchUser($chatId, $userId, $text, $data);
 
+            case 'search_admin':
+                return self::handleSearchAdmin($chatId,$userId,$text,$data);
+
             case 'create_user_name':
                 return self::handleCreateUserName($chatId, $userId, $text, $data);
 
@@ -112,6 +115,16 @@ class StateHandlers {
         $results = PanelManager::getUsers($server, 1, 10, $query);
         $kb = Keyboards::usersList($serverId, $results, 1, false, 'all', true);
         tg_send_message($chatId, "Select items", $kb);
+        return true;
+    }
+
+    private static function handleSearchAdmin(int|string $chatId,int $userId,string $query,array $data): bool {
+        $serverId=(int)($data['server_id']??0);$server=Storage::getServer($serverId);$query=trim($query);
+        if(!$server){Storage::clearState($userId);tg_send_message($chatId,'❌ Server not found.');return true;}
+        if($query==='' || preg_match_all('/./us',$query)>100){tg_send_message($chatId,'❌ Enter an administrator username of 1–100 characters.',Keyboards::cancel("srv:{$serverId}"));return true;}
+        Storage::setState($userId,'search_admin_results',['server_id'=>$serverId,'query'=>$query]);
+        require_once __DIR__.'/callbacks.php';
+        CallbackHandlers::renderAdminSearchResults($chatId,0,$serverId,$query,1);
         return true;
     }
 

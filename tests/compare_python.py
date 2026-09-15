@@ -149,5 +149,9 @@ for index,(fixture,value) in enumerate(zip(fixtures,actual)):
         expected.append(['🗃 Templates','➕ Add Server'])
     if fixture['kind']=='keyboard' and fixture['method']=='templateActions':
         expected[-1]=['◀️ Back','🏛️ Home']
+    if fixture['kind']=='keyboard' and fixture['method']=='serverMenu':
+        # PHP extension requested after parity: searchable panel administrators.
+        for row in expected:
+            if row==['🔍 Search User']: row.append('🔍 Search Admin')
     assert value == expected, f"Fixture {index} {fixture['kind']}:\nExpected: {expected!r}\nActual: {value!r}"
 print(f'PASS: {len(fixtures)} differential fixtures evaluated against original Python code')

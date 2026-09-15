@@ -28,10 +28,11 @@ class PanelManager {
     public static array $calls=[];
     public static array $users=[];
     public static ?int $total=null;
+    public static array $admins=['new_admin','admin1','admin2'];
     public static function modifyUserDataLimit($server,$username,$value): bool { self::$calls[]=['data',$username,$value]; return false; }
     public static function modifyUserNote($server,$username,$value): bool { self::$calls[]=['note',$username,$value]; return true; }
     public static function getServices($server): array { return [['id'=>'one:tcp','name'=>'One'],['id'=>'two','name'=>'Two']]; }
-    public static function getAdmins($server): array { return ['new_admin','admin1','admin2']; }
+    public static function getAdmins($server): array { return self::$admins; }
     public static function updateUserConfigs($server,$username,$ids): bool { self::$calls[]=['configs',$username,$ids]; return false; }
     public static function setOwner($server,$username,$admin): bool { self::$calls[]=['owner',$username,$admin]; return false; }
     public static function getUsers($server,$page,$size,$search=null,$status=null): array { self::$calls[]=['list',$page,$size,$search,$status]; return self::$users; }
@@ -98,6 +99,11 @@ Storage::setState(42,'create_user_name',[]); callback('home');
 check(Storage::getState(42)===null && end($events)[0]==='edit' && end($events)[1][2]==='Shared welcome','Home did not clear wizard and edit menu');
 callback('queue_home'); check(end($events)[0]==='edit' && end(NotificationOutbox::$detached)===['99',5],'Loading Home did not detach and edit recent message');
 callback('queue_back:1'); check(end($events)[0]==='edit' && count(NotificationOutbox::$detached)===2,'Loading Back did not detach and edit recent message');
+check(in_array('srch_adm:1',buttons(Keyboards::serverMenu(1)),true),'Server menu omitted administrator search');
+callback('srch_adm:1');check(Storage::getState(42)['step']==='search_admin','Administrator search did not start');
+StateHandlers::handle(['text'=>'admin','chat'=>['id'=>99],'from'=>['id'=>42]],Storage::getState(42));$adminResultKeys=buttons(end($events)[1][3]);$adminView=array_values(array_filter($adminResultKeys,fn($key)=>str_contains($key,':admin1:')))[0];callback($adminView);$adminActionKeys=buttons(end($events)[1][3]);check(in_array('adm_act:act_adm:1:admin1:1',$adminActionKeys,true),'Administrator result did not open its action screen');
+callback('adm_act:act_adm:1:admin1:1');check(Storage::getState(42)['step']==='bulk_confirm'&&in_array('exec_act:act_adm:1:admin1',buttons(end($events)[1][3]),true),'Administrator activation did not reuse the confirmed bulk action');
+callback('srch_adm:1');
 PanelManager::$users=array_fill(0,10,['username'=>'test','is_active'=>true]);
 $before=count(PanelManager::$calls);
 callback('users:1:2:expired');
@@ -112,6 +118,7 @@ Storage::$cache=[];callback('ref:missing');check(end($events)[0]==='alert' && st
 $many=array_map(fn($i)=>['id'=>$i,'remark'=>'S'.$i,'is_active'=>1],range(1,41));$home=Keyboards::home($many,99);check(in_array('srv:41',buttons($home),true),'Server selector did not clamp an obsolete page');
 $templates=array_map(fn($i)=>['id'=>$i,'remark'=>'T'.$i,'is_active'=>1,'data_limit'=>1,'date_limit'=>1],range(1,41));check(in_array('tmpl_view:41:3',buttons(Keyboards::templatesMenu($templates,99)),true),'Template selector did not clamp an obsolete page');
 $admins=array_map(fn($i)=>'admin'.$i,range(1,41));check(in_array('pick:1:admin41',buttons(Keyboards::adminsSelector(1,$admins,'pick',false,null,99)),true),'Admin selector did not clamp an obsolete page');
+check(in_array('adm_view:1:admin41:3',buttons(Keyboards::adminSearchResults(1,$admins,99)),true),'Administrator search did not clamp an obsolete page');
 $services=array_map(fn($i)=>['id'=>$i,'name'=>'C'.$i],range(1,41));check(in_array('pick:tgl:1:41',buttons(Keyboards::configSelector(1,$services,[],'pick','done','back',99)),true),'Config selector did not clamp an obsolete page');
 $state=['step'=>'search_user','data'=>['server_id'=>1]];
 StateHandlers::handle(['text'=>'query','chat'=>['id'=>99],'from'=>['id'=>42]],$state);

@@ -73,6 +73,11 @@ class CallbackHandlers {
             tg_edit_message($chatId,$messageId,'Select items',Keyboards::templateSelector($serverId,Storage::getActiveTemplates(),$prefix,$prefix==='use_tmpl',$page,$back));
             return;
         }
+        if(str_starts_with($data,'admins_search_page:')) {
+            $parts=explode(':',$data,3);$serverId=(int)($parts[1]??0);$page=max(1,(int)($parts[2]??1));$state=Storage::getState($userId);
+            if(($state['step']??'')!=='search_admin_results'||(int)($state['data']['server_id']??0)!==$serverId){tg_answer_callback($id,'Search expired. Start a new administrator search.',true);return;}
+            tg_answer_callback($id);self::renderAdminSearchResults($chatId,$messageId,$serverId,(string)($state['data']['query']??''),$page);return;
+        }
 
         if (str_starts_with($data, 'queue_back:')) {
             $serverId = (int)substr($data, strlen('queue_back:'));
@@ -798,7 +803,7 @@ class CallbackHandlers {
             Storage::setState($userId, 'xfer_confirm', $state['data']);
 
             tg_answer_callback($id);
-            $kb = Keyboards::confirm("xfer_ok:{$serverId}", "act_menu:{$serverId}");
+            $kb = Keyboards::confirm("xfer_ok:{$serverId}", (string)($state['data']['return_to']??"act_menu:{$serverId}"));
             tg_edit_message(
                 $chatId,
                 $messageId,
@@ -1048,6 +1053,31 @@ class CallbackHandlers {
                 Keyboards::cancel("srv:{$serverId}")
             );
             return;
+        }
+
+        if(str_starts_with($data,'srch_adm:')) {
+            $serverId=(int)substr($data,strlen('srch_adm:'));
+            if(!Storage::getServer($serverId)){tg_answer_callback($id,'Server not found.',true);return;}
+            Storage::setState($userId,'search_admin',['server_id'=>$serverId]);tg_answer_callback($id);
+            tg_edit_message($chatId,$messageId,'Enter administrator username:',Keyboards::cancel("srv:{$serverId}"));return;
+        }
+
+        if(str_starts_with($data,'adm_view:')) {
+            $parts=explode(':',$data,4);$serverId=(int)($parts[1]??0);$admin=rawurldecode($parts[2]??'');$page=max(1,(int)($parts[3]??1));$server=Storage::getServer($serverId);
+            if(!$server||!self::validAdmin($server,$admin,false)){tg_answer_callback($id,'Administrator not found.',true);return;}
+            tg_answer_callback($id);tg_edit_message($chatId,$messageId,'<b>Administrator:</b> <code>'.Formatter::escape($admin).'</code>',Keyboards::adminActions($serverId,$admin,$page));return;
+        }
+
+        if(str_starts_with($data,'adm_act:')) {
+            $parts=explode(':',$data,6);$action=$parts[1]??'';$serverId=(int)($parts[2]??0);$admin=rawurldecode($parts[3]??'');$page=max(1,(int)($parts[4]??1));$server=Storage::getServer($serverId);
+            if(!$server||!in_array($action,['act_adm','dis_adm','del_all','xfer_adm'],true)||!self::validAdmin($server,$admin,false)){tg_answer_callback($id,'Administrator action is no longer valid.',true);return;}
+            $back='adm_view:'.$serverId.':'.rawurlencode($admin).':'.$page;
+            if($action==='xfer_adm'){
+                Storage::setState($userId,'xfer_target',['server_id'=>$serverId,'from_admin'=>$admin,'return_to'=>$back]);
+                tg_answer_callback($id);tg_edit_message($chatId,$messageId,'Select destination administrator:',Keyboards::adminsSelector($serverId,PanelManager::getAdmins($server),'xfer_to',false,$back));return;
+            }
+            Storage::setState($userId,'bulk_confirm',['server_id'=>$serverId,'action'=>$action,'admin'=>$admin]);
+            tg_answer_callback($id);tg_edit_message($chatId,$messageId,'Are you sure?',Keyboards::confirm("exec_act:{$action}:{$serverId}:{$admin}",$back));return;
         }
 
         // Creation buttons are valid only for the current wizard and server.
@@ -1422,6 +1452,16 @@ class CallbackHandlers {
         $text = Formatter::serverCard($server);
         $kb = Keyboards::serverSettings($server);
         tg_edit_message($chatId, $messageId, $text, $kb);
+    }
+
+    public static function renderAdminSearchResults(int|string $chatId,int $messageId,int $serverId,string $query,int $page=1): void {
+        $server=Storage::getServer($serverId);
+        if(!$server){tg_edit_message($chatId,$messageId,'❌ Server not found.',Keyboards::home(Storage::getServers()));return;}
+        $needle=strtolower(trim($query));
+        $admins=array_values(array_filter(PanelManager::getAdmins($server),fn(string $admin):bool=>$needle===''||str_contains(strtolower($admin),$needle)));
+        natcasesort($admins);$admins=array_values($admins);
+        $text=$admins ? '<b>Administrators found:</b> '.count($admins) : '<b>No administrators found.</b>';
+        tg_edit_message($chatId,$messageId,$text,Keyboards::adminSearchResults($serverId,$admins,$page));
     }
 
     private static function renderUsersList(

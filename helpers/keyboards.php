@@ -49,7 +49,7 @@ class Keyboards {
         return self::navigationLast(['inline_keyboard' => [
             [self::button('👤 Users', "users:{$serverId}:1:all"), self::button('🗄 Actions', "act_menu:{$serverId}")],
             [self::button('📊 Stats', "stats:{$serverId}"), self::button('➕ Create User', "new_usr:{$serverId}")],
-            [self::button('🔍 Search User', "srch_usr:{$serverId}")],
+            [self::button('🔍 Search User', "srch_usr:{$serverId}"),self::button('🔍 Search Admin', "srch_adm:{$serverId}")],
             [self::button('☁️ Server', "srv_cfg:{$serverId}"), self::button('🏛️ Home', 'home')],
         ]]);
     }
@@ -115,6 +115,24 @@ class Keyboards {
         if($page*self::SELECTOR_PAGE<$total)$nav[]=self::button('➡️',"admins_page:{$serverId}:".($page+1).':'.(int)$includeAll.":{$token}:{$back}");
         if($nav)array_splice($markup['inline_keyboard'],-1,0,[$nav]);
         return $markup;
+    }
+    public static function adminSearchResults(int $serverId,array $admins,int $page=1): array {
+        $total=count($admins);$page=self::page($page,$total);$admins=array_slice($admins,($page-1)*self::SELECTOR_PAGE,self::SELECTOR_PAGE);
+        $buttons=[];foreach($admins as $admin)$buttons[]=self::button('👤 '.$admin,"adm_view:{$serverId}:".rawurlencode($admin).":{$page}");
+        $rows=array_chunk($buttons,2);$nav=[];
+        if($page>1)$nav[]=self::button('⬅️',"admins_search_page:{$serverId}:".($page-1));
+        if($page*self::SELECTOR_PAGE<$total)$nav[]=self::button('➡️',"admins_search_page:{$serverId}:".($page+1));
+        if($nav)$rows[]=$nav;
+        $rows[]=[self::button('🔍 Search Again',"srch_adm:{$serverId}")];
+        $rows[]=[self::button('◀️ Back',"srv:{$serverId}"),self::button('🏛️ Home','home')];
+        return self::navigationLast(['inline_keyboard'=>$rows]);
+    }
+    public static function adminActions(int $serverId,string $admin,int $page=1): array {
+        $encoded=rawurlencode($admin);$suffix="{$serverId}:{$encoded}:{$page}";
+        return self::rows([
+            self::button('✔️ Activate Users',"adm_act:act_adm:{$suffix}"),self::button('✖️ Disable Users',"adm_act:dis_adm:{$suffix}"),
+            self::button('🗑 Delete Users',"adm_act:del_all:{$suffix}"),self::button('💱 Transfer Users',"adm_act:xfer_adm:{$suffix}"),
+        ],2,"admins_search_page:{$serverId}:{$page}");
     }
     public static function templatesMenu(array $templates,int $page=1): array {
         $total=count($templates); $page=self::page($page,$total); $templates=array_slice($templates,($page-1)*self::SELECTOR_PAGE,self::SELECTOR_PAGE);
