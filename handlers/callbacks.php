@@ -61,7 +61,7 @@ class CallbackHandlers {
         if(str_starts_with($data,'bulk_services_page:')) {
             $parts=explode(':',$data);$serverId=(int)($parts[1]??0);$page=max(1,(int)($parts[2]??1));$server=Storage::getServer($serverId);$state=Storage::getState($userId);
             if(!$server || ($state['step']??'')!=='cfg_action_pick' || (int)($state['data']['server_id']??0)!==$serverId){tg_answer_callback($id,'Session expired, please retry.',true);return;}
-            tg_answer_callback($id);tg_edit_message($chatId,$messageId,'Select items',Keyboards::bulkServices($serverId,PanelManager::getServices($server),$page));return;
+            tg_answer_callback($id);tg_edit_message($chatId,$messageId,'Select items',Keyboards::bulkServices($serverId,PanelManager::getServices($server),$page,$state['data']['return_to']??null));return;
         }
         if(str_starts_with($data,'template_page:')) {
             $parts=explode(':',$data,4);$prefix=$parts[1]??'';$serverId=(int)($parts[2]??0);$page=max(1,(int)($parts[3]??1));
@@ -1064,17 +1064,38 @@ class CallbackHandlers {
 
         if(str_starts_with($data,'adm_view:')) {
             $parts=explode(':',$data,4);$serverId=(int)($parts[1]??0);$admin=rawurldecode($parts[2]??'');$page=max(1,(int)($parts[3]??1));$server=Storage::getServer($serverId);
-            if(!$server||!self::validAdmin($server,$admin,false)){tg_answer_callback($id,'Administrator not found.',true);return;}
-            tg_answer_callback($id);tg_edit_message($chatId,$messageId,'<b>Administrator:</b> <code>'.Formatter::escape($admin).'</code>',Keyboards::adminActions($serverId,$admin,$page));return;
+            if(!$server){tg_answer_callback($id,'Server not found.',true);return;}
+            tg_answer_callback($id);self::renderAdminCard($chatId,$messageId,$server,$admin,$page);return;
+        }
+
+        if(str_starts_with($data,'adm_users:')) {
+            $parts=explode(':',$data,6);$serverId=(int)($parts[1]??0);$admin=rawurldecode($parts[2]??'');$adminPage=max(1,(int)($parts[3]??1));$page=max(1,(int)($parts[4]??1));$server=Storage::getServer($serverId);
+            if(!$server||!PanelManager::getAdmin($server,$admin)){tg_answer_callback($id,'Administrator not found.',true);return;}
+            $limit=10;$users=PanelManager::getUsers($server,$page,$limit,null,null,$admin,true);$total=PanelManager::getLastUsersTotal($server);
+            if($total!==null&&$page>max(1,(int)ceil($total/$limit))){$page=max(1,(int)ceil($total/$limit));$users=PanelManager::getUsers($server,$page,$limit,null,null,$admin,true);}
+            $hasMore=$total!==null?$page*$limit<$total:count($users)===$limit;
+            tg_answer_callback($id);tg_edit_message($chatId,$messageId,$users?'<b>Users owned by '.Formatter::escape($admin).':</b>':'<b>This administrator has no users.</b>',Keyboards::adminUsers($serverId,$admin,$users,$page,$hasMore,$adminPage));return;
+        }
+
+        if(str_starts_with($data,'adm_create:')) {
+            $parts=explode(':',$data,5);$serverId=(int)($parts[1]??0);$admin=rawurldecode($parts[2]??'');$server=Storage::getServer($serverId);
+            if(!$server||!PanelManager::getAdmin($server,$admin)){tg_answer_callback($id,'Administrator not found.',true);return;}
+            self::renderUserCreatePrompt($chatId,$messageId,$serverId,$userId,$admin,$id);return;
         }
 
         if(str_starts_with($data,'adm_act:')) {
             $parts=explode(':',$data,6);$action=$parts[1]??'';$serverId=(int)($parts[2]??0);$admin=rawurldecode($parts[3]??'');$page=max(1,(int)($parts[4]??1));$server=Storage::getServer($serverId);
-            if(!$server||!in_array($action,['act_adm','dis_adm','del_all','xfer_adm'],true)||!self::validAdmin($server,$admin,false)){tg_answer_callback($id,'Administrator action is no longer valid.',true);return;}
+            if(!$server||!in_array($action,['act_adm','dis_adm','del_all','xfer_adm','add_cfg','del_cfg'],true)||!self::validAdmin($server,$admin,false)){tg_answer_callback($id,'Administrator action is no longer valid.',true);return;}
             $back='adm_view:'.$serverId.':'.rawurlencode($admin).':'.$page;
             if($action==='xfer_adm'){
                 Storage::setState($userId,'xfer_target',['server_id'=>$serverId,'from_admin'=>$admin,'return_to'=>$back]);
                 tg_answer_callback($id);tg_edit_message($chatId,$messageId,'Select destination administrator:',Keyboards::adminsSelector($serverId,PanelManager::getAdmins($server),'xfer_to',false,$back));return;
+            }
+            if(in_array($action,['add_cfg','del_cfg'],true)){
+                if(($server['type']??'marzban')!=='marzneshin'){tg_answer_callback($id,'Configuration actions are only available for Marzneshin.',true);return;}
+                $services=PanelManager::getServices($server);if(!$services){tg_answer_callback($id,'No services found.',true);return;}
+                Storage::setState($userId,'cfg_action_pick',['server_id'=>$serverId,'action'=>$action,'admin'=>$admin,'return_to'=>$back]);
+                tg_answer_callback($id);tg_edit_message($chatId,$messageId,'Select service:',Keyboards::bulkServices($serverId,$services,1,$back));return;
             }
             Storage::setState($userId,'bulk_confirm',['server_id'=>$serverId,'action'=>$action,'admin'=>$admin]);
             tg_answer_callback($id);tg_edit_message($chatId,$messageId,'Are you sure?',Keyboards::confirm("exec_act:{$action}:{$serverId}:{$admin}",$back));return;
@@ -1464,6 +1485,13 @@ class CallbackHandlers {
         tg_edit_message($chatId,$messageId,$text,Keyboards::adminSearchResults($serverId,$admins,$page));
     }
 
+    private static function renderAdminCard(int|string $chatId,int $messageId,array $server,string $username,int $page): void {
+        $admin=PanelManager::getAdmin($server,$username);
+        if(!$admin){tg_edit_message($chatId,$messageId,'❌ Administrator not found.',Keyboards::cancel("srv:{$server['id']}"));return;}
+        PanelManager::getUsers($server,1,1,null,null,$username,true);$total=PanelManager::getLastUsersTotal($server);
+        tg_edit_message($chatId,$messageId,Formatter::adminCard($server,$admin,$total),Keyboards::adminActions((int)$server['id'],$username,$page,(string)$server['type']));
+    }
+
     private static function renderUsersList(
         int|string $chatId,
         int $messageId,
@@ -1510,7 +1538,7 @@ class CallbackHandlers {
             return;
         }
 
-        $card = Formatter::userCard($server, $user);
+        $card = Formatter::userCard($server, $user,PanelManager::getBotUsername());
         if($backData!==null && method_exists(Storage::class,'rememberUserBack')) Storage::rememberUserBack($chatId,$serverId,$username,$backData);
         $backData=$backData??(method_exists(Storage::class,'userBack')?Storage::userBack($chatId,$serverId,$username):null);
         $kb = Keyboards::userActions($serverId, $user['username'], $user['is_active'], $user['status'],$backData);

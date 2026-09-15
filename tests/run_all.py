@@ -9,6 +9,7 @@ for path in sorted(root.rglob('*.php')):
 print('PASS: PHP syntax',flush=True)
 subprocess.run(['php',str(root/'tests/telegram_message_age.php')],check=True)
 subprocess.run(['php',str(root/'tests/workflows.php')],check=True)
+subprocess.run(['php',str(root/'tests/admin_links.php')],check=True)
 subprocess.run(['php',str(root/'tests/reconciliation.php')],check=True)
 subprocess.run(['php',str(root/'tests/panel_failures.php')],check=True)
 args=[sys.executable,str(root/'tests/compare_python.py')]

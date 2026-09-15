@@ -33,6 +33,8 @@ class PanelManager {
     public static function modifyUserNote($server,$username,$value): bool { self::$calls[]=['note',$username,$value]; return true; }
     public static function getServices($server): array { return [['id'=>'one:tcp','name'=>'One'],['id'=>'two','name'=>'Two']]; }
     public static function getAdmins($server): array { return self::$admins; }
+    public static function getAdmin($server,$username): ?array { return in_array($username,self::$admins,true)?['username'=>$username,'is_sudo'=>false]:null; }
+    public static function getBotUsername(): string { return 'test_bot'; }
     public static function updateUserConfigs($server,$username,$ids): bool { self::$calls[]=['configs',$username,$ids]; return false; }
     public static function setOwner($server,$username,$admin): bool { self::$calls[]=['owner',$username,$admin]; return false; }
     public static function getUsers($server,$page,$size,$search=null,$status=null): array { self::$calls[]=['list',$page,$size,$search,$status]; return self::$users; }
@@ -42,6 +44,7 @@ class PanelManager {
 class Formatter {
     public static function start(): string { return 'Shared welcome'; }
     public static function userCard($server,$user): string { return 'Card '.$user['username']; }
+    public static function adminCard($server,$admin,$total=null): string { return 'Admin '.$admin['username'].' '.$total; }
     public static function templateCard($template): string { return 'Template '.$template['id']; }
     public static function escape($text): string { return htmlspecialchars($text); }
 }
@@ -101,8 +104,10 @@ callback('queue_home'); check(end($events)[0]==='edit' && end(NotificationOutbox
 callback('queue_back:1'); check(end($events)[0]==='edit' && count(NotificationOutbox::$detached)===2,'Loading Back did not detach and edit recent message');
 check(in_array('srch_adm:1',buttons(Keyboards::serverMenu(1)),true),'Server menu omitted administrator search');
 callback('srch_adm:1');check(Storage::getState(42)['step']==='search_admin','Administrator search did not start');
-StateHandlers::handle(['text'=>'admin','chat'=>['id'=>99],'from'=>['id'=>42]],Storage::getState(42));$adminResultKeys=buttons(end($events)[1][3]);$adminView=array_values(array_filter($adminResultKeys,fn($key)=>str_contains($key,':admin1:')))[0];callback($adminView);$adminActionKeys=buttons(end($events)[1][3]);check(in_array('adm_act:act_adm:1:admin1:1',$adminActionKeys,true),'Administrator result did not open its action screen');
+StateHandlers::handle(['text'=>'admin','chat'=>['id'=>99],'from'=>['id'=>42]],Storage::getState(42));$adminResultKeys=buttons(end($events)[1][3]);$adminView=array_values(array_filter($adminResultKeys,fn($key)=>str_contains($key,':admin1:')))[0];callback($adminView);$adminActionKeys=buttons(end($events)[1][3]);check(in_array('adm_act:act_adm:1:admin1:1',$adminActionKeys,true)&&in_array('adm_users:1:admin1:1:1',$adminActionKeys,true)&&in_array('adm_create:1:admin1:1',$adminActionKeys,true),'Administrator result did not open its complete action screen');
 callback('adm_act:act_adm:1:admin1:1');check(Storage::getState(42)['step']==='bulk_confirm'&&in_array('exec_act:act_adm:1:admin1',buttons(end($events)[1][3]),true),'Administrator activation did not reuse the confirmed bulk action');
+check(in_array('adm_act:add_cfg:1:admin1:1',buttons(Keyboards::adminActions(1,'admin1',1,'marzneshin')),true),'Marzneshin administrator omitted config actions');
+command('/start admin_1_YWRtaW4x');check(str_starts_with(end($events)[1][1],'Admin admin1')&&in_array('srv:1',buttons(end($events)[1][2]),true),'Administrator deep link did not render a usable card');
 callback('srch_adm:1');
 PanelManager::$users=array_fill(0,10,['username'=>'test','is_active'=>true]);
 $before=count(PanelManager::$calls);

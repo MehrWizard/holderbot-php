@@ -127,12 +127,21 @@ class Keyboards {
         $rows[]=[self::button('◀️ Back',"srv:{$serverId}"),self::button('🏛️ Home','home')];
         return self::navigationLast(['inline_keyboard'=>$rows]);
     }
-    public static function adminActions(int $serverId,string $admin,int $page=1): array {
+    public static function adminActions(int $serverId,string $admin,int $page=1,string $serverType='marzban',?string $backData=null): array {
         $encoded=rawurlencode($admin);$suffix="{$serverId}:{$encoded}:{$page}";
-        return self::rows([
+        $buttons=[self::button('👥 Users',"adm_users:{$suffix}:1"),self::button('➕ Create User',"adm_create:{$suffix}"),
             self::button('✔️ Activate Users',"adm_act:act_adm:{$suffix}"),self::button('✖️ Disable Users',"adm_act:dis_adm:{$suffix}"),
-            self::button('🗑 Delete Users',"adm_act:del_all:{$suffix}"),self::button('💱 Transfer Users',"adm_act:xfer_adm:{$suffix}"),
-        ],2,"admins_search_page:{$serverId}:{$page}");
+            self::button('💱 Transfer Users',"adm_act:xfer_adm:{$suffix}"),self::button('🗑 Delete Users',"adm_act:del_all:{$suffix}")];
+        if($serverType==='marzneshin')$buttons=array_merge($buttons,[self::button('➕ Add Config',"adm_act:add_cfg:{$suffix}"),self::button('➖ Remove Config',"adm_act:del_cfg:{$suffix}")]);
+        return self::rows($buttons,2,$backData??"admins_search_page:{$serverId}:{$page}");
+    }
+    public static function adminUsers(int $serverId,string $admin,array $users,int $page,bool $hasMore,int $adminPage): array {
+        $encoded=rawurlencode($admin);$buttons=[];$back="adm_view:{$serverId}:{$encoded}:{$adminPage}";
+        foreach($users as $user)$buttons[]=self::button((!empty($user['is_active'])?'✅ ':'❌ ').$user['username'],'usr:'.$serverId.':'.rawurlencode((string)$user['username']).':back:'.rawurlencode("adm_users:{$serverId}:{$encoded}:{$adminPage}:{$page}"));
+        $rows=array_chunk($buttons,2);$nav=[];
+        if($page>1)$nav[]=self::button('⬅️',"adm_users:{$serverId}:{$encoded}:{$adminPage}:".($page-1));
+        if($hasMore)$nav[]=self::button('➡️',"adm_users:{$serverId}:{$encoded}:{$adminPage}:".($page+1));
+        if($nav)$rows[]=$nav;$rows[]=[self::button('◀️ Back',$back),self::button('🏛️ Home','home')];return self::navigationLast(['inline_keyboard'=>$rows]);
     }
     public static function templatesMenu(array $templates,int $page=1): array {
         $total=count($templates); $page=self::page($page,$total); $templates=array_slice($templates,($page-1)*self::SELECTOR_PAGE,self::SELECTOR_PAGE);
@@ -221,11 +230,11 @@ class Keyboards {
         if ($cancelCallback !== 'home') $rows[] = [self::button('◀️ Back', $cancelCallback)];
         return self::navigationLast(['inline_keyboard' => $rows]);
     }
-    public static function bulkServices(int $serverId,array $services,int $page=1): array {
+    public static function bulkServices(int $serverId,array $services,int $page=1,?string $backData=null): array {
         $total=count($services);$page=self::page($page,$total);$services=array_slice($services,($page-1)*self::SELECTOR_PAGE,self::SELECTOR_PAGE);$rows=[];
         foreach($services as $svc){$name=$svc['name']??($svc['remark']??('Service #'.$svc['id']));$rows[]=[self::button($name,"bulk_cfg:{$serverId}:".rawurlencode((string)$svc['id']))];}
         $nav=[];if($page>1)$nav[]=self::button('⬅️',"bulk_services_page:{$serverId}:".($page-1));if($page*self::SELECTOR_PAGE<$total)$nav[]=self::button('➡️',"bulk_services_page:{$serverId}:".($page+1));if($nav)$rows[]=$nav;
-        $rows[]=[self::button('🏛️ Home','home')];$rows[]=[self::button('◀️ Back',"srv:{$serverId}")];return self::navigationLast(['inline_keyboard'=>$rows]);
+        $rows[]=[self::button('🏛️ Home','home')];$rows[]=[self::button('◀️ Back',$backData??"srv:{$serverId}")];return self::navigationLast(['inline_keyboard'=>$rows]);
     }
     public static function cancel(string $backData = 'home'): array {
         return self::rows([], 2, $backData);

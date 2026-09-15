@@ -494,6 +494,14 @@ class PanelManager {
         return $admins;
     }
 
+    public static function getAdmin(array $server,string $username,bool $strict=true): ?array {
+        $type=strtolower($server['type']??'marzban');
+        $raw=$type==='marzneshin'?MarzneshinClient::getAdmins($server):MarzbanClient::getAdmins($server);
+        if(!is_array($raw)){if($strict)self::throwReadFailure($server,'administrator-list');return null;}
+        foreach($raw as $admin)if(is_array($admin)&&hash_equals((string)($admin['username']??''),$username))return $admin;
+        return null;
+    }
+
     /**
      * Set user owner admin.
      */

@@ -62,7 +62,7 @@ class Formatter {
         foreach ($d as $key => $value) $template = str_replace('{' . $key . '}', $value, $template);
         return $template;
     }
-    public static function userCard(array $server, array $user): string {
+    public static function userCard(array $server, array $user,string $botUsername=''): string {
         $r = $user['raw'] ?? [];
         $date = fn($key) => self::timeDiff(self::timestamp($r[$key] ?? null));
         $yes = fn($key) => !empty($r[$key]) ? 'Yes' : 'No';
@@ -101,9 +101,27 @@ class Formatter {
         $lines = [];
         foreach ($fields as $key => $value) {
             $label = $key === 'Expire Strategy: ' ? $key : $key . ':';
+            if(in_array($key,['Admin','Owner'],true)&&$value!=='➖'&&$botUsername!==''){
+                $token=rtrim(strtr(base64_encode((string)$value),'+/','-_'),'=');$start='admin_'.(int)$server['id'].'_'.$token;
+                $shown='<code>'.self::escape($value).'</code>';
+                $value=strlen($start)<=64?'<a href="https://t.me/'.self::escape(ltrim($botUsername,'@')).'?start='.self::escape($start).'">'.$shown.'</a>':$shown;
+                $lines[]='<b>• '.$label.'</b> '.$value;continue;
+            }
             $lines[] = '<b>• ' . $label . '</b> <code>' . self::escape($value) . '</code>';
         }
         return implode("\n", $lines);
+    }
+    public static function adminCard(array $server,array $admin,?int $totalUsers=null): string {
+        $fields=['Username'=>$admin['username']??'➖','Panel'=>$server['remark']??('#'.($server['id']??'?')),'Sudo'=>!empty($admin['is_sudo'])?'Yes':'No'];
+        if(array_key_exists('enabled',$admin))$fields['Enabled']=!empty($admin['enabled'])?'Yes':'No';
+        if($totalUsers!==null)$fields['Users']=$totalUsers;
+        if(isset($admin['users_usage']))$fields['Users Usage']=self::bytes((int)$admin['users_usage']);
+        if(isset($admin['users_data_usage']))$fields['Users Data Usage']=self::bytes((int)$admin['users_data_usage']);
+        if(isset($admin['telegram_id']))$fields['Telegram ID']=$admin['telegram_id']?:'➖';
+        if(array_key_exists('all_services_access',$admin))$fields['All Services Access']=!empty($admin['all_services_access'])?'Yes':'No';
+        if(array_key_exists('modify_users_access',$admin))$fields['Modify Users Access']=!empty($admin['modify_users_access'])?'Yes':'No';
+        $lines=[];foreach($fields as $key=>$value)$lines[]='<b>• '.self::escape($key).':</b> <code>'.self::escape($value).'</code>';
+        return implode("\n",$lines);
     }
     private static function age(array $item): string {
         $created = self::timestamp($item['created_at'] ?? null);

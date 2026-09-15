@@ -39,6 +39,13 @@ class CommandHandlers {
                         return self::handleDeepLinkUser($chatId, (int)$subParts[1], $subParts[2]);
                     }
                 }
+                if(!empty($parts[1])&&str_starts_with($parts[1],'admin_')){
+                    if(!preg_match('/^admin_([0-9]+)_([A-Za-z0-9_-]+)$/',$parts[1],$match)){tg_send_message($chatId,'❌ Invalid administrator link.');return true;}
+                    $encoded=strtr($match[2],'-_','+/');$encoded.=str_repeat('=',(4-strlen($encoded)%4)%4);$admin=base64_decode($encoded,true);
+                    if(!is_string($admin)||$admin===''){tg_send_message($chatId,'❌ Invalid administrator link.');return true;}
+                    if(!empty($message['message_id']))tg_delete_message($chatId,$message['message_id']);
+                    return self::handleDeepLinkAdmin($chatId,(int)$match[1],$admin);
+                }
                 Storage::clearState($userId);
                 if (!empty($message['message_id'])) tg_delete_message($chatId, $message['message_id']);
                 return self::cmdStart($chatId);
@@ -140,10 +147,17 @@ class CommandHandlers {
             return true;
         }
 
-        $card = Formatter::userCard($server, $user);
+        $card = Formatter::userCard($server, $user,PanelManager::getBotUsername());
         if(method_exists(Storage::class,'rememberUserBack')) Storage::rememberUserBack($chatId,$serverId,$user['username'],"stats_cached:{$serverId}");
         $kb = Keyboards::userActions($serverId, $user['username'], $user['is_active'], $user['status'], "stats_cached:{$serverId}");
         self::sendFreshMenu($chatId, $card, $kb);
         return true;
+    }
+
+    private static function handleDeepLinkAdmin(int|string $chatId,int $serverId,string $username): bool {
+        $server=Storage::getServer($serverId);$admin=$server?PanelManager::getAdmin($server,$username):null;
+        if(!$server||!$admin){tg_send_message($chatId,'❌ Administrator not found.',Keyboards::cancel('home'));return true;}
+        PanelManager::getUsers($server,1,1,null,null,$username,true);$total=PanelManager::getLastUsersTotal($server);
+        self::sendFreshMenu($chatId,Formatter::adminCard($server,$admin,$total),Keyboards::adminActions($serverId,$username,1,(string)$server['type'],"srv:{$serverId}"));return true;
     }
 }
