@@ -10,6 +10,10 @@ declare(strict_types=1);
 require_once __DIR__ . '/marzban.php';
 require_once __DIR__ . '/marzneshin.php';
 
+final class PanelScanException extends RuntimeException {
+    public function __construct(string $message, public readonly int $nextPageSize, ?Throwable $previous=null) { parent::__construct($message,0,$previous); }
+}
+
 class PanelManager {
     /**
      * Get the last error from panel client.
@@ -111,7 +115,8 @@ class PanelManager {
             ? array_values(array_unique(array_filter([$pageSize, min($pageSize, 500), min($pageSize, 250), min($pageSize, 100), min($pageSize, 25)])))
             : [$pageSize];
         $last = null; $attempted = [];
-        foreach ($sizes as $size) {
+        $extendedTimeout=max(5,min(45,(int)($GLOBALS['config']['scan_request_timeout_seconds']??25)));
+        foreach ($sizes as $index=>$size) {
             $attempted[] = $size;
             try {
                 $users = self::getUsers($server, $page, $size, $search, $status, $admin, true);
@@ -121,18 +126,22 @@ class PanelManager {
             } catch (RuntimeException $e) {
                 $last = $e;
             }
-        }
-        global $config;
-        $extendedSize=(int)end($sizes);
-        $extendedTimeout=max(5,min(45,(int)($config['scan_request_timeout_seconds']??25)));
-        if($extendedTimeout>5 && $last && preg_match('/tim(?:e|ed)[ -]?out/i',$last->getMessage())) {
-            $attempted[]=$extendedSize.' ('.$extendedTimeout.'s timeout)';
-            try {
-                $users=self::getUsers($server,$page,$extendedSize,$search,$status,$admin,true,$extendedTimeout);
-                $elapsed=max(0.001,microtime(true)-$startedAt);
-                self::rememberPageSize($server,$extendedSize,$elapsed);
-                return ['users'=>$users,'page_size'=>$extendedSize,'elapsed'=>$elapsed];
-            } catch(RuntimeException $e) { $last=$e; }
+            if($extendedTimeout>5 && $last && preg_match('/tim(?:e|ed)[ -]?out/i',$last->getMessage())) {
+                $attempted[]=$size.' ('.$extendedTimeout.'s timeout)';
+                try {
+                    $users=self::getUsers($server,$page,$size,$search,$status,$admin,true,$extendedTimeout);
+                    $elapsed=max(0.001,microtime(true)-$startedAt);
+                    self::rememberPageSize($server,$size,$elapsed);
+                    return ['users'=>$users,'page_size'=>$size,'elapsed'=>$elapsed];
+                } catch(RuntimeException $e) {
+                    $last=$e;
+                    throw new PanelScanException(
+                        'Panel user-page negotiation failed after page sizes '.implode(', ',$attempted).'. '.$last->getMessage(),
+                        (int)($sizes[$index+1]??$size),
+                        $last
+                    );
+                }
+            }
         }
         throw new RuntimeException(
             'Panel user-page negotiation failed after page sizes ' . implode(', ', $attempted) . '. ' .

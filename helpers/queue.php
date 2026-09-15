@@ -959,6 +959,7 @@ final class BatchQueue
                 try{self::step($job);unset($job['params']['read_failures']);}
                 catch(Throwable $e){
                     $job['error']=$e->getMessage();
+                    if($e instanceof PanelScanException && $e->nextPageSize>0) $job['params']['page_size']=$e->nextPageSize;
                     $failureServer=(int)($job['server_id']??0)>0 ? Storage::getServer((int)$job['server_id']) : null;
                     $panelError=$failureServer && method_exists(PanelManager::class,'getLastError') ? trim(PanelManager::getLastError($failureServer)) : '';
                     if($panelError!=='' && !str_contains($job['error'],$panelError)) {

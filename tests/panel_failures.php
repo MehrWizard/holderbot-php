@@ -37,5 +37,5 @@ MarzbanClient::$transport=function($server,$method,$endpoint,$payload,$timeout)u
     return ['users'=>[['username'=>'slow','status'=>'active','data_limit'=>0,'used_traffic'=>0]],'total'=>1];
 };
 $slow=PanelManager::scanUsers($failedServer,1,1000);
-if($slow['page_size']!==25 || $slow['users'][0]['username']!=='slow' || end($timeouts)!==25) throw new RuntimeException('Slow panel did not receive the extended scan timeout');
+if($slow['page_size']!==1000 || $slow['users'][0]['username']!=='slow' || $timeouts!==[5,25]) throw new RuntimeException('Slow large page did not receive the extended timeout before downsizing');
 echo "PASS: partial creation/ownership failures across both adapters\n";
