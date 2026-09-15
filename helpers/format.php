@@ -11,7 +11,7 @@ class Formatter {
         return "Welcome to HolderBot 🤖 [<code>" . HOLDERBOT_VERSION . "</code> by @ErfJabs]";
     }
     public static function credentialsPrompt(): string {
-        return "<b>Enter Marz Server Credentials:\n</b>• <code>Username [sudo]</code>\n• <code>Password [sudo]</code>\n• <code>Host [https://sub.domain.com:port]</code>\n\n<b>Example:</b>\n<code>erfan\nerfan\nhttps://panel.domain.com:443</code>";
+        return "<b>Enter Marz Server Credentials:\n</b>• <code>Username</code>\n• <code>Password</code>\n• <code>Panel URL</code>\n\nThe URL may include a custom dashboard or reverse-proxy path. Standard HTTP and HTTPS ports may be omitted.\n\n<b>Example:</b>\n<code>admin\npassword\nhttps://panel.domain.com/custom/dashboard</code>";
     }
     public static function bytes(int|float|null $bytes, int $precision = 2): string {
         $value = $bytes ?? 0;

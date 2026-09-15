@@ -7,6 +7,7 @@
 
 declare(strict_types=1);
 require_once __DIR__ . '/../helpers/request_budget.php';
+require_once __DIR__ . '/../helpers/panel_url.php';
 
 class MarzbanClient {
     public static string $lastError = '';
@@ -34,9 +35,6 @@ class MarzbanClient {
         self::$lastError = '';
         self::$lastHttpCode = 0;
         if (self::$transport !== null) return (self::$transport)($server, $method, $endpoint, $payload, $timeoutSeconds);
-        $baseUrl = rtrim($server['base_url'], '/');
-        $url = $baseUrl . $endpoint;
-
         $headers = ['Accept: application/json'];
 
         if ($bearerOverride !== null) {
@@ -49,6 +47,10 @@ class MarzbanClient {
             }
             $headers[] = "Authorization: Bearer {$token}";
         }
+
+        $baseUrl = PanelUrl::normalize((string)($server['base_url'] ?? ''));
+        if ($baseUrl === null) { self::$lastError='Invalid panel URL.'; return null; }
+        $url = $baseUrl . $endpoint;
 
         $ch = curl_init();
         $options = [
@@ -127,14 +129,23 @@ class MarzbanClient {
      * Get or refresh an administrator token and record its access scope.
      */
     public static function getToken(array &$server, bool $force = false): ?string {
+        $candidates = PanelUrl::candidates((string)($server['base_url'] ?? ''));
+        if ($candidates === []) { self::$lastError = 'Invalid panel URL. Use an HTTP or HTTPS URL without a query or fragment.'; return null; }
+        $resolutionKey='marzban_base_' . hash('sha256',json_encode([$candidates[0],$server['username'],$server['password']]));
+        $resolved=Storage::cacheGet($resolutionKey);
+        if(is_string($resolved) && in_array($resolved,$candidates,true)){$candidates=array_values(array_unique(array_merge([$resolved],$candidates)));}
+        $server['base_url'] = $candidates[0];
         $cacheKey = "marzban_token_" . hash('sha256', json_encode([$server['base_url'], $server['username'], $server['password']]));
         $cached = Storage::cacheGet($cacheKey);
         if ($cached && !$force && array_key_exists('panel_is_sudo',$server) && $server['panel_is_sudo'] !== null) {
             return $cached;
         }
 
+        $errors=[];
+        foreach ($candidates as $candidateBase) {
+        $candidateServer=$server;$candidateServer['base_url']=$candidateBase;
         $resp = self::request(
-            $server,
+            $candidateServer,
             'POST',
             '/api/admin/token',
             [
@@ -146,15 +157,13 @@ class MarzbanClient {
             asFormUrlencoded: true
         );
 
-        if (empty($resp['access_token'])) {
-            return null;
-        }
+        if (empty($resp['access_token'])) { $errors[]=$candidateBase . ': ' . (self::$lastError ?: 'authentication failed'); continue; }
         $token = $resp['access_token'];
 
         // Verify sudo privilege via GET /api/admin using the freshly obtained token
         // (passed directly to avoid re-entering getToken()).
         $adminInfo = self::request(
-            $server,
+            $candidateServer,
             'GET',
             '/api/admin',
             null,
@@ -162,13 +171,19 @@ class MarzbanClient {
             asFormUrlencoded: false,
             bearerOverride: $token
         );
-        if (!is_array($adminInfo) || !array_key_exists('is_sudo',$adminInfo)) { self::$lastError='Unable to determine administrator access level.'; return null; }
+        if (!is_array($adminInfo) || !array_key_exists('is_sudo',$adminInfo)) { $errors[]=$candidateBase . ': ' . (self::$lastError ?: 'unable to determine administrator access level'); continue; }
+        $server['base_url']=$candidateBase;
         $server['panel_admin_username']=(string)($adminInfo['username']??$server['username']);
         $server['panel_is_sudo']=!empty($adminInfo['is_sudo'])?1:0;
 
+        $cacheKey = "marzban_token_" . hash('sha256', json_encode([$server['base_url'], $server['username'], $server['password']]));
         Storage::cacheSet($cacheKey, $token, 8 * 3600);
+        Storage::cacheSet($resolutionKey,$server['base_url'],30*86400);
         Storage::cacheSet("online_" . ($server['id'] ?? md5($server['base_url'])), time(), 86400);
         return $token;
+        }
+        self::$lastError='Panel login failed for the supplied URL paths. ' . implode(' | ',array_slice($errors,-3));
+        return null;
     }
 
     /**

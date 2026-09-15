@@ -486,7 +486,8 @@ class StateHandlers {
         $data['base_url'] = rtrim($parts[2], '/');
         $token = $data['type'] === 'marzneshin' ? MarzneshinClient::getToken($data) : MarzbanClient::getToken($data);
         if (!$token) {
-            tg_send_message($chatId, "❌ Invalid data.");
+            $error = $data['type'] === 'marzneshin' ? MarzneshinClient::getLastError() : MarzbanClient::getLastError();
+            tg_send_message($chatId, "❌ Unable to connect to the panel.\n" . Formatter::escape($error));
             return true;
         }
         $serverId = Storage::saveServer($data);
@@ -629,13 +630,14 @@ class StateHandlers {
             : MarzbanClient::getToken($candidate);
 
         if (!$token) {
-            tg_send_message($chatId, "❌ Invalid data.", Keyboards::cancel("srv:{$serverId}"));
+            $error = strtolower((string)$candidate['type']) === 'marzneshin' ? MarzneshinClient::getLastError() : MarzbanClient::getLastError();
+            tg_send_message($chatId, "❌ Unable to connect to the panel.\n" . Formatter::escape($error), Keyboards::cancel("srv:{$serverId}"));
             return true;
         }
 
         $server['username'] = $parts[0];
         $server['password'] = $parts[1];
-        $server['base_url'] = rtrim($parts[2], '/');
+        $server['base_url'] = $candidate['base_url'];
         $server['panel_admin_username']=$candidate['panel_admin_username']??$candidate['username'];
         $server['panel_is_sudo']=$candidate['panel_is_sudo']??null;
         if(empty($server['panel_is_sudo'])){$server['node_monitoring']=0;$server['node_restart']=0;}

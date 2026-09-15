@@ -24,11 +24,13 @@ class Handler(BaseHTTPRequestHandler):
         calls.append(dict(method=self.command,path=path,query=parse_qs(urlparse(self.path).query),payload=payload,auth=self.headers.get('Authorization')))
         result = {}
         status = 200
-        if path.endswith('/token'):
+        if path.startswith('/custom/dashboard/'):
+            status=404; result={'detail':'dashboard route is not the API base'}
+        elif path.endswith('/token'):
             if payload.get('password') == ['bad']: status=401; result={'detail':'invalid credentials'}
             else: result={'access_token':'token-'+payload['password'][0],'is_sudo':payload.get('username') != ['reseller'],'username':payload.get('username',[''])[0]}
         elif path=='/api/admin' and self.command=='POST': result=dict(payload)
-        elif path=='/api/admin': result={'is_sudo':self.headers.get('Authorization')!='Bearer token-reseller','username':'reseller' if self.headers.get('Authorization')=='Bearer token-reseller' else 'sudo'}
+        elif path in ['/api/admin','/custom/api/admin']: result={'is_sudo':self.headers.get('Authorization')!='Bearer token-reseller','username':'reseller' if self.headers.get('Authorization')=='Bearer token-reseller' else 'sudo'}
         elif path=='/api/admins' and self.command=='POST': result=dict(payload)
         elif path=='/api/inbounds': result={'vless':[{'tag':'test','protocol':'vless'}]}
         elif path in ['/api/users','/api/user'] and self.command=='POST':
@@ -65,6 +67,12 @@ class Storage {
  public static function cacheSet(string $key, mixed $value, int $ttl): void { self::$cache[$key]=$value; }
 }
 require $argv[1].'/panels/panel_manager.php';
+if(PanelUrl::normalize('https://panel.example.com/')!=='https://panel.example.com:443')throw new RuntimeException('Implicit HTTPS port was not canonicalized');
+if(PanelUrl::normalize('http://panel.example.com/custom/')!=='http://panel.example.com:80/custom')throw new RuntimeException('Implicit HTTP port or path was not canonicalized');
+$custom=['id'=>3,'type'=>'marzban','remark'=>'custom','base_url'=>$argv[2].'/custom/dashboard','username'=>'sudo','password'=>'good'];
+if(!MarzbanClient::getToken($custom,true)||$custom['base_url']!==$argv[2].'/custom')throw new RuntimeException('Dashboard URL did not resolve to its API base path');
+$custom['type']='marzneshin';$custom['base_url']=$argv[2].'/custom/dashboard';
+if(!MarzneshinClient::getToken($custom,true)||$custom['base_url']!==$argv[2].'/custom')throw new RuntimeException('Marzneshin dashboard URL did not resolve to its API base path');
 $restricted=['id'=>2,'type'=>'marzban','remark'=>'restricted','base_url'=>$argv[2],'username'=>'reseller','password'=>'reseller'];
 foreach(['marzban','marzneshin'] as $kind){$restricted['type']=$kind;$client=$kind==='marzban'?MarzbanClient::class:MarzneshinClient::class;$token=$client::getToken($restricted,true);if(!$token||$restricted['panel_is_sudo']!==0||$restricted['panel_admin_username']!=='reseller')throw new RuntimeException('Non-sudo panel credentials were rejected or misclassified');}
 $s=['id'=>1,'type'=>'marzban','remark'=>'test','base_url'=>$argv[2],'username'=>'sudo','password'=>'good'];
