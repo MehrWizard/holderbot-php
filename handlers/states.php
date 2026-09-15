@@ -459,6 +459,7 @@ class StateHandlers {
 
     private static function handleTmplEditRemark(int|string $chatId, int $userId, string $remark, array $data): bool {
         $tmplId = (int)($data['tmpl_id'] ?? 0);
+        $page=max(1,(int)($data['page']??1));$back="tmpl_view:{$tmplId}:{$page}";
         $tmpl = Storage::getTemplate($tmplId);
         if (!$tmpl) {
             Storage::clearState($userId);
@@ -466,13 +467,13 @@ class StateHandlers {
             return true;
         }
         if (!preg_match('/^[a-zA-Z0-9_-]+$/', $remark)) {
-            tg_send_message($chatId, "❌ Invalid, Just use [a-z]", Keyboards::cancel());
+            tg_send_message($chatId, "❌ Invalid, Just use [a-z]", Keyboards::cancel($back));
             return true;
         }
         $remark = strtolower($remark);
         foreach (Storage::getTemplates() as $t) {
             if ((int)$t['id'] !== $tmplId && strtolower($t['remark']) === $remark) {
-                tg_send_message($chatId, "❌ Duplicate, try another.", Keyboards::cancel());
+                tg_send_message($chatId, "❌ Duplicate, try another.", Keyboards::cancel($back));
                 return true;
             }
         }
@@ -480,13 +481,14 @@ class StateHandlers {
         Storage::saveTemplate($tmpl);
         Storage::clearState($userId);
         tg_send_message($chatId, "✅ Success.",
-            Keyboards::cancel());
+            Keyboards::cancel($back));
         return true;
     }
 
     private static function handleTmplEditData(int|string $chatId, int $userId, string $input, array $data): bool {
         $input = Input::decimalDigits($input);
         $tmplId = (int)($data['tmpl_id'] ?? 0);
+        $page=max(1,(int)($data['page']??1));$back="tmpl_view:{$tmplId}:{$page}";
         $tmpl = Storage::getTemplate($tmplId);
         if (!$tmpl) {
             Storage::clearState($userId);
@@ -494,7 +496,7 @@ class StateHandlers {
             return true;
         }
         if (!ctype_digit($input)) {
-            tg_send_message($chatId, "❌ Invalid, Just use [0-9]", Keyboards::cancel());
+            tg_send_message($chatId, "❌ Invalid, Just use [0-9]", Keyboards::cancel($back));
             return true;
         }
         $tmpl['data_limit'] = (int)$input;
@@ -502,13 +504,14 @@ class StateHandlers {
         Storage::clearState($userId);
         $dlText = ($tmpl['data_limit'] > 0) ? "{$tmpl['data_limit']}GB" : 'Unlimited';
         tg_send_message($chatId, "✅ Success.",
-            Keyboards::cancel());
+            Keyboards::cancel($back));
         return true;
     }
 
     private static function handleTmplEditDate(int|string $chatId, int $userId, string $input, array $data): bool {
         $input = Input::decimalDigits($input);
         $tmplId = (int)($data['tmpl_id'] ?? 0);
+        $page=max(1,(int)($data['page']??1));$back="tmpl_view:{$tmplId}:{$page}";
         $tmpl = Storage::getTemplate($tmplId);
         if (!$tmpl) {
             Storage::clearState($userId);
@@ -516,7 +519,7 @@ class StateHandlers {
             return true;
         }
         if (!ctype_digit($input)) {
-            tg_send_message($chatId, "❌ Invalid, Just use [0-9]", Keyboards::cancel());
+            tg_send_message($chatId, "❌ Invalid, Just use [0-9]", Keyboards::cancel($back));
             return true;
         }
         $tmpl['date_limit'] = (int)$input;
@@ -524,7 +527,7 @@ class StateHandlers {
         Storage::saveTemplate($tmpl);
         Storage::clearState($userId);
         tg_send_message($chatId, "✅ Success.",
-            Keyboards::cancel());
+            Keyboards::cancel($back));
         return true;
     }
 

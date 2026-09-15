@@ -105,6 +105,7 @@ check(count(PanelManager::$calls)===$before+1 && end(PanelManager::$calls)===['l
 $keys=buttons(end($events)[1][3]);
 check(in_array('users:1:1:expired',$keys,true) && in_array('users:1:3:expired',$keys,true),'Pagination lost filter');
 $userKeys=array_values(array_filter($keys,fn($key)=>str_starts_with($key,'usr:')));callback($userKeys[0]);check(in_array('users:1:2:expired',buttons(end($events)[1][3]),true),'User card lost its originating list page and filter');
+PanelManager::$users=[['username'=>'searched','is_active'=>true]];command('/user 1 searched');$searchKeys=buttons(end($events)[1][2]);$searchUser=array_values(array_filter($searchKeys,fn($key)=>str_starts_with($key,'usr:')))[0];callback($searchUser);check(in_array('srch_usr:1',buttons(end($events)[1][3]),true),'Search result user did not return to the search flow');
 PanelManager::$users=[]; callback('users:1:3:expired');
 check(end($events)[0]==='edit' && end($events)[1][2]==='No users found.','Empty page did not render a navigable empty state');
 Storage::$cache=[];callback('ref:missing');check(end($events)[0]==='alert' && str_contains(end($events)[1][1],'expired'),'Expired callback reference was not explained');
@@ -137,6 +138,8 @@ StateHandlers::handle($input+['text'=>'۷'],Storage::getState(42));
 check(Storage::$templates[1]['date_type']==='onhold' && Storage::$templates[1]['date_limit']===7,'Template duration edit lost selected strategy');
 callback('tmpl_edit_date:1'); callback('tmpl_edit_dt:1:unlimited');
 check(Storage::$templates[1]['date_limit']===0 && Storage::getState(42)===null,'Unlimited edit left wizard active');
+$templateActions=buttons(Keyboards::templateActions(1,true,3));check(in_array('tmpl_edit_remark:1:3',$templateActions,true)&&in_array('tmpl_edit_data:1:3',$templateActions,true)&&in_array('tmpl_edit_date:1:3',$templateActions,true),'Template edit buttons lost the originating page');
+callback('tmpl_edit_date:1:3');callback('tmpl_edit_dt:1:unlimited');check(in_array('tmpl_view:1:3',buttons(end($events)[1][3]),true),'Template date edit did not return to its original page context');
 callback('new_tmpl');
 StateHandlers::handle($input+['text'=>'BASIC'],Storage::getState(42));
 check(Storage::getState(42)['step']==='tmpl_add_remark','Duplicate template name accepted');
@@ -238,4 +241,5 @@ foreach ([Keyboards::usersList(1,[],1),Keyboards::configSelector(1,$configs,[],'
 $homeOnly=Keyboards::cancel();$backOnly=Keyboards::stats(1);
 check(count(end($homeOnly['inline_keyboard']))===1,'Home-only keyboard needs one final navigation button');
 check(count(end($backOnly['inline_keyboard']))===1,'Back-only keyboard needs one final navigation button');
+callback('new_usr:1');callback('new_usr_adm:1:new_admin');$createNav=end($events)[1][3]['inline_keyboard'];$createLast=end($createNav);check(count($createLast)===2&&$createLast[0]['callback_data']==='srv:1'&&$createLast[1]['callback_data']==='home','Create-user prompt did not place Back and Home together in the final row');
 echo "PASS: command, deep-link, Home, search, pagination and stale wizard workflows; external boundaries stubbed\n";

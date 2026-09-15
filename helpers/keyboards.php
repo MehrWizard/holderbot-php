@@ -69,7 +69,8 @@ class Keyboards {
     }
     public static function usersList(int $serverId, array $users, int $page = 1, bool $hasMore = false, string $filter = 'all', bool $search = false): array {
         $buttons = [];
-        foreach ($users as $u) $buttons[] = self::button(($u['is_active'] ? '✅ ' : '❌ ') . $u['username'], "usr:{$serverId}:".rawurlencode((string)$u['username']).":{$page}:{$filter}");
+        $origin=$search ? "srch_usr:{$serverId}" : "users:{$serverId}:{$page}:{$filter}";
+        foreach ($users as $u) $buttons[] = self::button(($u['is_active'] ? '✅ ' : '❌ ') . $u['username'], "usr:{$serverId}:".rawurlencode((string)$u['username']).':back:'.rawurlencode($origin));
         $rows = array_chunk($buttons, 2);
         if (!$search) {
             $filters = [];
@@ -127,8 +128,8 @@ class Keyboards {
     public static function templateActions(int $tmplId, bool $isActive = true,int $page=1): array {
         $page=max(1,$page);
         return self::rows([
-            self::button('📊 Data Limit', "tmpl_edit_data:{$tmplId}"), self::button('⏱️ Date Limit', "tmpl_edit_date:{$tmplId}"),
-            self::button($isActive ? '❌ Disabled' : '✅ Activated', "tmpl_tgl_ask:{$tmplId}:{$page}"), self::button('🏷 Remark', "tmpl_edit_remark:{$tmplId}"),
+            self::button('📊 Data Limit', "tmpl_edit_data:{$tmplId}:{$page}"), self::button('⏱️ Date Limit', "tmpl_edit_date:{$tmplId}:{$page}"),
+            self::button($isActive ? '❌ Disabled' : '✅ Activated', "tmpl_tgl_ask:{$tmplId}:{$page}"), self::button('🏷 Remark', "tmpl_edit_remark:{$tmplId}:{$page}"),
             self::button('🗑 Remove', "tmpl_del_ask:{$tmplId}:{$page}"),
         ],2,'tmpls:'.$page);
     }

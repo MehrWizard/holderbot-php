@@ -288,13 +288,14 @@ class CallbackHandlers {
             return;
         }
 
-        // View single user: usr:<id>:<username>:<origin page>:<origin filter>
+        // View single user; current buttons carry their complete Back callback.
         if (str_starts_with($data, 'usr:')) {
             $parts = explode(':', $data, 5);
             $serverId = (int)($parts[1] ?? 0);
             $username = rawurldecode($parts[2] ?? '');
-            $originPage=max(1,(int)($parts[3]??1)); $originFilter=$parts[4]??'';
-            $back=in_array($originFilter,['all','active','limited','expired'],true)?"users:{$serverId}:{$originPage}:{$originFilter}":null;
+            $back=($parts[3]??'')==='back'?rawurldecode($parts[4]??''):null;
+            // Accept callbacks generated before Back context was embedded.
+            if($back===null){$originPage=max(1,(int)($parts[3]??1));$originFilter=$parts[4]??'';$back=in_array($originFilter,['all','active','limited','expired'],true)?"users:{$serverId}:{$originPage}:{$originFilter}":null;}
             if($serverId<1 || $username===''){tg_answer_callback($id,'Invalid user.',true);return;}
             Storage::clearState($userId);
             tg_answer_callback($id);
@@ -920,46 +921,46 @@ class CallbackHandlers {
 
         // Edit Template Remark: tmpl_edit_remark:<id>
         if (str_starts_with($data, 'tmpl_edit_remark:')) {
-            $tmplId = (int)substr($data, strlen('tmpl_edit_remark:'));
-            Storage::setState($userId, 'tmpl_edit_remark', ['tmpl_id' => $tmplId]);
+            $parts=explode(':',$data,3);$tmplId=(int)($parts[1]??0);$page=max(1,(int)($parts[2]??1));
+            Storage::setState($userId, 'tmpl_edit_remark', ['tmpl_id' => $tmplId,'page'=>$page]);
             tg_answer_callback($id);
             tg_edit_message(
                 $chatId,
                 $messageId,
                 "Enter remark: [a-z]",
-                Keyboards::cancel()
+                Keyboards::cancel("tmpl_view:{$tmplId}:{$page}")
             );
             return;
         }
 
         // Edit Template Data Limit: tmpl_edit_data:<id>
         if (str_starts_with($data, 'tmpl_edit_data:')) {
-            $tmplId = (int)substr($data, strlen('tmpl_edit_data:'));
-            Storage::setState($userId, 'tmpl_edit_data', ['tmpl_id' => $tmplId]);
+            $parts=explode(':',$data,3);$tmplId=(int)($parts[1]??0);$page=max(1,(int)($parts[2]??1));
+            Storage::setState($userId, 'tmpl_edit_data', ['tmpl_id' => $tmplId,'page'=>$page]);
             tg_answer_callback($id);
             tg_edit_message(
                 $chatId,
                 $messageId,
                 "Enter DataLimit: [0-9]\n0 for unlimited",
-                Keyboards::cancel()
+                Keyboards::cancel("tmpl_view:{$tmplId}:{$page}")
             );
             return;
         }
 
         // Edit Template Date Limit: tmpl_edit_date:<id> - shows the date-type selector first
         if (str_starts_with($data, 'tmpl_edit_date:')) {
-            $tmplId = (int)substr($data, strlen('tmpl_edit_date:'));
+            $parts=explode(':',$data,3);$tmplId=(int)($parts[1]??0);$page=max(1,(int)($parts[2]??1));
             if (!Storage::getTemplate($tmplId)) {
                 tg_answer_callback($id, "❌ Not Found.", true);
                 return;
             }
-            Storage::setState($userId, 'tmpl_edit_datetype', ['tmpl_id'=>$tmplId]);
+            Storage::setState($userId, 'tmpl_edit_datetype', ['tmpl_id'=>$tmplId,'page'=>$page]);
             tg_answer_callback($id);
             tg_edit_message(
                 $chatId,
                 $messageId,
                 "Select a Button",
-                Keyboards::templateDateTypeSelector("tmpl_edit_dt:{$tmplId}", "tmpl_view:{$tmplId}")
+                Keyboards::templateDateTypeSelector("tmpl_edit_dt:{$tmplId}", "tmpl_view:{$tmplId}:{$page}")
             );
             return;
         }
@@ -993,6 +994,7 @@ class CallbackHandlers {
             $tmplId = (int)($parts[1] ?? 0);
             $type = $parts[2] ?? 'fixed';
             $state = Storage::getState($userId);
+            $page=max(1,(int)($state['data']['page']??1));
             if (($state['step'] ?? '') !== 'tmpl_edit_datetype' || (int)($state['data']['tmpl_id'] ?? 0) !== $tmplId || !in_array($type, ['fixed','onhold','unlimited'], true)) {
                 tg_answer_callback($id, 'Session expired, please retry.', true);
                 return;
@@ -1008,14 +1010,14 @@ class CallbackHandlers {
                 $tmpl['date_limit'] = 0;
                 Storage::saveTemplate($tmpl);
                 Storage::clearState($userId);
-                tg_edit_message($chatId, $messageId, "✅ Success.", Keyboards::cancel());
+                tg_edit_message($chatId, $messageId, "✅ Success.", Keyboards::cancel("tmpl_view:{$tmplId}:{$page}"));
             } else {
-                Storage::setState($userId, 'tmpl_edit_date', ['tmpl_id' => $tmplId, 'date_type' => $type]);
+                Storage::setState($userId, 'tmpl_edit_date', ['tmpl_id' => $tmplId, 'date_type' => $type,'page'=>$page]);
                 tg_edit_message(
                     $chatId,
                     $messageId,
                     "Enter DateLimit: [0-9]",
-                    Keyboards::cancel()
+                    Keyboards::cancel("tmpl_view:{$tmplId}:{$page}")
                 );
             }
             return;
@@ -1669,7 +1671,7 @@ class CallbackHandlers {
             $chatId,
             $messageId,
             "Enter remark: [a-z]",
-            [
+            Keyboards::navigationLast([
                 'inline_keyboard' => [
                     [
                         ['text' => 'Random Username', 'callback_data' => "rnd_usr:{$serverId}"],
@@ -1680,7 +1682,7 @@ class CallbackHandlers {
                     [['text' => '🏛️ Home', 'callback_data' => 'home']],
                     [['text' => '◀️ Back', 'callback_data' => "srv:{$serverId}"]],
                 ]
-            ]
+            ])
         );
     }
 
