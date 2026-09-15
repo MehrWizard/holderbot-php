@@ -1068,6 +1068,33 @@ class CallbackHandlers {
             tg_edit_message($chatId,$messageId,'Enter administrator username:',Keyboards::cancel("srv:{$serverId}"));return;
         }
 
+        if(str_starts_with($data,'admins_list:')) {
+            $parts=explode(':',$data,3);$serverId=(int)($parts[1]??0);$page=max(1,(int)($parts[2]??1));$server=Storage::getServer($serverId);
+            if(!$server||!PanelManager::isSudo($server)){tg_answer_callback($id,'Administrator management requires sudo panel access.',true);return;}
+            $admins=PanelManager::getAdmins($server);natcasesort($admins);$admins=array_values($admins);tg_answer_callback($id);
+            tg_edit_message($chatId,$messageId,$admins?'<b>Administrators:</b> '.count($admins):'<b>No administrators found.</b>',Keyboards::adminsList($serverId,$admins,$page));return;
+        }
+
+        if(str_starts_with($data,'new_adm:')) {
+            $serverId=(int)substr($data,strlen('new_adm:'));$server=Storage::getServer($serverId);
+            if(!$server||!PanelManager::isSudo($server)){tg_answer_callback($id,'Administrator creation requires sudo panel access.',true);return;}
+            Storage::setState($userId,'create_admin_role',['server_id'=>$serverId]);tg_answer_callback($id);
+            tg_edit_message($chatId,$messageId,'Select the administrator access level:',Keyboards::adminRole($serverId));return;
+        }
+
+        if(str_starts_with($data,'adm_role:')) {
+            $parts=explode(':',$data,3);$serverId=(int)($parts[1]??0);$role=$parts[2]??'';$server=Storage::getServer($serverId);$state=Storage::getState($userId);
+            if(!$server||!PanelManager::isSudo($server)||($state['step']??'')!=='create_admin_role'||(int)($state['data']['server_id']??0)!==$serverId||!in_array($role,['regular','sudo'],true)){tg_answer_callback($id,'Administrator creation session expired.',true);return;}
+            if($role==='sudo'){Storage::setState($userId,'create_admin_sudo_confirm',['server_id'=>$serverId]);tg_answer_callback($id);tg_edit_message($chatId,$messageId,'A sudo administrator has full panel access. Continue?',Keyboards::confirm("adm_role_ok:{$serverId}","new_adm:{$serverId}"));return;}
+            Storage::setState($userId,'create_admin_credentials',['server_id'=>$serverId,'sudo'=>false]);tg_answer_callback($id);tg_edit_message($chatId,$messageId,'Send the new administrator username and password separated by one space:',Keyboards::cancel("admins_list:{$serverId}:1"));return;
+        }
+
+        if(str_starts_with($data,'adm_role_ok:')) {
+            $serverId=(int)substr($data,strlen('adm_role_ok:'));$server=Storage::getServer($serverId);$state=Storage::getState($userId);
+            if(!$server||!PanelManager::isSudo($server)||($state['step']??'')!=='create_admin_sudo_confirm'||(int)($state['data']['server_id']??0)!==$serverId){tg_answer_callback($id,'Administrator creation session expired.',true);return;}
+            Storage::setState($userId,'create_admin_credentials',['server_id'=>$serverId,'sudo'=>true]);tg_answer_callback($id);tg_edit_message($chatId,$messageId,'Send the new sudo administrator username and password separated by one space:',Keyboards::cancel("admins_list:{$serverId}:1"));return;
+        }
+
         if(str_starts_with($data,'adm_view:')) {
             $parts=explode(':',$data,4);$serverId=(int)($parts[1]??0);$admin=rawurldecode($parts[2]??'');$page=max(1,(int)($parts[3]??1));$server=Storage::getServer($serverId);
             if(!$server){tg_answer_callback($id,'Server not found.',true);return;}

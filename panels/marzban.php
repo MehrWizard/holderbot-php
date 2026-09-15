@@ -320,6 +320,10 @@ class MarzbanClient {
         return is_array($resp) ? $resp : null;
     }
 
+    public static function createAdmin(array $server,string $username,string $password,bool $sudo): ?array {
+        return self::request($server,'POST','/api/admin',['username'=>$username,'password'=>$password,'is_sudo'=>$sudo]);
+    }
+
     /**
      * Set / change user owner admin.
      */

@@ -504,6 +504,14 @@ class PanelManager {
         return null;
     }
 
+    public static function createAdmin(array $server,string $username,string $password,bool $sudo=false): ?array {
+        if(!self::isSudo($server))throw new RuntimeException('Administrator creation requires sudo panel access.');
+        $created=strtolower($server['type']??'marzban')==='marzneshin'?MarzneshinClient::createAdmin($server,$username,$password,$sudo):MarzbanClient::createAdmin($server,$username,$password,$sudo);
+        if(is_array($created)&&hash_equals((string)($created['username']??''),$username))return $created;
+        $verified=self::getAdmin($server,$username,false);if($verified)return $verified;
+        self::throwReadFailure($server,'administrator creation');
+    }
+
     /** Return inexpensive, short-lived totals for the users owned by an admin. */
     public static function getAdminUserCounts(array $server,string $username,bool $refresh=false): array {
         $key='admin_user_counts_'.(int)($server['id']??0).'_'.hash('sha256',$username);

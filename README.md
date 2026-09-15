@@ -1,6 +1,6 @@
 # HolderBot PHP
 
-PHP webhook implementation of [erfjab/holderbot](https://github.com/erfjab/holderbot), targeting the supplied Python `v0.6.0` source. It supports Marzban and Marzneshin, user and template management, administrator search and admin-scoped user actions, batch operations, inline search, QR delivery, node monitoring, and expiry reports.
+PHP webhook implementation of [erfjab/holderbot](https://github.com/erfjab/holderbot), targeting the supplied Python `v0.6.0` source. It supports Marzban and Marzneshin, user and template management, administrator browsing, creation, search and admin-scoped user actions, batch operations, inline search, QR delivery, node monitoring, and expiry reports.
 
 Both sudo and regular panel credentials are accepted. Regular administrators are limited to the users and operations authorized by the panel; HolderBot hides administrator management, ownership transfer, server-wide actions, and node controls for those connections.
 

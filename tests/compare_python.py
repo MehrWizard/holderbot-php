@@ -150,8 +150,7 @@ for index,(fixture,value) in enumerate(zip(fixtures,actual)):
     if fixture['kind']=='keyboard' and fixture['method']=='templateActions':
         expected[-1]=['◀️ Back','🏛️ Home']
     if fixture['kind']=='keyboard' and fixture['method']=='serverMenu':
-        # PHP extension requested after parity: searchable panel administrators.
-        for row in expected:
-            if row==['🔍 Search User']: row.append('🔍 Search Admin')
+        # Requested PHP extension: first-class administrator management.
+        expected=[['👤 Users','➕ Create User'],['🔍 Search User'],['👥 Admins','➕ Create Admin'],['🔍 Search Admin'],['📊 Stats','🗄 Actions'],['☁️ Server'],['🏛️ Home']]
     assert value == expected, f"Fixture {index} {fixture['kind']}:\nExpected: {expected!r}\nActual: {value!r}"
 print(f'PASS: {len(fixtures)} differential fixtures evaluated against original Python code')

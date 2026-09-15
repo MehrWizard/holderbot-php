@@ -303,6 +303,10 @@ class MarzneshinClient {
         return $resp['items'] ?? (is_array($resp) ? $resp : null);
     }
 
+    public static function createAdmin(array $server,string $username,string $password,bool $sudo): ?array {
+        return self::request($server,'POST','/api/admins',['username'=>$username,'password'=>$password,'is_sudo'=>$sudo,'enabled'=>true,'all_services_access'=>true,'modify_users_access'=>true,'service_ids'=>[]]);
+    }
+
     /**
      * Set / change user owner admin.
      */

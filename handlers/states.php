@@ -28,6 +28,9 @@ class StateHandlers {
             case 'search_admin_user':
                 return self::handleSearchAdminUser($chatId,$userId,$text,$data);
 
+            case 'create_admin_credentials':
+                return self::handleCreateAdmin($chatId,$userId,$text,$data,(int)($message['message_id']??0));
+
             case 'create_user_name':
                 return self::handleCreateUserName($chatId, $userId, $text, $data);
 
@@ -138,6 +141,17 @@ class StateHandlers {
         if($query===''||preg_match_all('/./us',$query)>100){tg_send_message($chatId,'❌ Enter a username of 1–100 characters.',Keyboards::cancel($back));return true;}
         $results=PanelManager::getUsers($server,1,10,$query,null,$admin,true);
         tg_send_message($chatId,$results?'<b>Users found under '.Formatter::escape($admin).':</b>':'<b>No matching users found under '.Formatter::escape($admin).'.</b>',Keyboards::adminUserSearchResults($serverId,$admin,$results,$adminPage));return true;
+    }
+
+    private static function handleCreateAdmin(int|string $chatId,int $userId,string $input,array $data,int $messageId=0): bool {
+        $serverId=(int)($data['server_id']??0);$server=Storage::getServer($serverId);$back="admins_list:{$serverId}:1";
+        if(!$server||!PanelManager::isSudo($server)){Storage::clearState($userId);tg_send_message($chatId,'❌ Administrator creation requires sudo panel access.',Keyboards::cancel("srv:{$serverId}"));return true;}
+        $parts=preg_split('/\s+/',trim($input),2);$username=$parts[0]??'';$password=$parts[1]??'';
+        if($messageId>0)tg_delete_message($chatId,$messageId);
+        if(!preg_match('/^[A-Za-z0-9_]{3,32}$/',$username)||strlen($password)<8||strlen($password)>128){tg_send_message($chatId,'❌ Use a 3–32 character username containing letters, numbers, or underscores, followed by a password of 8–128 characters.',Keyboards::cancel($back));return true;}
+        try{$admin=PanelManager::createAdmin($server,$username,$password,!empty($data['sudo']));}
+        catch(Throwable $e){$detail=preg_replace('/\s+/u',' ',trim($e->getMessage()));tg_send_message($chatId,"❌ Administrator creation failed.\n<code>".Formatter::escape($detail).'</code>',Keyboards::cancel($back));return true;}
+        Storage::clearState($userId);tg_send_message($chatId,'✅ Administrator <code>'.Formatter::escape((string)$admin['username']).'</code> created successfully.',Keyboards::cancel("adm_view:{$serverId}:".rawurlencode($username).':1'));return true;
     }
 
     private static function handleCreateUserName(int|string $chatId, int $userId, string $username, array $data): bool {

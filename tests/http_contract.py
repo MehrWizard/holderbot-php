@@ -27,7 +27,9 @@ class Handler(BaseHTTPRequestHandler):
         if path.endswith('/token'):
             if payload.get('password') == ['bad']: status=401; result={'detail':'invalid credentials'}
             else: result={'access_token':'token-'+payload['password'][0],'is_sudo':payload.get('username') != ['reseller'],'username':payload.get('username',[''])[0]}
+        elif path=='/api/admin' and self.command=='POST': result=dict(payload)
         elif path=='/api/admin': result={'is_sudo':self.headers.get('Authorization')!='Bearer token-reseller','username':'reseller' if self.headers.get('Authorization')=='Bearer token-reseller' else 'sudo'}
+        elif path=='/api/admins' and self.command=='POST': result=dict(payload)
         elif path=='/api/inbounds': result={'vless':[{'tag':'test','protocol':'vless'}]}
         elif path in ['/api/users','/api/user'] and self.command=='POST':
             result=dict(payload,subscription_url='/sub/test',is_active=True,activated=True,status=payload.get('status','active'))
@@ -44,7 +46,7 @@ class Handler(BaseHTTPRequestHandler):
                 with scan_lock: scan_active -= 1
                 offset=int(query.get('offset',['0'])[0]); result={'users':[{'username':f'user-{offset}'}],'total':12}
             else: result={'users':[],'items':[],'total':0}
-        if path in ['/api/nodes', '/api/admins', '/empty-array']: result=[]
+        if path in ['/api/nodes', '/api/admins', '/empty-array'] and self.command=='GET': result=[]
         if path=='/slow': time.sleep(1)
         if path=='/empty-body': status=204
         encoded = b'' if status==204 else (b'not json' if path=='/invalid-json' else json.dumps(result).encode())
@@ -68,6 +70,7 @@ foreach(['marzban','marzneshin'] as $kind){$restricted['type']=$kind;$client=$ki
 $s=['id'=>1,'type'=>'marzban','remark'=>'test','base_url'=>$argv[2],'username'=>'sudo','password'=>'good'];
 foreach(['marzban','marzneshin'] as $kind) {
  $s['type']=$kind;
+ $created=PanelManager::createAdmin($s,'created_admin','strongpass',false);if(($created['username']??'')!=='created_admin'||!empty($created['is_sudo']))throw new RuntimeException('Regular administrator creation failed');
  foreach(['fixed','onhold','unlimited'] as $date) {
   $u=PanelManager::createUser($s,'client',3,2,null,$kind==='marzban'?['test']:[1],$date);
   if (!$u) throw new RuntimeException('Create failed');
@@ -104,6 +107,8 @@ try:
         assert proc.returncode==0,proc.stderr
     creates=[c for c in calls if c['method']=='POST' and c['path'] in ['/api/user','/api/users']]
     assert len(creates)==6
+    admin_creates=[c for c in calls if c['method']=='POST' and c['path'] in ['/api/admin','/api/admins']]
+    assert len(admin_creates)==2 and all(c['payload']['is_sudo'] is False for c in admin_creates), 'Regular administrator payload is unsafe'
     for call in creates:
         p=call['payload']
         assert p['data_limit']==3*1024**3

@@ -48,16 +48,29 @@ class Keyboards {
     public static function serverMenu(int|array $server): array {
         $serverId=is_array($server)?(int)$server['id']:$server;$sudo=!is_array($server)||PanelManager::isSudo($server);
         $rows=$sudo ? [
-            [self::button('👤 Users', "users:{$serverId}:1:all"),self::button('🗄 Actions', "act_menu:{$serverId}")],
-            [self::button('📊 Stats', "stats:{$serverId}"),self::button('➕ Create User', "new_usr:{$serverId}")],
-            [self::button('🔍 Search User', "srch_usr:{$serverId}"),self::button('🔍 Search Admin', "srch_adm:{$serverId}")],
+            [self::button('👤 Users', "users:{$serverId}:1:all"),self::button('➕ Create User', "new_usr:{$serverId}")],
+            [self::button('🔍 Search User', "srch_usr:{$serverId}")],
+            [self::button('👥 Admins', "admins_list:{$serverId}:1"),self::button('➕ Create Admin', "new_adm:{$serverId}")],
+            [self::button('🔍 Search Admin', "srch_adm:{$serverId}")],
+            [self::button('📊 Stats', "stats:{$serverId}"),self::button('🗄 Actions', "act_menu:{$serverId}")],
         ] : [
-            [self::button('👤 Users', "users:{$serverId}:1:all"),self::button('📊 Stats', "stats:{$serverId}")],
-            [self::button('➕ Create User', "new_usr:{$serverId}"),self::button('🔍 Search User', "srch_usr:{$serverId}")],
+            [self::button('👤 Users', "users:{$serverId}:1:all"),self::button('➕ Create User', "new_usr:{$serverId}")],
+            [self::button('🔍 Search User', "srch_usr:{$serverId}")],
+            [self::button('📊 Stats', "stats:{$serverId}")],
         ];
-        $rows[]=[self::button('☁️ Server', "srv_cfg:{$serverId}"), self::button('🏛️ Home', 'home')];
+        $rows[]=[self::button('☁️ Server', "srv_cfg:{$serverId}")];$rows[]=[self::button('🏛️ Home','home')];
         return self::navigationLast(['inline_keyboard'=>$rows]);
     }
+
+    public static function adminsList(int $serverId,array $admins,int $page=1): array {
+        $total=count($admins);$page=self::page($page,$total);$slice=array_slice($admins,($page-1)*self::SELECTOR_PAGE,self::SELECTOR_PAGE);$rows=[];$buttons=[];
+        foreach($slice as $admin)$buttons[]=self::button('👤 '.$admin,"adm_view:{$serverId}:".rawurlencode($admin).":{$page}");
+        $rows=array_chunk($buttons,2);$nav=[];if($page>1)$nav[]=self::button('⬅️',"admins_list:{$serverId}:".($page-1));if($page*self::SELECTOR_PAGE<$total)$nav[]=self::button('➡️',"admins_list:{$serverId}:".($page+1));if($nav)$rows[]=$nav;
+        $rows[]=[self::button('➕ Create Admin',"new_adm:{$serverId}"),self::button('🔍 Search Admin',"srch_adm:{$serverId}")];
+        $rows[]=[self::button('◀️ Back',"srv:{$serverId}"),self::button('🏛️ Home','home')];return self::navigationLast(['inline_keyboard'=>$rows]);
+    }
+
+    public static function adminRole(int $serverId): array { return self::rows([self::button('👤 Regular Admin',"adm_role:{$serverId}:regular"),self::button('🛡️ Sudo Admin',"adm_role:{$serverId}:sudo")],1,"srv:{$serverId}"); }
     public static function stats(int $serverId): array {
         return ['inline_keyboard'=>[
             [self::button('🔄 Refresh Stats',"stats_refresh:{$serverId}")],
