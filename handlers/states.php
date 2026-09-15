@@ -25,6 +25,9 @@ class StateHandlers {
             case 'search_admin':
                 return self::handleSearchAdmin($chatId,$userId,$text,$data);
 
+            case 'search_admin_user':
+                return self::handleSearchAdminUser($chatId,$userId,$text,$data);
+
             case 'create_user_name':
                 return self::handleCreateUserName($chatId, $userId, $text, $data);
 
@@ -126,6 +129,15 @@ class StateHandlers {
         require_once __DIR__.'/callbacks.php';
         CallbackHandlers::renderAdminSearchResults($chatId,0,$serverId,$query,1);
         return true;
+    }
+
+    private static function handleSearchAdminUser(int|string $chatId,int $userId,string $query,array $data): bool {
+        $serverId=(int)($data['server_id']??0);$admin=(string)($data['admin']??'');$adminPage=max(1,(int)($data['admin_page']??1));$server=Storage::getServer($serverId);$query=trim($query);
+        $back="adm_view:{$serverId}:".rawurlencode($admin).":{$adminPage}";
+        if(!$server||!PanelManager::getAdmin($server,$admin)){Storage::clearState($userId);tg_send_message($chatId,'❌ Administrator not found.');return true;}
+        if($query===''||preg_match_all('/./us',$query)>100){tg_send_message($chatId,'❌ Enter a username of 1–100 characters.',Keyboards::cancel($back));return true;}
+        $results=PanelManager::getUsers($server,1,10,$query,null,$admin,true);
+        tg_send_message($chatId,$results?'<b>Users found under '.Formatter::escape($admin).':</b>':'<b>No matching users found under '.Formatter::escape($admin).'.</b>',Keyboards::adminUserSearchResults($serverId,$admin,$results,$adminPage));return true;
     }
 
     private static function handleCreateUserName(int|string $chatId, int $userId, string $username, array $data): bool {

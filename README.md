@@ -12,7 +12,7 @@ PHP webhook implementation of [erfjab/holderbot](https://github.com/erfjab/holde
 | Configuration | Settings and `.env` | `config.php`; `.env` is not loaded automatically |
 | Node polling | Approximately 30 seconds | One-minute cron, or `cron.php --daemon` for a similar interval |
 | Batch work | Some requests run concurrently | Persistent MySQL queue with bounded steps, progress, cancellation, and retry handling |
-| Administrator browsing | Administrators appear only in action selectors | Dedicated searchable administrator browser with admin-scoped user actions |
+| Administrator browsing | Administrators appear only in action selectors | Searchable admin details, owned-user search, status totals and filters, and admin-scoped actions |
 | QR output | Python/Pillow implementation | Pure PHP byte-mode encoder; pixels may differ while encoded content remains equivalent |
 
 Telegram and panel APIs still require JSON at their HTTP boundaries. The application does not read or write JSON files. Runtime state, cache, server records, templates, and queue jobs are stored in MySQL.

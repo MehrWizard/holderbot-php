@@ -502,6 +502,20 @@ class PanelManager {
         return null;
     }
 
+    /** Return inexpensive, short-lived totals for the users owned by an admin. */
+    public static function getAdminUserCounts(array $server,string $username,bool $refresh=false): array {
+        $key='admin_user_counts_'.(int)($server['id']??0).'_'.hash('sha256',$username);
+        if(!$refresh){$cached=Storage::cacheGet($key);if(is_array($cached))return $cached;}
+        $counts=[];
+        foreach(['total'=>null,'active'=>'active','disabled'=>'disabled','on_hold'=>'on_hold','limited'=>'limited','expired'=>'expired'] as $label=>$status){
+            if($label==='on_hold'&&strtolower($server['type']??'marzban')==='marzneshin'){$counts[$label]=null;continue;}
+            try{self::getUsers($server,1,1,null,$status,$username,true);$counts[$label]=self::getLastUsersTotal($server);}
+            catch(Throwable){$counts[$label]=null;}
+        }
+        Storage::cacheSet($key,$counts,120);
+        return $counts;
+    }
+
     /**
      * Set user owner admin.
      */

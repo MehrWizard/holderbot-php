@@ -111,10 +111,11 @@ class Formatter {
         }
         return implode("\n", $lines);
     }
-    public static function adminCard(array $server,array $admin,?int $totalUsers=null): string {
+    public static function adminCard(array $server,array $admin,array|int|null $userCounts=null): string {
         $fields=['Username'=>$admin['username']??'➖','Panel'=>$server['remark']??('#'.($server['id']??'?')),'Sudo'=>!empty($admin['is_sudo'])?'Yes':'No'];
         if(array_key_exists('enabled',$admin))$fields['Enabled']=!empty($admin['enabled'])?'Yes':'No';
-        if($totalUsers!==null)$fields['Users']=$totalUsers;
+        if(is_int($userCounts))$fields['Total Users']=$userCounts;
+        elseif(is_array($userCounts))foreach(['total'=>'Total Users','active'=>'Active','disabled'=>'Inactive / Disabled','on_hold'=>'On Hold','limited'=>'Limited','expired'=>'Expired'] as $key=>$label)$fields[$label]=$userCounts[$key]??'➖';
         if(isset($admin['users_usage']))$fields['Users Usage']=self::bytes((int)$admin['users_usage']);
         if(isset($admin['users_data_usage']))$fields['Users Data Usage']=self::bytes((int)$admin['users_data_usage']);
         if(isset($admin['telegram_id']))$fields['Telegram ID']=$admin['telegram_id']?:'➖';

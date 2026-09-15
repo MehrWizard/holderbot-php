@@ -39,12 +39,13 @@ class PanelManager {
     public static function setOwner($server,$username,$admin): bool { self::$calls[]=['owner',$username,$admin]; return false; }
     public static function getUsers($server,$page,$size,$search=null,$status=null): array { self::$calls[]=['list',$page,$size,$search,$status]; return self::$users; }
     public static function getLastUsersTotal($server): ?int { return self::$total; }
+    public static function getAdminUserCounts($server,$admin): array { return ['total'=>self::$total,'active'=>1,'disabled'=>2,'on_hold'=>3,'limited'=>4,'expired'=>5]; }
     public static function getUser($server,$username): array { self::$calls[]=['exact',$username]; return ['username'=>$username,'is_active'=>true,'status'=>'active','service_ids'=>['one:tcp','two']]; }
 }
 class Formatter {
     public static function start(): string { return 'Shared welcome'; }
     public static function userCard($server,$user): string { return 'Card '.$user['username']; }
-    public static function adminCard($server,$admin,$total=null): string { return 'Admin '.$admin['username'].' '.$total; }
+    public static function adminCard($server,$admin,$total=null): string { return 'Admin '.$admin['username']; }
     public static function templateCard($template): string { return 'Template '.$template['id']; }
     public static function escape($text): string { return htmlspecialchars($text); }
 }
@@ -105,6 +106,8 @@ callback('queue_back:1'); check(end($events)[0]==='edit' && count(NotificationOu
 check(in_array('srch_adm:1',buttons(Keyboards::serverMenu(1)),true),'Server menu omitted administrator search');
 callback('srch_adm:1');check(Storage::getState(42)['step']==='search_admin','Administrator search did not start');
 StateHandlers::handle(['text'=>'admin','chat'=>['id'=>99],'from'=>['id'=>42]],Storage::getState(42));$adminResultKeys=buttons(end($events)[1][3]);$adminView=array_values(array_filter($adminResultKeys,fn($key)=>str_contains($key,':admin1:')))[0];callback($adminView);$adminActionKeys=buttons(end($events)[1][3]);check(in_array('adm_act:act_adm:1:admin1:1',$adminActionKeys,true)&&in_array('adm_users:1:admin1:1:1',$adminActionKeys,true)&&in_array('adm_create:1:admin1:1',$adminActionKeys,true),'Administrator result did not open its complete action screen');
+PanelManager::$users=[['username'=>'owned','is_active'=>true]];callback('adm_users:1:admin1:1:1');$ownedKeys=buttons(end($events)[1][3]);check(in_array('adm_users:1:admin1:1:1:active',$ownedKeys,true)&&in_array('adm_users:1:admin1:1:1:disabled',$ownedKeys,true)&&in_array('adm_users:1:admin1:1:1:on_hold',$ownedKeys,true)&&in_array('adm_users:1:admin1:1:1:limited',$ownedKeys,true)&&in_array('adm_users:1:admin1:1:1:expired',$ownedKeys,true)&&in_array('srch_adm_user:1:admin1:1',$ownedKeys,true),'Administrator users omitted search or status filters');
+callback('srch_adm_user:1:admin1:1');check(Storage::getState(42)['step']==='search_admin_user','Administrator-owned user search did not start');StateHandlers::handle(['text'=>'owned','chat'=>['id'=>99],'from'=>['id'=>42]],Storage::getState(42));check(in_array('srch_adm_user:1:admin1:1',buttons(end($events)[1][2]),true),'Administrator-owned user search did not render reusable results');
 callback('adm_act:act_adm:1:admin1:1');check(Storage::getState(42)['step']==='bulk_confirm'&&in_array('exec_act:act_adm:1:admin1',buttons(end($events)[1][3]),true),'Administrator activation did not reuse the confirmed bulk action');
 check(in_array('adm_act:add_cfg:1:admin1:1',buttons(Keyboards::adminActions(1,'admin1',1,'marzneshin')),true),'Marzneshin administrator omitted config actions');
 command('/start admin_1_YWRtaW4x');check(str_starts_with(end($events)[1][1],'Admin admin1')&&in_array('srv:1',buttons(end($events)[1][2]),true),'Administrator deep link did not render a usable card');

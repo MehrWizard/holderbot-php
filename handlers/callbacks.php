@@ -1070,11 +1070,20 @@ class CallbackHandlers {
 
         if(str_starts_with($data,'adm_users:')) {
             $parts=explode(':',$data,6);$serverId=(int)($parts[1]??0);$admin=rawurldecode($parts[2]??'');$adminPage=max(1,(int)($parts[3]??1));$page=max(1,(int)($parts[4]??1));$server=Storage::getServer($serverId);
+            $filter=$parts[5]??'all';if(!in_array($filter,['all','active','disabled','on_hold','limited','expired'],true))$filter='all';
             if(!$server||!PanelManager::getAdmin($server,$admin)){tg_answer_callback($id,'Administrator not found.',true);return;}
-            $limit=10;$users=PanelManager::getUsers($server,$page,$limit,null,null,$admin,true);$total=PanelManager::getLastUsersTotal($server);
-            if($total!==null&&$page>max(1,(int)ceil($total/$limit))){$page=max(1,(int)ceil($total/$limit));$users=PanelManager::getUsers($server,$page,$limit,null,null,$admin,true);}
+            if($filter==='on_hold'&&strtolower((string)$server['type'])==='marzneshin'){tg_answer_callback($id,'This panel does not expose an On Hold user filter.',true);return;}
+            $status=$filter==='all'?null:$filter;$limit=10;$users=PanelManager::getUsers($server,$page,$limit,null,$status,$admin,true);$total=PanelManager::getLastUsersTotal($server);
+            if($total!==null&&$page>max(1,(int)ceil($total/$limit))){$page=max(1,(int)ceil($total/$limit));$users=PanelManager::getUsers($server,$page,$limit,null,$status,$admin,true);}
             $hasMore=$total!==null?$page*$limit<$total:count($users)===$limit;
-            tg_answer_callback($id);tg_edit_message($chatId,$messageId,$users?'<b>Users owned by '.Formatter::escape($admin).':</b>':'<b>This administrator has no users.</b>',Keyboards::adminUsers($serverId,$admin,$users,$page,$hasMore,$adminPage));return;
+            tg_answer_callback($id);$label=$filter==='all'?'users':str_replace('_',' ',$filter).' users';tg_edit_message($chatId,$messageId,$users?'<b>'.ucwords($label).' owned by '.Formatter::escape($admin).':</b>':'<b>No '.Formatter::escape($label).' found for this administrator.</b>',Keyboards::adminUsers($serverId,$admin,$users,$page,$hasMore,$adminPage,$filter,(string)$server['type']));return;
+        }
+
+        if(str_starts_with($data,'srch_adm_user:')) {
+            $parts=explode(':',$data,4);$serverId=(int)($parts[1]??0);$admin=rawurldecode($parts[2]??'');$adminPage=max(1,(int)($parts[3]??1));$server=Storage::getServer($serverId);
+            if(!$server||!PanelManager::getAdmin($server,$admin)){tg_answer_callback($id,'Administrator not found.',true);return;}
+            Storage::setState($userId,'search_admin_user',['server_id'=>$serverId,'admin'=>$admin,'admin_page'=>$adminPage]);tg_answer_callback($id);
+            tg_edit_message($chatId,$messageId,'Enter a username to search within <b>'.Formatter::escape($admin).'</b>:',Keyboards::cancel("adm_view:{$serverId}:".rawurlencode($admin).":{$adminPage}"));return;
         }
 
         if(str_starts_with($data,'adm_create:')) {
@@ -1488,8 +1497,8 @@ class CallbackHandlers {
     private static function renderAdminCard(int|string $chatId,int $messageId,array $server,string $username,int $page): void {
         $admin=PanelManager::getAdmin($server,$username);
         if(!$admin){tg_edit_message($chatId,$messageId,'❌ Administrator not found.',Keyboards::cancel("srv:{$server['id']}"));return;}
-        PanelManager::getUsers($server,1,1,null,null,$username,true);$total=PanelManager::getLastUsersTotal($server);
-        tg_edit_message($chatId,$messageId,Formatter::adminCard($server,$admin,$total),Keyboards::adminActions((int)$server['id'],$username,$page,(string)$server['type']));
+        $counts=PanelManager::getAdminUserCounts($server,$username);
+        tg_edit_message($chatId,$messageId,Formatter::adminCard($server,$admin,$counts),Keyboards::adminActions((int)$server['id'],$username,$page,(string)$server['type']));
     }
 
     private static function renderUsersList(
