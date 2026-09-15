@@ -740,8 +740,10 @@ final class BatchQueue
             }
             if(empty($params['scan_started_at'])) {
                 $params['scan_started_at']=microtime(true);
-                $job['params']=$params;
             }
+            $params['page']=max(1,(int)($params['page']??1));
+            $params['page_size']=max(1,(int)($params['page_size']??PanelManager::pageSize($server)));
+            $job['params']=$params;
             $job['active'] = 'scan';
             self::save($job);
             $stats = null;
@@ -963,12 +965,14 @@ final class BatchQueue
                         preg_match('/\A.{0,700}/us',preg_replace('/\s+/u',' ',$panelError)?:$panelError,$match);
                         $job['error'].=' Panel response: '.($match[0]??'Unknown panel error');
                     }
+                    $failurePageSize=(int)($job['params']['page_size']??$job['params']['scan']['page_size']??0);
+                    if(preg_match('/page size:\s*(\d+)/i',$job['error'],$sizeMatch)) $failurePageSize=(int)$sizeMatch[1];
                     $job['params']['failure_context']=[
                         'server'=>(string)($failureServer['remark']??''),
                         'adapter'=>(string)($failureServer['type']??''),
                         'stage'=>(string)($job['active']??$job['status']??'unknown'),
                         'page'=>(int)($job['params']['page']??$job['params']['scan']['page']??1),
-                        'page_size'=>(int)($job['params']['page_size']??$job['params']['scan']['page_size']??0),
+                        'page_size'=>$failurePageSize,
                         'attempts'=>(int)($job['params']['read_failures']??0)+1,
                         'time'=>date(DATE_ATOM),
                     ];

@@ -47,11 +47,12 @@ Optional queue settings in `config.php`:
 ```php
 'queue_budget_seconds' => 55,
 'scan_page_size' => 1000,
+'scan_request_timeout_seconds' => 25,
 'queue_retention_days' => 7,
 'inline_lease_seconds' => 120,
 ```
 
-Full-panel scans and bulk discovery request up to 1,000 users per page by default and adapt when a panel returns fewer. The worker has no fixed step cap: with the default 55-second budget, it starts another step only while at least 30 seconds remain. Increase `queue_budget_seconds` only if your cron host permits longer executions; overlapping cron runs are skipped by the database lock.
+Full-panel scans and bulk discovery request up to 1,000 users per page by default and adapt when a panel returns fewer. Large-page probes use the normal short timeout; a timed-out 25-user fallback receives `scan_request_timeout_seconds`. The worker has no fixed step cap: with the default 55-second budget, it starts another step only while at least 30 seconds remain. Increase `queue_budget_seconds` only if your cron host permits longer executions; overlapping cron runs are skipped by the database lock.
 
 ## Queue operations
 

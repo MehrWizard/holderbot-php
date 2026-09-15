@@ -25,10 +25,11 @@ class MarzneshinClient {
         string $endpoint,
         mixed $payload = null,
         bool $requiresAuth = true,
-        bool $asFormUrlencoded = false
+        bool $asFormUrlencoded = false,
+        int $timeoutSeconds = 5
     ): ?array {
         self::$lastError = '';
-        if (self::$transport !== null) return (self::$transport)($server, $method, $endpoint, $payload);
+        if (self::$transport !== null) return (self::$transport)($server, $method, $endpoint, $payload, $timeoutSeconds);
         $baseUrl = rtrim($server['base_url'], '/');
         $url = $baseUrl . $endpoint;
 
@@ -48,7 +49,7 @@ class MarzneshinClient {
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CUSTOMREQUEST => strtoupper($method),
-            CURLOPT_TIMEOUT_MS => RequestBudget::milliseconds(5),
+            CURLOPT_TIMEOUT_MS => RequestBudget::milliseconds(max(1,$timeoutSeconds)),
             CURLOPT_CONNECTTIMEOUT_MS => RequestBudget::milliseconds(5),
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
@@ -175,7 +176,8 @@ class MarzneshinClient {
         ?string $status = null,
         ?string $ownerUsername = null,
         ?bool $expired = null,
-        ?bool $limited = null
+        ?bool $limited = null,
+        int $timeoutSeconds = 5
     ): ?array {
         $query = [
             'page' => $page,
@@ -204,7 +206,7 @@ class MarzneshinClient {
         }
 
         $endpoint = '/api/users?' . http_build_query($query);
-        $resp = self::request($server, 'GET', $endpoint);
+        $resp = self::request($server, 'GET', $endpoint, null, true, false, $timeoutSeconds);
         return $resp['items'] ?? null;
     }
 

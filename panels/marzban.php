@@ -26,10 +26,11 @@ class MarzbanClient {
         mixed $payload = null,
         bool $requiresAuth = true,
         bool $asFormUrlencoded = false,
-        ?string $bearerOverride = null
+        ?string $bearerOverride = null,
+        int $timeoutSeconds = 5
     ): ?array {
         self::$lastError = '';
-        if (self::$transport !== null) return (self::$transport)($server, $method, $endpoint, $payload);
+        if (self::$transport !== null) return (self::$transport)($server, $method, $endpoint, $payload, $timeoutSeconds);
         $baseUrl = rtrim($server['base_url'], '/');
         $url = $baseUrl . $endpoint;
 
@@ -51,7 +52,7 @@ class MarzbanClient {
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CUSTOMREQUEST => strtoupper($method),
-            CURLOPT_TIMEOUT_MS => RequestBudget::milliseconds(5),
+            CURLOPT_TIMEOUT_MS => RequestBudget::milliseconds(max(1,$timeoutSeconds)),
             CURLOPT_CONNECTTIMEOUT_MS => RequestBudget::milliseconds(5),
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
@@ -187,7 +188,8 @@ class MarzbanClient {
         int $limit = 20,
         ?string $search = null,
         ?string $status = null,
-        ?string $admin = null
+        ?string $admin = null,
+        int $timeoutSeconds = 5
     ): ?array {
         $query = [
             'offset' => $offset,
@@ -205,7 +207,7 @@ class MarzbanClient {
         }
 
         $endpoint = '/api/users?' . http_build_query($query);
-        $resp = self::request($server, 'GET', $endpoint);
+        $resp = self::request($server, 'GET', $endpoint, null, true, false, null, $timeoutSeconds);
         return $resp['users'] ?? null;
     }
 

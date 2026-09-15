@@ -60,16 +60,17 @@ class PanelManager {
         ?string $search = null,
         ?string $status = null,
         ?string $admin = null,
-        bool $strict = false
+        bool $strict = false,
+        int $timeoutSeconds = 5
     ): array {
         $type = strtolower($server['type'] ?? 'marzban');
         if ($type === 'marzneshin') {
             $expired = ($status === 'expired') ? true : null;
             $limited = ($status === 'limited') ? true : null;
-            $rawList = MarzneshinClient::getUsers($server, $page, $limit, $search, $status, $admin, $expired, $limited);
+            $rawList = MarzneshinClient::getUsers($server, $page, $limit, $search, $status, $admin, $expired, $limited, $timeoutSeconds);
         } else {
             $offset = ($page - 1) * $limit;
-            $rawList = MarzbanClient::getUsers($server, $offset, $limit, $search, $status, $admin);
+            $rawList = MarzbanClient::getUsers($server, $offset, $limit, $search, $status, $admin, $timeoutSeconds);
         }
 
         if (!is_array($rawList)) {
@@ -120,6 +121,18 @@ class PanelManager {
             } catch (RuntimeException $e) {
                 $last = $e;
             }
+        }
+        global $config;
+        $extendedSize=(int)end($sizes);
+        $extendedTimeout=max(5,min(45,(int)($config['scan_request_timeout_seconds']??25)));
+        if($extendedTimeout>5 && $last && preg_match('/tim(?:e|ed)[ -]?out/i',$last->getMessage())) {
+            $attempted[]=$extendedSize.' ('.$extendedTimeout.'s timeout)';
+            try {
+                $users=self::getUsers($server,$page,$extendedSize,$search,$status,$admin,true,$extendedTimeout);
+                $elapsed=max(0.001,microtime(true)-$startedAt);
+                self::rememberPageSize($server,$extendedSize,$elapsed);
+                return ['users'=>$users,'page_size'=>$extendedSize,'elapsed'=>$elapsed];
+            } catch(RuntimeException $e) { $last=$e; }
         }
         throw new RuntimeException(
             'Panel user-page negotiation failed after page sizes ' . implode(', ', $attempted) . '. ' .

@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
+$config=['scan_request_timeout_seconds'=>25];
 require __DIR__.'/../panels/panel_manager.php';
+class Storage { public static function cacheSet(...$args): void {} }
 foreach(['marzban','marzneshin'] as $type) {
     $creates=0; $owners=0;
     $transport=function($server,$method,$endpoint,$payload)use(&$creates,&$owners) {
@@ -28,4 +30,12 @@ try {
         if(!str_contains($e->getMessage(),$detail)) throw new RuntimeException('Panel failure omitted diagnostic detail: '.$detail);
     }
 }
+$timeouts=[];
+MarzbanClient::$transport=function($server,$method,$endpoint,$payload,$timeout)use(&$timeouts) {
+    $timeouts[]=$timeout;
+    if($timeout<=5) { MarzbanClient::$lastError='Connection error: Operation timed out'; return null; }
+    return ['users'=>[['username'=>'slow','status'=>'active','data_limit'=>0,'used_traffic'=>0]],'total'=>1];
+};
+$slow=PanelManager::scanUsers($failedServer,1,1000);
+if($slow['page_size']!==25 || $slow['users'][0]['username']!=='slow' || end($timeouts)!==25) throw new RuntimeException('Slow panel did not receive the extended scan timeout');
 echo "PASS: partial creation/ownership failures across both adapters\n";
