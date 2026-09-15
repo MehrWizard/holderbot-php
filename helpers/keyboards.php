@@ -139,13 +139,14 @@ class Keyboards {
         $encoded=rawurlencode($admin);$buttons=[];$back="adm_view:{$serverId}:{$encoded}:{$adminPage}";
         $return="adm_users:{$serverId}:{$encoded}:{$adminPage}:{$page}:{$filter}";
         foreach($users as $user)$buttons[]=self::button((!empty($user['is_active'])?'✅ ':'❌ ').$user['username'],'usr:'.$serverId.':'.rawurlencode((string)$user['username']).':back:'.rawurlencode($return));
-        $rows=array_chunk($buttons,2);$nav=[];
+        $rows=array_chunk($buttons,2);
+        $filters=[];
+        foreach(['active'=>'🟢','limited'=>'🔴','expired'=>'🟡'] as $value=>$emoji)$filters[]=self::button(($filter===$value?'✔':'').$emoji,"adm_users:{$serverId}:{$encoded}:{$adminPage}:1:{$value}");
+        $rows[]=$filters;
+        $nav=[];
         if($page>1)$nav[]=self::button('⬅️',"adm_users:{$serverId}:{$encoded}:{$adminPage}:".($page-1).":{$filter}");
         if($hasMore)$nav[]=self::button('➡️',"adm_users:{$serverId}:{$encoded}:{$adminPage}:".($page+1).":{$filter}");
         if($nav)$rows[]=$nav;
-        $filterButton=fn(string $label,string $value)=>self::button(($filter===$value?'• ':'').$label,"adm_users:{$serverId}:{$encoded}:{$adminPage}:1:{$value}");
-        $rows[]=[$filterButton('Total','all'),$filterButton('Active','active'),$filterButton('Inactive','disabled')];
-        $second=[];if($serverType!=='marzneshin')$second[]=$filterButton('On Hold','on_hold');$second[]=$filterButton('Limited','limited');$second[]=$filterButton('Expired','expired');$rows[]=$second;
         $rows[]=[self::button('🔍 Search User',"srch_adm_user:{$serverId}:{$encoded}:{$adminPage}")];
         $rows[]=[self::button('◀️ Back',$back),self::button('🏛️ Home','home')];return self::navigationLast(['inline_keyboard'=>$rows]);
     }
