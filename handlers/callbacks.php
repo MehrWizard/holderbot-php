@@ -819,6 +819,7 @@ class CallbackHandlers {
         // Cached statistics view and explicit refresh.
         if (str_starts_with($data,'stats_cached:') || str_starts_with($data,'stats_refresh:') || str_starts_with($data,'stats:')) {
             $refresh=str_starts_with($data,'stats_refresh:');
+            $navigation=str_starts_with($data,'stats_cached:');
             $prefix=$refresh?'stats_refresh:':(str_starts_with($data,'stats_cached:')?'stats_cached:':'stats:');
             $serverId=(int)substr($data,strlen($prefix));
             $server = Storage::getServer($serverId);
@@ -827,7 +828,7 @@ class CallbackHandlers {
                 tg_edit_message($chatId, $messageId, "❌ Not Found.", Keyboards::cancel('home'));
                 return;
             }
-            if(!$refresh && self::renderCachedStats($id,$chatId,$messageId,$serverId)) return;
+            if(!$refresh && self::renderCachedStats($id,$chatId,$messageId,$serverId,!$navigation)) return;
             MessageTracker::cleanup($chatId,$messageId>0?[$messageId]:[]);
             self::queueBatch('stats', $server, ['message_id' => $messageId], $chatId, $messageId, $userId, $id);
             return;
@@ -1362,8 +1363,8 @@ class CallbackHandlers {
         tg_edit_message($chatId, $messageId, $description, BatchQueue::keyboard($job));
     }
 
-    private static function renderCachedStats(string $callbackId,int|string $chatId,int $messageId,int $serverId): bool {
-        $cached=BatchQueue::cachedStats($serverId);
+    private static function renderCachedStats(string $callbackId,int|string $chatId,int $messageId,int $serverId,bool $freshOnly=false): bool {
+        $cached=BatchQueue::cachedStats($serverId,$freshOnly);
         if(!$cached) return false;
         tg_answer_callback($callbackId,'Showing latest completed statistics.');
         MessageTracker::cleanup($chatId,$messageId>0?[$messageId]:[]);

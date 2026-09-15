@@ -41,7 +41,10 @@ class Formatter {
     public static function escape($text): string { return htmlspecialchars($text); }
 }
 class BatchQueue {
-    public static function cachedStats($id): ?array { $v=Storage::cacheGet('stats_result_'.$id); return is_array($v)?$v:null; }
+    public static array $queued=[];
+    public static function cachedStats($id,$freshOnly=false): ?array { $v=Storage::cacheGet('stats_result_'.$id); return is_array($v) && (!$freshOnly || (int)($v['fresh_until']??0)>=time())?$v:null; }
+    public static function enqueueInline($kind,...$args): array { self::$queued[]=$kind; return ['id'=>'test','kind'=>$kind,'status'=>'completed']; }
+    public static function loadingMessage($kind): string { return 'Loading'; }
     public static function submitUserMutation($server,$p,$chatId=0,...$args): array {
         $ok=match($p['operation']) {
             'data'=>PanelManager::modifyUserDataLimit($server,$p['username'],$p['value']),
@@ -173,9 +176,14 @@ $count=count(PanelManager::$calls); callback('set_own:first_user:1:new_admin');
 check(count(PanelManager::$calls)===$count && end($events)[0]==='alert','Old owner button mutated another user');
 callback('set_own:second_user:1:new_admin');
 check(end(PanelManager::$calls)===['owner','second_user','new_admin'] && end($events)[1][2]==='❌ Failed','Ownership failure reported success');
-Storage::cacheSet('stats_result_1',['server_id'=>1,'text'=>'cached stats','chunks'=>['one,two'],'generated_at'=>time()],3600);
+Storage::cacheSet('stats_result_1',['server_id'=>1,'text'=>'cached stats','chunks'=>['one,two'],'generated_at'=>time(),'fresh_until'=>time()+60],3600);
 callback('stats:1');
 check($events[count($events)-2][0]==='edit' && $events[count($events)-2][1][2]==='cached stats' && end($events)[0]==='send' && end($events)[1][1]==='one,two','Stats button did not render the latest cache immediately');
+Storage::$cache['stats_result_1']['fresh_until']=time()-1;
+callback('stats:1');
+check(end(BatchQueue::$queued)==='stats','Stats button displayed an expired cache instead of starting a scan');
+$queued=count(BatchQueue::$queued); callback('stats_cached:1');
+check(count(BatchQueue::$queued)===$queued && $events[count($events)-2][1][2]==='cached stats','Back navigation did not restore the latest completed statistics');
 $many=array_map(fn($i)=>['id'=>$i,'remark'=>'item'.$i,'is_active'=>true],range(1,45));
 check(in_array('home_page:2',buttons(Keyboards::home($many)),true),'Server selector has no next page');
 $homeRows=Keyboards::home($many)['inline_keyboard'];

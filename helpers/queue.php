@@ -582,15 +582,20 @@ final class BatchQueue
         foreach($select->fetchAll(PDO::FETCH_COLUMN) as $payload) {
             $chunks[]=(string)(json_decode((string)$payload,true,512,JSON_THROW_ON_ERROR)['text'] ?? '');
         }
+        $generatedAt=time();
+        $duration=max(0.001,microtime(true)-(float)($job['params']['scan_started_at']??microtime(true)));
         Storage::cacheSet('stats_result_'.(int)$job['server_id'],[
-            'server_id'=>(int)$job['server_id'],'text'=>$text,'chunks'=>$chunks,'generated_at'=>time(),
+            'server_id'=>(int)$job['server_id'],'text'=>$text,'chunks'=>$chunks,'generated_at'=>$generatedAt,
+            'generation_seconds'=>$duration,'fresh_until'=>$generatedAt+max(1,(int)ceil($duration*5)),
         ],30*86400);
     }
 
-    public static function cachedStats(int $serverId): ?array
+    public static function cachedStats(int $serverId, bool $freshOnly=false): ?array
     {
         $cached=Storage::cacheGet('stats_result_'.$serverId);
-        return is_array($cached) && (int)($cached['server_id'] ?? 0)===$serverId && is_string($cached['text'] ?? null) && is_array($cached['chunks'] ?? null) ? $cached : null;
+        if(!is_array($cached) || (int)($cached['server_id']??0)!==$serverId || !is_string($cached['text']??null) || !is_array($cached['chunks']??null)) return null;
+        if($freshOnly && (int)($cached['fresh_until']??0)<time()) return null;
+        return $cached;
     }
 
     private static function monitorStep(array &$job, array $server): void
@@ -732,6 +737,10 @@ final class BatchQueue
                 $job['status'] = 'cancelled';
                 $job['error'] = 'Stats request has no originating message';
                 return;
+            }
+            if(empty($params['scan_started_at'])) {
+                $params['scan_started_at']=microtime(true);
+                $job['params']=$params;
             }
             $job['active'] = 'scan';
             self::save($job);
