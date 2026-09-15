@@ -71,6 +71,8 @@ check(notice($job['id'])['payload']!=='{}' && BatchQueue::get($job['id'])['paylo
 check(BatchQueue::health()['pending_notifications']>0,'Health omitted delivery backlog');
 BatchQueue::run(2,10);
 check(notice($job['id'])['status']==='sent','Cron did not deliver notification for completed job');
+check(in_array(123,Storage::cacheGet('tracked_messages_99')??[],true),'Delayed final message was not retained for navigation cleanup');
+Storage::cacheDelete('tracked_messages_99');
 $nextMessageId=201;
 NotificationOutbox::stage($job['id'],'report_1_0',99,['text'=>'first,second']);
 NotificationOutbox::stage($job['id'],'report_2_0',99,['text'=>'third,fourth']);

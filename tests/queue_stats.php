@@ -95,6 +95,15 @@ if(count($parts)<2) throw new RuntimeException('Long report was not safely chunk
 $length=new ReflectionMethod(BatchQueue::class,'telegramTextLength');
 foreach($parts as $part) if($length->invoke(null,json_decode($part,true)['text'])>4096) throw new RuntimeException('A follow-up report exceeds Telegram limits');
 foreach($parts as $part) if(str_contains(json_decode($part,true)['text'],"\n")) throw new RuntimeException('Chunked users are not comma-separated');
+$entities=new ReflectionMethod(BatchQueue::class,'telegramEntityCount');
+foreach($parts as $part) if($entities->invoke(null,json_decode($part,true)['text'])>100) throw new RuntimeException('A follow-up report exceeds Telegram entity limits');
+$linked=BatchQueue::enqueueInline('stats',$server,['message_id'=>129],99,42,'entity_report');
+$linkedEntries=[]; for($i=0;$i<60;$i++) $linkedEntries[]='<a href="https://t.me/test?start=user_1_'.$i.'"><code>u'.$i.'</code></a>';
+$store->invoke(null,$linked['id'],1,$linkedEntries);
+$linkedText=$prepare->invokeArgs(null,[&$linked,$server,['today_expired'=>[]]]);
+if(!str_contains($linkedText,'following report')) throw new RuntimeException('Entity-heavy report was not split');
+$chunks->execute([$linked['id']]);
+foreach($chunks->fetchAll(PDO::FETCH_COLUMN) as $part) if($entities->invoke(null,json_decode($part,true)['text'])>100) throw new RuntimeException('Entity-heavy chunk exceeds Telegram limits');
 $cache=new ReflectionMethod(BatchQueue::class,'cacheStatsResult'); $cache->invoke(null,$long,$longText);
 $cached=BatchQueue::cachedStats($serverId);
 if($cached['text']!==$longText || count($cached['chunks'])!==count($parts)) throw new RuntimeException('Latest complete statistics cache lost its chunks');

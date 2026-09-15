@@ -64,7 +64,7 @@ final class NotificationOutbox
                 $db->prepare('UPDATE bot_notifications SET status=?,next_run=?,error_text=?,telegram_message_id=? WHERE id=?')->execute([
                     $status,time()+$delay,$error,$result['result']['message_id']??null,$row['id'],
                 ]);
-                if ($status==='sent' && str_starts_with((string)$row['delivery_key'],'report_') && !empty($result['result']['message_id']) && class_exists('MessageTracker')) {
+                if ($status==='sent' && ($row['delivery_key']==='final' || str_starts_with((string)$row['delivery_key'],'report_')) && !empty($result['result']['message_id']) && class_exists('MessageTracker')) {
                     MessageTracker::rememberForCleanup($row['chat_id'],(int)$result['result']['message_id']);
                 }
                 $done++;

@@ -511,7 +511,7 @@ final class BatchQueue
         $chunks = []; $chunk = '';
         foreach ($entries as $entry) {
             $candidate=$chunk . ($chunk === '' ? '' : ',') . $entry;
-            if ($chunk !== '' && self::telegramTextLength($candidate) > self::TELEGRAM_TEXT_LIMIT) { $chunks[] = $chunk; $chunk = ''; }
+            if ($chunk !== '' && (self::telegramTextLength($candidate) > self::TELEGRAM_TEXT_LIMIT || self::telegramEntityCount($candidate) > 100)) { $chunks[] = $chunk; $chunk = ''; }
             $chunk .= ($chunk === '' ? '' : ',') . $entry;
         }
         if ($chunk !== '') $chunks[] = $chunk;
@@ -533,6 +533,12 @@ final class BatchQueue
         return strlen($plain);
     }
 
+    /** Telegram accepts at most 100 formatting entities in one message. */
+    private static function telegramEntityCount(string $html): int
+    {
+        return preg_match_all('/<(?:a|b|strong|i|em|u|ins|s|strike|del|code|pre|blockquote|tg-spoiler)(?:\s[^>]*)?>/i', $html);
+    }
+
     private static function prepareStatsDelivery(array &$job, array $server, array $stats): string
     {
         $select=self::db()->prepare("SELECT payload FROM bot_queue_items WHERE job_id=? AND status='pending' ORDER BY position");
@@ -543,7 +549,7 @@ final class BatchQueue
         }
         $stats['today_expired']=$entries;
         $full=Formatter::statsCard($server,$stats);
-        if(self::telegramTextLength($full)<=self::TELEGRAM_TEXT_LIMIT) {
+        if(self::telegramTextLength($full)<=self::TELEGRAM_TEXT_LIMIT && self::telegramEntityCount($full)<=100) {
             self::db()->prepare('DELETE FROM bot_queue_items WHERE job_id=?')->execute([$job['id']]);
             return $full;
         }
