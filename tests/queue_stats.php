@@ -17,6 +17,8 @@ class PanelManager {
         $pageSize=min((int)($args[0] ?? 2),self::$cap ?? 2);
         return array_fill(0,max(0,min($pageSize,self::$size-($page-1)*$pageSize)),['username'=>'test']);
     }
+    public static function scanUsers($server,$page,$size,...$args): array { return ['users'=>self::getUsers($server,$page,$size,...$args),'page_size'=>min($size,self::$cap ?? $size)]; }
+    public static function rememberPageSize(...$args): void {}
     public static function statsForUsers($server,$users,...$args): array { return ['total'=>count($users),'today_expired'=>[]]; }
 }
 class Formatter {

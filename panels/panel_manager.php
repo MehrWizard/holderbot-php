@@ -84,6 +84,31 @@ class PanelManager {
         return $users;
     }
 
+    /** Negotiate the largest working page size on the first page of a scan. */
+    public static function scanUsers(
+        array $server,
+        int $page,
+        int $pageSize,
+        ?string $search = null,
+        ?string $status = null,
+        ?string $admin = null
+    ): array {
+        $sizes = $page === 1
+            ? array_values(array_unique(array_filter([$pageSize, min($pageSize, 500), min($pageSize, 250), min($pageSize, 100), min($pageSize, 25)])))
+            : [$pageSize];
+        $last = null;
+        foreach ($sizes as $size) {
+            try {
+                $users = self::getUsers($server, $page, $size, $search, $status, $admin, true);
+                self::rememberPageSize($server, $size);
+                return ['users' => $users, 'page_size' => $size];
+            } catch (RuntimeException $e) {
+                $last = $e;
+            }
+        }
+        throw $last ?? new RuntimeException('Unable to fetch user page');
+    }
+
     /**
      * Create a user with specified data limit (GB) and duration (days).
      */
@@ -690,7 +715,13 @@ class PanelManager {
      */
     public static function pageSize(array $server): int {
         global $config;
+        $cached = Storage::cacheGet('panel_page_size_' . (int)($server['id'] ?? 0));
+        if (is_numeric($cached) && (int)$cached > 0) return (int)$cached;
         return max(1, min(5000, (int)($config['scan_page_size'] ?? 1000)));
+    }
+
+    public static function rememberPageSize(array $server, int $size): void {
+        if ($size > 0) Storage::cacheSet('panel_page_size_' . (int)($server['id'] ?? 0), $size, 30 * 86400);
     }
 
     public static function getBotUsername(): string {

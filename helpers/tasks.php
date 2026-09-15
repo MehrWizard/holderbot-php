@@ -12,7 +12,9 @@ class BackgroundTasks {
         $names = [];
         $matched = (int)($state['matched'] ?? count($names));
         $pageSize = (int)($state['page_size'] ?? PanelManager::pageSize($server));
-        $users = PanelManager::getUsers($server, $page, $pageSize, null, null, null, true);
+        $scan = PanelManager::scanUsers($server, $page, $pageSize);
+        $users = $scan['users'];
+        $pageSize = (int)$scan['page_size'];
         if ($page === 1 && $users && count($users) < $pageSize) $pageSize = count($users);
         $total += count($users);
         foreach ($users as $user) {

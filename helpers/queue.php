@@ -722,7 +722,10 @@ final class BatchQueue
                 $page = max(1, (int)($params['page'] ?? 1));
                 $pageSize = (int)($params['page_size'] ?? PanelManager::pageSize($server));
                 if ($page === 1) $params['page_size'] = $pageSize;
-                $users = PanelManager::getUsers($server, $page, $pageSize, null, null, null, true);
+                $scan = PanelManager::scanUsers($server, $page, $pageSize);
+                $users = $scan['users'];
+                $pageSize = (int)$scan['page_size'];
+                $params['page_size'] = $pageSize;
                 $part = PanelManager::statsForUsers($server, $users, (int)($params['now'] ?? time()), PanelManager::getBotUsername());
                 self::storeReportPage($job['id'], $page, $part['today_expired']);
                 $part['today_expired'] = [];
@@ -730,6 +733,7 @@ final class BatchQueue
                 $more = (bool)$users;
                 if ($page === 1 && $users && count($users) < $pageSize) {
                     $params['page_size'] = count($users);
+                    PanelManager::rememberPageSize($server, count($users));
                     $more = (bool)PanelManager::getUsers($server, 2, count($users), null, null, null, true);
                 }
                 if ($more) {
@@ -772,7 +776,10 @@ final class BatchQueue
             $job['active'] = 'discovering';
             $pageSize = (int)($params['page_size'] ?? PanelManager::pageSize($server));
             if ((int)($params['page'] ?? 1) === 1) $params['page_size'] = $pageSize;
-            $users = PanelManager::getUsers($server,(int)($params['page']??1),$pageSize,null,$params['status']??null,$params['admin']??null,true);
+            $scan = PanelManager::scanUsers($server,(int)($params['page']??1),$pageSize,null,$params['status']??null,$params['admin']??null);
+            $users = $scan['users'];
+            $pageSize = (int)$scan['page_size'];
+            $params['page_size'] = $pageSize;
             $insert = self::db()->prepare('INSERT IGNORE INTO bot_queue_items (job_id,position,username) VALUES (?,?,?)');
             $offset = ((int)($params['page'] ?? 1) - 1) * $pageSize;
             foreach ($users as $i => $user) $insert->execute([$job['id'], $offset + $i, $user['username']]);

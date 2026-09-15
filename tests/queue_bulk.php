@@ -5,6 +5,16 @@ require __DIR__.'/../storage.php';
 require __DIR__.'/../helpers/queue.php';
 require __DIR__.'/../panels/panel_manager.php';
 Storage::init();
+$attempted=[];
+MarzbanClient::$transport=function($server,$method,$endpoint)use(&$attempted) {
+    parse_str((string)parse_url($endpoint,PHP_URL_QUERY),$query);
+    $limit=(int)($query['limit']??0); $attempted[]=$limit;
+    if($limit>100)return null;
+    return ['users'=>[['username'=>'negotiated','status'=>'active','data_limit'=>0,'used_traffic'=>0]],'total'=>1];
+};
+$negotiatedServer=Storage::getServer(Storage::saveServer(['remark'=>'negotiation','type'=>'marzban','base_url'=>'http://example.invalid','username'=>'test','password'=>'test']));
+$negotiated=PanelManager::scanUsers($negotiatedServer,1,1000);
+if($attempted!==[1000,500,250,100] || $negotiated['page_size']!==100 || $negotiated['users'][0]['username']!=='negotiated') throw new RuntimeException('Panel page-size negotiation failed');
 $memory=memory_get_usage(true);
 foreach(['marzban','marzneshin'] as $type) {
     $next=0;
